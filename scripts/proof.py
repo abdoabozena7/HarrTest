@@ -24,7 +24,7 @@ import uuid
 
 import planning
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 SKILL = Path(__file__).resolve().parents[1]
 STATE = ".runtime-proof"
 SKIP_DIRS = {"__pycache__", ".git", ".pytest_cache", ".mypy_cache"}
@@ -554,10 +554,10 @@ def verify(task: Path, *, include_plan: bool = True) -> dict:
         return {"schema": 1, "task_id": c["task_id"], "at": now(),
                 "status": "EVIDENCE_GATE_PASSED" if not errors else "UNVERIFIED",
                 "passed": not errors, "source_digest": current["digest"],
-                "checks": checks, "requirements": req_results, "plan": plan_results, "errors": errors,
+                "checks": checks, "requirements": req_results, "plan": plan_results, "errors": errors, "completion_scope": "CHILD_TASK_ONLY", "root_goal_achieved": False,
                 "boundary": "Validates recorded execution, source freshness, coverage and artifact integrity; does not prove oracle quality, visual judgment or honesty of a same-user process."}
     except (ProofError, KeyError, TypeError, ValueError, OSError) as exc:
-        return {"schema": 1, "at": now(), "status": "UNVERIFIED", "passed": False, "errors": [str(exc)]}
+        return {"schema": 1, "at": now(), "status": "UNVERIFIED", "passed": False, "completion_scope": "CHILD_TASK_ONLY", "root_goal_achieved": False, "errors": [str(exc)]}
 
 
 def render_todo(task: Path, c: dict, progress: dict, current_digest: str):
