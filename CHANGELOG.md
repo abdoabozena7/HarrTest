@@ -2,6 +2,20 @@
 
 All notable versions are recorded here. Version 1 follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [2.0.0] - 2026-10-28
+
+### Root-goal integrity
+- Sealed original request and provenance-linked root requirements.
+- New `scripts/root_gate.py` separates whole-goal acceptance from child evidence.
+- `proof.py` now returns `completion_scope: CHILD_TASK_ONLY` and `root_goal_achieved: false`.
+- Missing, stale, wrong-mode, pre-seal or failed child evidence cannot satisfy root coverage.
+- Requires separately verified final integration and maintains unresolved blockers.
+- Does not grant new simulator permissions or project budgets.
+
+### Validation
+- Local development suite: 50 tests run, 49 passed, one browser e2e skipped.
+- Native CARLA and installed Copilot hook integrations were not retested for v2.
+
 ## [1.0.0] - 2026-10-28
 
 ### First public release
