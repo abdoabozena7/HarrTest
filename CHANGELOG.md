@@ -2,6 +2,13 @@
 
 All notable versions are recorded here. Version 1 follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [2.0.1] - 2026-10-28
+
+### Branding and repository move
+- Official name: **Oh-My-Harness**; canonical GitHub repo: `abdoabozena7/Oh-My-Harness`.
+- Skill ID, installation directories, agent metadata, README, banner, examples, hook file names, CLI installer, and documentation use the new brand.
+- Existing installations must migrate separately: review and remove the previous skill/hook only after confirming the new installation works. No existing runtime evidence format or task schema is renamed.
+
 ## [2.0.0] - 2026-10-28
 
 ### Root-goal integrity

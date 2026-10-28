@@ -1,17 +1,17 @@
 <div align="center">
 
-<img src="visual/banner.svg" alt="Prove It v2 — Plan, Build, Run, Observe, Verify" width="100%" />
+<img src="visual/banner.svg" alt="Oh-My-Harness v2 — Plan, Build, Run, Observe, Verify" width="100%" />
 
-# Prove It v2 · Let It Flow
+# Oh-My-Harness · Oh-My-Harness
 
 **A tool-first, evidence-first skill for autonomous coding agents.**  
-**Let It Flow** is the public standalone repository for the **Prove It** skill (`prove-it`).
+**Oh-My-Harness** is the public standalone repository for the **Oh-My-Harness** skill (`oh-my-harness`).
 
-[![Version](https://img.shields.io/badge/version-v2.0.0-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v2.0.1-65e7c9?style=flat-square)](CHANGELOG.md)
 [![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
 [![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
-[![CI](https://github.com/abdoabozena7/let_it_flow/actions/workflows/verify.yml/badge.svg)](https://github.com/abdoabozena7/let_it_flow/actions/workflows/verify.yml)
+[![CI](https://github.com/abdoabozena7/Oh-My-Harness/actions/workflows/verify.yml/badge.svg)](https://github.com/abdoabozena7/Oh-My-Harness/actions/workflows/verify.yml)
 
 **Plan the work. Run the product. Inspect the result. Prove it works.**
 
@@ -23,14 +23,14 @@
 
 ## ⚡ Install
 
-> **Official repository:** `abdoabozena7/let_it_flow`. The `SKILL.md` is at the repository root and the installable skill identifier stays `prove-it`. Installing the skill is **not** the same as enabling optional project-level stop hooks.
+> **Official repository:** `abdoabozena7/Oh-My-Harness`. The `SKILL.md` is at the repository root and the installable skill identifier stays `oh-my-harness`. Installing the skill is **not** the same as enabling optional project-level stop hooks.
 
 ```bash
 # Install in the current project from the canonical public repository
-npx skills add https://github.com/abdoabozena7/let_it_flow --skill prove-it
+npx skills add https://github.com/abdoabozena7/Oh-My-Harness --skill oh-my-harness
 
 # Or, to choose from all supported coding-agent integrations
-npx skills add https://github.com/abdoabozena7/let_it_flow
+npx skills add https://github.com/abdoabozena7/Oh-My-Harness
 
 # Verify what was installed
 npx skills list
@@ -39,7 +39,7 @@ npx skills list
 Requires Node.js 22.20+ for the current skills CLI. Check `npx skills --help` for supported agents and unattended options. To install globally, pass `-g` and explicitly choose the supported agent if needed. To install from a local clone of this repository instead:
 
 ```bash
-npx skills add ./let_it_flow
+npx skills add ./Oh-My-Harness
 ```
 
 ### Dedicated optional enforcement harness
@@ -56,7 +56,7 @@ py -3 .\scripts\install.py --agent copilot --scope user --project C:\path\to\you
 
 ## Root goal integrity — new in v2
 
-A passing smoke test is **not** the same as completed original user requirements. Prove It now distinguishes a passing **child** receipt from a separately sealed **root** contract.
+A passing smoke test is **not** the same as completed original user requirements. Oh-My-Harness now distinguishes a passing **child** receipt from a separately sealed **root** contract.
 
 ```mermaid
 flowchart TD
@@ -147,7 +147,7 @@ TODO  →  IN_PROGRESS  →  IMPLEMENTED  →  VERIFIED
 ## 🧰 What's in the box?
 
 ```text
-let_it_flow/                   # repository root / one skill
+Oh-My-Harness/                   # repository root / one skill
 ├── SKILL.md                      # universal agent instructions
 ├── references/
 │   ├── hivo-patterns.md          # better planning, recovery and memory
@@ -174,7 +174,7 @@ let_it_flow/                   # repository root / one skill
 Use this in your coding agent after installation:
 
 ```text
-Use prove-it for this task.
+Use oh-my-harness for this task.
 1. Capture the original user requirements and build a dependency-aware TODO plan.
 2. Challenge omissions before touching implementation; select real subagents only if useful.
 3. Execute the actual product in its real environment; collect and inspect evidence.
@@ -193,9 +193,13 @@ This is a **skill, not a universal agent runtime**. It cannot create browser acc
 
 Never bypass research holdout restrictions, experiment budgets, sandbox policies, protected files or safety controls to obtain a green result. Screenshots and traces can expose secrets; keep runtime evidence out of public Git commits. Full boundaries: [SECURITY.md](SECURITY.md) · [skill rules](SKILL.md).
 
+## 🔁 Migrating existing installations
+
+The internal skill ID changed to `oh-my-harness`. Updating the GitHub URL does not automatically migrate older per-project instruction blocks, old skill folders, or stop hooks. Review and remove the previous skill and its managed hook after validating the new installation; **do not leave two stop hooks targeting different versions active**. For the old installation, check `.github/copilot-instructions.md`, `.github/hooks/`, and your personal skill folder. Make a backup before editing; do not delete unrelated hooks or instructions. The existing `.runtime-proof/` evidence and sealed contracts remain intact.
+
 ## 🗓️ Versioning and updates
 
-**v1.0.0** = first distributable public baseline, now in the dedicated `let_it_flow` repository. Future versions follow semantic versioning and should include a tested [CHANGELOG](CHANGELOG.md), a reproducible `skill.zip` and explicit limitations. Use `npx skills check` / `npx skills update` for supported installs; project-level hooks need separate review when version changes.
+**v1.0.0** = first distributable public baseline, now in the dedicated `Oh-My-Harness` repository. Future versions follow semantic versioning and should include a tested [CHANGELOG](CHANGELOG.md), a reproducible `skill.zip` and explicit limitations. Use `npx skills check` / `npx skills update` for supported installs; project-level hooks need separate review when version changes.
 
 ## 🤝 Contributions
 

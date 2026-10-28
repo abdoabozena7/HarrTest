@@ -164,10 +164,25 @@ class ProofTests(unittest.TestCase):
         self.assertEqual(config['permissions'],original['permissions']); self.assertEqual(len(config['hooks']['Stop']),2)
         self.assertTrue(instructions.read_text().startswith('Original project policy.'))
         self.assertTrue(result['backups'])
-    def test_copilot_hook_serializes_expected_schema(self):
+    def test_legacy_instructions_do_not_silently_duplicate(self):
+        project = self.project
+        previous = project / '.github/copilot-instructions.md'
+        previous.parent.mkdir(parents=True, exist_ok=True)
+        previous.write_text('Project rules.\\n\\n<!-- prove-it:begin -->\\nOld configuration\\n<!-- prove-it:end -->\\n')
+        with self.assertRaises(ValueError):
+            install.install('copilot', 'user', project, project / 'home', False, True)
+
+    def test_legacy_stop_hook_blocks_double_registration(self):
+        project = self.project
+        previous = project / '.github/hooks/prove-it.json'
+        previous.parent.mkdir(parents=True, exist_ok=True)
+        previous.write_text('{}')
+        with self.assertRaises(ValueError):
+            install.install('copilot', 'user', project, project / 'home', True, False)
+
         home=self.project/'home'; home.mkdir()
         install.install('copilot','user',self.project,home,True,True)
-        h=proof.load(self.project/'.github/hooks/prove-it.json')
+        h=proof.load(self.project/'.github/hooks/oh-my-harness.json')
         self.assertEqual(h['version'],1); self.assertIn('powershell',h['hooks']['agentStop'][0])
     def test_legitimate_todo_app_description_is_allowed(self):
         self.c['goal']='Build a working TODO app with real persistence and UI behavior.'
