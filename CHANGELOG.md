@@ -2,10 +2,19 @@
 
 All notable versions are recorded here. Version 1 follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [2.0.3] - 2026-10-28
+
+### Rebrand: HarrTest
+- Canonical public repository: `abdoabozena7/HarrTest`.
+- Portable skill ID, install directories and hooks: `harrtest`.
+- Updated visual banner, agent metadata, README, installation commands and current documentation.
+- Added migration protection for the prior `harrnist` hooks/instructions, preserving earlier `prove-it` and `oh-my-harness` guards.
+- Preserved proof schema, root-goal validation and tests without falsely asserting cross-agent execution.
+
 ## [2.0.2] - 2026-10-28
 
-### Rename: HARRNIST
-- New canonical repository: `abdoabozena7/HARRNIST`, skill ID `harrnist`, visible brand `HARRNIST`.
+### Historical rename: HARRNIST
+- Previous repository name: `abdoabozena7/HARRNIST`, skill ID `harrnist`, visible brand `HARRNIST`.
 - Rename README, visual banner, skill frontmatter, agent metadata, installer, hooks, examples, and current documentation.
 - Refuse silent double installation if `prove-it` or `oh-my-harness` managed instruction blocks or hooks remain; leave old user files and evidence untouched.
 - Keep runtime receipt schema, original-goal gate, and evidence validation unchanged.

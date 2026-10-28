@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HARRNIST v2 root-goal verification: a passing child never closes the mission."""
+"""HarrTest v2 root-goal verification: a passing child never closes the mission."""
 from __future__ import annotations
 import argparse
 import datetime as dt

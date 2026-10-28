@@ -1,4 +1,4 @@
-# Hivo-inspired decision patterns (HARRNIST v1)
+# Hivo-inspired decision patterns (HarrTest v1)
 
 Adapt architectural ideas, not Hivo's project-specific model, prompt budget, or claim of proven success. This guide is universal for coding agents with different tool permissions.
 

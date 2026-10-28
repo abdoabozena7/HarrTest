@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HARRNIST: local execution receipts and a fail-closed evidence gate.
+"""HarrTest: local execution receipts and a fail-closed evidence gate.
 
 Python 3.10+, standard library only. This is an integrity/coverage gate, not a
 proof of arbitrary program correctness, a sandbox, or a hostile-agent boundary.
@@ -671,7 +671,7 @@ def hook(payload: dict) -> dict:
              "errors": result["errors"]})
         return {}
     save(task / "hook-state.json", {"at": now(), "signature": signature})
-    reason = ("HARRNIST: completion evidence is incomplete. Do not claim done. "
+    reason = ("HarrTest: completion evidence is incomplete. Do not claim done. "
               "Continue the next executable runtime validation/fix, inspect the actual artifacts, "
               "then run proof.py verify. Do not edit the contract, harness or receipts to pass. "
               "For a genuine external blocker, record BLOCKED_UNVERIFIED with the exact evidence and required action. "
@@ -717,7 +717,7 @@ def main() -> int:
                 if not isinstance(payload, dict): raise ProofError("Hook input is not an object")
                 decision = hook(payload)
             except Exception as exc:
-                decision = {"decision": "block", "reason": "HARRNIST hook failed; no completion clearance. Repair hook configuration: " + str(exc)}
+                decision = {"decision": "block", "reason": "HarrTest hook failed; no completion clearance. Repair hook configuration: " + str(exc)}
             print(json.dumps(decision)); return 0
         if args.command == "init":
             identifier(args.id, "task id")

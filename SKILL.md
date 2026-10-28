@@ -1,9 +1,9 @@
 ---
-name: harrnist
+name: harrtest
 description: Bind the original root goal, then plan, decompose, implement, and verify coding work through actual product use before claiming completion. Use for frontend/UI, backend/API, CLI, coding-agent pipelines, simulation, ML workflows, bug fixes, and autonomous or autopilot development whenever the user expects working behavior rather than code-only delivery. Maintain a dependency-aware TODO list; delegate independent bounded work to real subagents when available, otherwise execute serially. Require observable outcomes, current-source runtime evidence, meaningful negative controls, artifact inspection, integration validation, and honest blocked status. Do not use for purely conversational explanations or requests that explicitly exclude implementation and execution.
 ---
 
-# HARRNIST
+# HarrTest
 
 ## Mission and boundaries
 

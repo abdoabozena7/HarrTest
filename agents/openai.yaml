@@ -1,4 +1,4 @@
 interface:
-  display_name: "HARRNIST"
+  display_name: "HarrTest"
   short_description: "Plan, exercise, inspect, and verify real behavior."
-  default_prompt: "Use HARRNIST to plan this task, execute real user journeys, and verify current-source evidence before completion."
+  default_prompt: "Use HarrTest to plan this task, execute real user journeys, and verify current-source evidence before completion."

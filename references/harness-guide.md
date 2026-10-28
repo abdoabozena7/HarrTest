@@ -11,7 +11,7 @@ and its video dependency. Use one installed skill copy consistently; scripts
 are fingerprinted, and changing them invalidates sealed evidence.
 
 In the commands below, `PROOF` means the actual absolute path to
-`harrnist/scripts/proof.py`; `TASK` is the created task directory. Replace these
+`harrtest/scripts/proof.py`; `TASK` is the created task directory. Replace these
 notation placeholders with actual paths. Shell arguments are examples, not new
 authorization to operate protected simulators or production systems.
 

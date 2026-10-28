@@ -1,6 +1,6 @@
 # Security and trust boundaries
 
-HARRNIST is a workflow skill, **not a sandbox or independent security enforcer**.
+HarrTest is a workflow skill, **not a sandbox or independent security enforcer**.
 It cannot override organization policies, host stop limits, resource quotas or consent requirements. Never run untrusted commands from a repository without inspection. Hook adapters use configured local interpreters and may be unavailable under organization policy.
 
 - Run the installer in `--dry-run` first and review changes; don't use `--hooks` unless you trust the local agent/runtime.

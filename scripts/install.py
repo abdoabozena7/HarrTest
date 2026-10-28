@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install HARRNIST without replacing existing agent instructions or hooks.
+"""Install HarrTest without replacing existing agent instructions or hooks.
 
 No dependencies are downloaded, no sandbox permissions are changed, and no
 repository is committed/pushed. Review this script before enabling a hook.
@@ -14,8 +14,8 @@ import shutil
 import sys
 
 SOURCE = Path(__file__).resolve().parents[1]
-START = "<!-- harrnist:begin -->"
-END = "<!-- harrnist:end -->"
+START = "<!-- harrtest:begin -->"
+END = "<!-- harrtest:end -->"
 
 
 def ps_quote(text):
@@ -34,7 +34,7 @@ def instruction_block(skill_path):
     return f'''{START}
 ## Runtime evidence before completion
 For implementation, bug-fix, UI, simulation, API, CLI, or agent-workflow tasks,
-load the `harrnist` skill at `{skill_path.as_posix()}/SKILL.md` before changing code.
+load the `harrtest` skill at `{skill_path.as_posix()}/SKILL.md` before changing code.
 Before implementation, create/resume a dependency-aware plan and durable TODO
 list. Choose serial steps or real subagents according to available tools, write
 ownership and dependencies. Never invent delegation. Require an integration task;
@@ -58,11 +58,12 @@ def merge_block(existing, block):
     # Detect previous branding to prevent concurrent duplicate auto-invocation blocks.
     # Do not delete any unrelated project instructions automatically.
     old_markers = ("<!-- prove-it:begin -->", "<!-- prove-it:end -->",
-                   "<!-- oh-my-harness:begin -->", "<!-- oh-my-harness:end -->")
+                   "<!-- oh-my-harness:begin -->", "<!-- oh-my-harness:end -->",
+                   "<!-- harrnist:begin -->", "<!-- harrnist:end -->")
     if any(marker in existing for marker in old_markers):
         raise ValueError("An older skill instruction block is present. Back it up and remove its paired markers before installing the renamed skill; retain other instructions.")
     if START in existing:
-        if END not in existing: raise ValueError("Malformed existing harrnist instruction block")
+        if END not in existing: raise ValueError("Malformed existing harrtest instruction block")
         before, rest = existing.split(START, 1)
         _, after = rest.split(END, 1)
         return before.rstrip() + "\n\n" + block + after.lstrip("\r\n")
@@ -78,13 +79,13 @@ def install(agent, scope, project, home, with_hook=False, instructions=False, up
     root = home if scope == "user" else project
     location = {"copilot": ".copilot/skills" if scope == "user" else ".github/skills",
                 "codex": ".agents/skills", "claude": ".claude/skills", "generic": ".agents/skills"}[agent]
-    dest = root / location / "harrnist"
+    dest = root / location / "harrtest"
     if dest.exists() and dest.resolve() != SOURCE and not update:
         raise ValueError(f"Skill already exists: {dest}. Review it; pass --update for a backed-up replacement")
     script = dest / "scripts" / "proof.py"
     # Refuse duplicate stop adapters that would run the previous skill as well.
     if with_hook and agent == "copilot" and project is not None:
-        for old_hook in ("prove-it.json", "oh-my-harness.json"):
+        for old_hook in ("prove-it.json", "oh-my-harness.json", "harrnist.json"):
             legacy = project / ".github" / "hooks" / old_hook
             if legacy.exists():
                 raise ValueError(f"Legacy stop hook still exists: {legacy}. Review, back up, and remove it before installing the new hook.")
@@ -99,7 +100,7 @@ def install(agent, scope, project, home, with_hook=False, instructions=False, up
     if with_hook:
         argv = [sys.executable, str(script), "hook", "--host", agent]
         if agent == "copilot":
-            path = project / ".github" / "hooks" / "harrnist.json"
+            path = project / ".github" / "hooks" / "harrtest.json"
             if path.exists() and not update: raise ValueError(f"Hook exists: {path}; use --update after review")
             # Native bash/powershell keys are documented by GitHub; no shell policy bypass.
             config = {"version": 1, "hooks": {"agentStop": [{"type": "command",
@@ -126,9 +127,9 @@ def install(agent, scope, project, home, with_hook=False, instructions=False, up
     if dry_run: return {"dry_run": True, "operations": operations}
     if dest.resolve() != SOURCE:
         if dest.exists():
-            archive_dir = home / ".harrnist-backups"
+            archive_dir = home / ".harrtest-backups"
             archive_dir.mkdir(parents=True, exist_ok=True)
-            base = archive_dir / ("harrnist-" + dt.datetime.now().strftime("%Y%m%d%H%M%S%f"))
+            base = archive_dir / ("harrtest-" + dt.datetime.now().strftime("%Y%m%d%H%M%S%f"))
             shutil.make_archive(str(base), "zip", root_dir=dest.parent, base_dir=dest.name)
             shutil.rmtree(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
