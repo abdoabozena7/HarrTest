@@ -174,16 +174,33 @@ class ProofTests(unittest.TestCase):
 
     def test_legacy_stop_hook_blocks_double_registration(self):
         project = self.project
+        home = project / 'home'
         previous = project / '.github/hooks/prove-it.json'
         previous.parent.mkdir(parents=True, exist_ok=True)
         previous.write_text('{}')
-        with self.assertRaises(ValueError):
-            install.install('copilot', 'user', project, project / 'home', True, False)
+        with self.assertRaisesRegex(ValueError, 'Legacy stop hook still exists:'):
+            install.install('copilot', 'user', project, home, True, False)
+        self.assertEqual(previous.read_text(), '{}')
+        self.assertEqual(list(previous.parent.iterdir()), [previous])
+        self.assertFalse(home.exists())
 
-        home=self.project/'home'; home.mkdir()
-        install.install('copilot','user',self.project,home,True,True)
-        h=proof.load(self.project/'.github/hooks/harrtest.json')
-        self.assertEqual(h['version'],1); self.assertIn('powershell',h['hooks']['agentStop'][0])
+    def test_copilot_installer_registers_stop_hook_in_clean_project(self):
+        home = self.project / 'home'
+        result = install.install('copilot', 'user', self.project, home, True, True)
+        skill = home / '.copilot/skills/harrtest'
+        self.assertEqual(result['installed'], str(skill))
+        self.assertTrue((skill / 'scripts/proof.py').is_file())
+        self.assertTrue(result['hook_installed'])
+        hook_path = self.project / '.github/hooks/harrtest.json'
+        self.assertEqual(list(hook_path.parent.iterdir()), [hook_path])
+        config = proof.load(hook_path)
+        self.assertEqual(config['version'], 1)
+        self.assertEqual(len(config['hooks']['agentStop']), 1)
+        hook = config['hooks']['agentStop'][0]
+        self.assertEqual(hook['type'], 'command')
+        self.assertIn('bash', hook)
+        self.assertIn('powershell', hook)
+
     def test_previous_oh_my_harness_instructions_rejected(self):
         previous = self.project / '.github/copilot-instructions.md'
         previous.parent.mkdir(parents=True, exist_ok=True)
