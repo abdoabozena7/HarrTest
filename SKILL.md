@@ -1,6 +1,6 @@
 ---
 name: prove-it
-description: Plan, decompose, implement, and verify coding work through actual product use before claiming completion. Use for frontend/UI, backend/API, CLI, coding-agent pipelines, simulation, ML workflows, bug fixes, and autonomous or autopilot development whenever the user expects working behavior rather than code-only delivery. Maintain a dependency-aware TODO list; delegate independent bounded work to real subagents when available, otherwise execute serially. Require observable outcomes, current-source runtime evidence, meaningful negative controls, artifact inspection, integration validation, and honest blocked status. Do not use for purely conversational explanations or requests that explicitly exclude implementation and execution.
+description: Bind the original root goal, then plan, decompose, implement, and verify coding work through actual product use before claiming completion. Use for frontend/UI, backend/API, CLI, coding-agent pipelines, simulation, ML workflows, bug fixes, and autonomous or autopilot development whenever the user expects working behavior rather than code-only delivery. Maintain a dependency-aware TODO list; delegate independent bounded work to real subagents when available, otherwise execute serially. Require observable outcomes, current-source runtime evidence, meaningful negative controls, artifact inspection, integration validation, and honest blocked status. Do not use for purely conversational explanations or requests that explicitly exclude implementation and execution.
 ---
 
 # Prove It
@@ -22,6 +22,12 @@ the bundled gate when possible; describe any missing enforcement honestly.
 Follow system, organization, user, repository, safety and spending restrictions.
 Never disable a sandbox, borrow protected experiment time, erase failed runs,
 weaken thresholds, or reset a budget merely to complete a task.
+
+## 0. Bind the original root goal
+
+Before any implementation, preserve the exact original user request and any governing repository acceptance contracts. Read [Root Goal Binding](references/root-goal.md), create and seal a complete source-anchored root contract using `scripts/root_gate.py`. Map all original requirements to independent expected outcomes and required child evidence, including final integration. In instruction-only mode keep a durable root ledger but do not claim mechanical enforcement.
+
+**A passing child check is not overall completion.** `proof.py verify` certifies **CHILD_TASK_ONLY**. A 95-meter smoke does not certify an entire CARLA acceptance matrix, nor a passing UI component certify the complete website. Only a passing separate `root_gate.py verify` after all original root requirements and integration can justify **ROOT_GOAL_VERIFIED within declared scope**. Missing, unsealed, stale, failed or out-of-scope evidence means ROOT_GOAL_UNVERIFIED. No authority to change the original goal, success thresholds, permissions or budgets.
 
 ## 1. Establish the actual goal and capabilities
 
@@ -224,6 +230,10 @@ Retain durable user constraints separately from state-bound source facts.
 Never promote an old success to current truth after relevant source drift.
 
 ## Final response
+
+Report CHILD_TASK_STATUS and ROOT_GOAL_STATUS separately, with exact evidence and unsatisfied original requirements. A child gate passes only within its scope, regardless of whether the host says "Task completed". If root verification is not executed or fails, explicitly report ROOT_GOAL_UNVERIFIED; do not infer success.
+
+
 
 Use [Final report](assets/templates/final-report.md). State one of:
 **VERIFIED_WITHIN_SCOPE**, **PARTIAL**, **FAILED**, **BLOCKED_UNVERIFIED**.
