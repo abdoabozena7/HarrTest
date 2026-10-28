@@ -1,0 +1,32 @@
+{
+  "schema": 2,
+  "goal_id": "REPLACE_ME",
+  "request_sha256": "REPLACE_ME SHA from root_gate init",
+  "scope_statement": "REPLACE_ME with full user outcome rather than one short smoke",
+  "coverage_review": {
+    "method": "same-agent",
+    "rationale": "REPLACE_ME record full comparison of original goal and mapped requirements",
+    "unmapped_segments": []
+  },
+  "requirements": [
+    {
+      "id": "ROOT01",
+      "claim": "REPLACE_ME complete externally observable behavior",
+      "oracle": "REPLACE_ME independent acceptance outcome",
+      "source": "user_request",
+      "source_excerpt": "REPLACE_ME exact substring from original request",
+      "evidence_mode": "live",
+      "satisfiers": [
+        {
+          "task_id": "full-acceptance",
+          "requirement_id": "R01"
+        }
+      ]
+    }
+  ],
+  "integration": {
+    "task_id": "full-acceptance",
+    "requirement_id": "R01",
+    "scope": "REPLACE_ME complete integrated user journey, not a smoke test"
+  }
+}
