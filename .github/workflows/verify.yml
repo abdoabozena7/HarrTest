@@ -15,6 +15,6 @@ jobs:
           python-version: '3.12'
       - name: Validate layout
         run: |
-          python -c "from pathlib import Path; s=Path('SKILL.md').read_text(); assert s.startswith('---\\nname: prove-it\\n'); assert Path('agents/openai.yaml').is_file(); assert Path('visual/banner.svg').is_file()"
+          python -c "from pathlib import Path; s=Path('SKILL.md').read_text(); assert s.splitlines()[:2] == ['---', 'name: prove-it']; assert Path('agents/openai.yaml').is_file(); assert Path('visual/banner.svg').is_file()"
       - name: Unit checks
         run: python -m unittest discover -s tests -p test_proof.py -v
