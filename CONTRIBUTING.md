@@ -1,4 +1,4 @@
-# Contributing to Oh-My-Harness
+# Contributing to HARRNIST
 
 Welcome. Propose behavior changes with a concrete failure example and an observable acceptance criterion, not just more instructions or test count.
 

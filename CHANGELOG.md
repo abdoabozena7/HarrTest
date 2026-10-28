@@ -2,10 +2,19 @@
 
 All notable versions are recorded here. Version 1 follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [2.0.2] - 2026-10-28
+
+### Rename: HARRNIST
+- New canonical repository: `abdoabozena7/HARRNIST`, skill ID `harrnist`, visible brand `HARRNIST`.
+- Rename README, visual banner, skill frontmatter, agent metadata, installer, hooks, examples, and current documentation.
+- Refuse silent double installation if `prove-it` or `oh-my-harness` managed instruction blocks or hooks remain; leave old user files and evidence untouched.
+- Keep runtime receipt schema, original-goal gate, and evidence validation unchanged.
+- Validate local test suite and package the skill.
+
 ## [2.0.1] - 2026-10-28
 
 ### Branding and repository move
-- Official name: **Oh-My-Harness**; canonical GitHub repo: `abdoabozena7/Oh-My-Harness`.
+- Historical name at that release: **Oh-My-Harness**, repository `abdoabozena7/Oh-My-Harness`.
 - Skill ID, installation directories, agent metadata, README, banner, examples, hook file names, CLI installer, and documentation use the new brand.
 - Existing installations must migrate separately: review and remove the previous skill/hook only after confirming the new installation works. No existing runtime evidence format or task schema is renamed.
 

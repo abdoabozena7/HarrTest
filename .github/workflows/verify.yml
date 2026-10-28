@@ -1,4 +1,4 @@
-name: Validate Oh-My-Harness skill
+name: Validate HARRNIST skill
 on:
   push:
   pull_request:
@@ -15,6 +15,6 @@ jobs:
           python-version: '3.12'
       - name: Validate layout
         run: |
-          python -c "from pathlib import Path; s=Path('SKILL.md').read_text(); assert s.splitlines()[:2] == ['---', 'name: oh-my-harness']; assert Path('agents/openai.yaml').is_file(); assert Path('visual/banner.svg').is_file()"
+          python -c "from pathlib import Path; s=Path('SKILL.md').read_text(); assert s.splitlines()[:2] == ['---', 'name: harrnist']; assert Path('agents/openai.yaml').is_file(); assert Path('visual/banner.svg').is_file()"
       - name: Unit checks
         run: python -m unittest discover -s tests -p 'test_*.py' -v

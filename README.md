@@ -1,17 +1,17 @@
 <div align="center">
 
-<img src="visual/banner.svg" alt="Oh-My-Harness v2 — Plan, Build, Run, Observe, Verify" width="100%" />
+<img src="visual/banner.svg" alt="HARRNIST v2 — Plan, Build, Run, Observe, Verify" width="100%" />
 
-# Oh-My-Harness · Oh-My-Harness
+# HARRNIST · HARRNIST
 
 **A tool-first, evidence-first skill for autonomous coding agents.**  
-**Oh-My-Harness** is the public standalone repository for the **Oh-My-Harness** skill (`oh-my-harness`).
+**HARRNIST** is the public standalone repository for the **HARRNIST** skill (`harrnist`).
 
-[![Version](https://img.shields.io/badge/version-v2.0.1-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v2.0.2-65e7c9?style=flat-square)](CHANGELOG.md)
 [![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
 [![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
-[![CI](https://github.com/abdoabozena7/Oh-My-Harness/actions/workflows/verify.yml/badge.svg)](https://github.com/abdoabozena7/Oh-My-Harness/actions/workflows/verify.yml)
+[![CI](https://github.com/abdoabozena7/HARRNIST/actions/workflows/verify.yml/badge.svg)](https://github.com/abdoabozena7/HARRNIST/actions/workflows/verify.yml)
 
 **Plan the work. Run the product. Inspect the result. Prove it works.**
 
@@ -23,14 +23,14 @@
 
 ## ⚡ Install
 
-> **Official repository:** `abdoabozena7/Oh-My-Harness`. The `SKILL.md` is at the repository root and the installable skill identifier stays `oh-my-harness`. Installing the skill is **not** the same as enabling optional project-level stop hooks.
+> **Official repository:** `abdoabozena7/HARRNIST`. The `SKILL.md` is at the repository root and the installable skill identifier stays `harrnist`. Installing the skill is **not** the same as enabling optional project-level stop hooks.
 
 ```bash
 # Install in the current project from the canonical public repository
-npx skills add https://github.com/abdoabozena7/Oh-My-Harness --skill oh-my-harness
+npx skills add https://github.com/abdoabozena7/HARRNIST --skill harrnist
 
 # Or, to choose from all supported coding-agent integrations
-npx skills add https://github.com/abdoabozena7/Oh-My-Harness
+npx skills add https://github.com/abdoabozena7/HARRNIST
 
 # Verify what was installed
 npx skills list
@@ -39,7 +39,7 @@ npx skills list
 Requires Node.js 22.20+ for the current skills CLI. Check `npx skills --help` for supported agents and unattended options. To install globally, pass `-g` and explicitly choose the supported agent if needed. To install from a local clone of this repository instead:
 
 ```bash
-npx skills add ./Oh-My-Harness
+npx skills add ./HARRNIST
 ```
 
 ### Dedicated optional enforcement harness
@@ -56,7 +56,7 @@ py -3 .\scripts\install.py --agent copilot --scope user --project C:\path\to\you
 
 ## Root goal integrity — new in v2
 
-A passing smoke test is **not** the same as completed original user requirements. Oh-My-Harness now distinguishes a passing **child** receipt from a separately sealed **root** contract.
+A passing smoke test is **not** the same as completed original user requirements. HARRNIST now distinguishes a passing **child** receipt from a separately sealed **root** contract.
 
 ```mermaid
 flowchart TD
@@ -147,7 +147,7 @@ TODO  →  IN_PROGRESS  →  IMPLEMENTED  →  VERIFIED
 ## 🧰 What's in the box?
 
 ```text
-Oh-My-Harness/                   # repository root / one skill
+HARRNIST/                   # repository root / one skill
 ├── SKILL.md                      # universal agent instructions
 ├── references/
 │   ├── hivo-patterns.md          # better planning, recovery and memory
@@ -174,7 +174,7 @@ Oh-My-Harness/                   # repository root / one skill
 Use this in your coding agent after installation:
 
 ```text
-Use oh-my-harness for this task.
+Use harrnist for this task.
 1. Capture the original user requirements and build a dependency-aware TODO plan.
 2. Challenge omissions before touching implementation; select real subagents only if useful.
 3. Execute the actual product in its real environment; collect and inspect evidence.
@@ -195,11 +195,11 @@ Never bypass research holdout restrictions, experiment budgets, sandbox policies
 
 ## 🔁 Migrating existing installations
 
-The internal skill ID changed to `oh-my-harness`. Updating the GitHub URL does not automatically migrate older per-project instruction blocks, old skill folders, or stop hooks. Review and remove the previous skill and its managed hook after validating the new installation; **do not leave two stop hooks targeting different versions active**. For the old installation, check `.github/copilot-instructions.md`, `.github/hooks/`, and your personal skill folder. Make a backup before editing; do not delete unrelated hooks or instructions. The existing `.runtime-proof/` evidence and sealed contracts remain intact.
+The internal skill ID is now `harrnist` (previously `oh-my-harness`, before that `prove-it`). Updating the GitHub URL does not automatically migrate older per-project instruction blocks, old skill folders, or stop hooks. Review and remove the previous skill and its managed hook after validating the new installation; **do not leave two stop hooks targeting different versions active**. For the old installation, check `.github/copilot-instructions.md`, `.github/hooks/`, and your personal skill folder. Make a backup before editing; do not delete unrelated hooks or instructions. The existing `.runtime-proof/` evidence and sealed contracts remain intact.
 
 ## 🗓️ Versioning and updates
 
-**v1.0.0** = first distributable public baseline, now in the dedicated `Oh-My-Harness` repository. Future versions follow semantic versioning and should include a tested [CHANGELOG](CHANGELOG.md), a reproducible `skill.zip` and explicit limitations. Use `npx skills check` / `npx skills update` for supported installs; project-level hooks need separate review when version changes.
+**v1.0.0** = first distributable public baseline, now in the dedicated `HARRNIST` repository. Future versions follow semantic versioning and should include a tested [CHANGELOG](CHANGELOG.md), a reproducible `skill.zip` and explicit limitations. Use `npx skills check` / `npx skills update` for supported installs; project-level hooks need separate review when version changes.
 
 ## 🤝 Contributions
 

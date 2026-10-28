@@ -182,8 +182,22 @@ class ProofTests(unittest.TestCase):
 
         home=self.project/'home'; home.mkdir()
         install.install('copilot','user',self.project,home,True,True)
-        h=proof.load(self.project/'.github/hooks/oh-my-harness.json')
+        h=proof.load(self.project/'.github/hooks/harrnist.json')
         self.assertEqual(h['version'],1); self.assertIn('powershell',h['hooks']['agentStop'][0])
+    def test_previous_oh_my_harness_instructions_rejected(self):
+        previous = self.project / '.github/copilot-instructions.md'
+        previous.parent.mkdir(parents=True, exist_ok=True)
+        previous.write_text('Project rules.\\n\\n<!-- oh-my-harness:begin -->\\nOld configuration\\n<!-- oh-my-harness:end -->\\n')
+        with self.assertRaises(ValueError):
+            install.install('copilot', 'user', self.project, self.project / 'home', False, True)
+
+    def test_previous_oh_my_harness_hook_rejected(self):
+        previous = self.project / '.github/hooks/oh-my-harness.json'
+        previous.parent.mkdir(parents=True, exist_ok=True)
+        previous.write_text('{}')
+        with self.assertRaises(ValueError):
+            install.install('copilot', 'user', self.project, self.project / 'home', True, False)
+
     def test_legitimate_todo_app_description_is_allowed(self):
         self.c['goal']='Build a working TODO app with real persistence and UI behavior.'
         proof.validate_contract(self.c)
