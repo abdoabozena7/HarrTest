@@ -1,13 +1,13 @@
 <div align="center">
 
-<img src="visual/banner.svg" alt="Prove It v1 — Plan, Build, Run, Observe, Verify" width="100%" />
+<img src="visual/banner.svg" alt="Prove It v2 — Plan, Build, Run, Observe, Verify" width="100%" />
 
-# Prove It v1 · Let It Flow
+# Prove It v2 · Let It Flow
 
 **A tool-first, evidence-first skill for autonomous coding agents.**  
 **Let It Flow** is the public standalone repository for the **Prove It** skill (`prove-it`).
 
-[![Version](https://img.shields.io/badge/version-v1.0.0-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v2.0.0-65e7c9?style=flat-square)](CHANGELOG.md)
 [![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
 [![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
@@ -53,6 +53,27 @@ py -3 .\scripts\install.py --agent copilot --scope user --project C:\path\to\you
 ```
 
 `--agent codex`, `--agent claude`, or `--agent generic` are supported for instructions/install; hooks only for Copilot and Claude where supported. The installer preserves existing instructions and backs up modified files; validate host-specific hook support in your actual client. Read [security boundaries](SECURITY.md) first.
+
+## Root goal integrity — new in v2
+
+A passing smoke test is **not** the same as completed original user requirements. Prove It now distinguishes a passing **child** receipt from a separately sealed **root** contract.
+
+```mermaid
+flowchart TD
+  U[Original user request] --> R[Sealed root contract]
+  R --> A[Real operation]
+  R --> B[Performance requirement]
+  R --> C[Full mission acceptance]
+  A --> D[Smoke test PASSED]
+  B --> E[Performance FAILED]
+  C --> F[Scenario matrix UNVERIFIED]
+  D --> G{Root completion gate}
+  E --> G
+  F --> G
+  G --> H[ROOT_GOAL_UNVERIFIED]
+```
+
+Use `scripts/root_gate.py init` to preserve the exact original request, populate a source-anchored `root-contract.json`, seal it **before** child execution, and verify the complete goal with `root_gate.py verify`. See [root-goal runbook](references/root-goal.md). A successful `proof.py verify` only means **CHILD_TASK_ONLY**. Scope coverage still needs a meaningful independent review; no model-authored test can guarantee global correctness.
 
 ## 🔄 The verification loop
 
