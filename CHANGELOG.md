@@ -1,3 +1,14 @@
+## [2.1.0] - 2026-10-29
+
+### Bounded autonomy and failure prevention
+- Generalize recovery for quota, authorization, simulator, browser and compute blockers.
+- Separate user consent, source-of-truth acceptance, host gates, protected budgets and
+  resource arithmetic, without assuming Autopilot or large credits imply permission.
+- Add read-only `scripts/admission.py` with 12 executed boundary/negative tests.
+- A successful precheck is never native permission: `PRECHECK_OK_NOT_AUTHORIZED`.
+- Add failure-to-prevention template and next-unverified-gate restart rules.
+- Preserve existing root/child gates and historical evidence; no automatic budget changes.
+
 # Changelog
 
 All notable versions are recorded here. Version 1 follows semantic versioning: `MAJOR.MINOR.PATCH`.

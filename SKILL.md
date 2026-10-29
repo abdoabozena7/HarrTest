@@ -208,6 +208,26 @@ An `EVIDENCE_GATE_PASSED` result means the declared evidence contract passed;
 it is not mathematical proof, broad safety certification, or truth of every
 assertion authored by the same agent. Independently judge oracle adequacy.
 
+## 6a. Authorization envelopes and cross-project recovery
+
+For native simulation, privileged browser/deployment actions, expensive compute,
+resource-gated operations or recurring blocked attempts, read
+[Bounded autonomy and admission](references/autonomy-and-admission.md).
+Separate the original user goal from a genuine explicit scoped approval, the
+real host/organization/owner gate, resource limits, and protected acceptance
+budgets. Neither Autopilot nor Allow All grants new authority.
+Use `scripts/admission.py` for optional read-only planning only:
+`PRECHECK_OK_NOT_AUTHORIZED` is never an execution permit. Check real admission
+and current resources before starting a costly action. If blocked, first attempt
+safe authorized alternatives, then offer one exact bounded authorization request;
+silence, default responses and previous unrelated grants are not consent.
+After a genuine grant, resume from the first unfinished original gate without
+rerunning fresh valid checks unnecessarily. Do not consume protected windows,
+modify thresholds or falsely claim parent completion. For recurring failures,
+record minimal reproduction, general failure cause, negative-control check,
+smallest reusable safeguard and explicitly excluded cases before updating
+the skill. Preserve project-specific numbers in the project, not the skill.
+
 ## 7. Continue intelligently; stop truthfully
 
 Continue while there is a concrete, authorized next experiment or fix. On a

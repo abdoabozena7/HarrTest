@@ -7,7 +7,7 @@
 **A tool-first, evidence-first skill for autonomous coding agents.**  
 **HarrTest** is the public standalone repository for the **HarrTest** skill (`harrtest`).
 
-[![Version](https://img.shields.io/badge/version-v2.0.3-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v2.1.0-65e7c9?style=flat-square)](CHANGELOG.md)
 [![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
 [![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
@@ -186,6 +186,30 @@ Task: [your actual coding task]
 ```
 
 For a source-bound local evidence contract, read [the harness guide](references/harness-guide.md) and call `python scripts/proof.py --help`. Optional browser probes use Playwright installed separately: `python -m pip install playwright && python -m playwright install chromium`.
+
+## 🔒 Bounded autonomy and recovery (v2.1)
+
+For native simulation, paid compute, deployments, browser integrations and
+other resource-gated tasks, separate **explicit user authorization**, actual
+host/ownership admission, resource arithmetic, protected budgets, and root
+acceptance. A passing offline check cannot close the original root goal.
+
+```text
+User goal → Scoped approval? → Read-only resource precheck
+                       │                    │
+                  No: precise         Host's REAL gate
+                  approval request     ├── Denied: diagnose/recover
+                                       └── Granted: next original gate
+```
+
+`python scripts/admission.py intent.json policy.json` checks only supplied
+metadata and arithmetic; it never grants permission or mutates a budget. A
+successful check explicitly returns `PRECHECK_OK_NOT_AUTHORIZED` because
+approval provenance and real resource ownership must be independently
+verified. Do not hardcode CARLA's numerical limits as universal rules.
+
+Read [the autonomy guide](references/autonomy-and-admission.md) for a portable
+failure-to-prevention protocol and examples.
 
 ## 🛡️ Important limitations
 
