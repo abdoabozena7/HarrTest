@@ -1,3 +1,19 @@
+# Changelog
+
+## [2.2.0] - 2026-10-30
+
+- Distinguish official minimum reservation, preferred execution length, fixed
+  cleanup and scientifically meaningful minimum before asking for additional resources.
+- Add read-only deterministic `experiment_budget.py` for bounded planning;
+  never infer consent or live admission from successful arithmetic.
+- Add conjunctive `strict_gates.py` that fails on any required breached,
+  missing, invalid or nonfinite metric rather than accepting good percentiles.
+- Add 20 locally passing regression tests for both helpers, including a
+  single late outlier after passing p95 and p99.
+- Add rules for collecting live visual evidence while product is running and
+  preserving exact residual outlier identity before retrying expensive runs.
+- Keep original root gates, permission requirements and protected budgets.
+
 ## [2.1.0] - 2026-10-29
 
 ### Bounded autonomy and failure prevention
@@ -8,8 +24,6 @@
 - A successful precheck is never native permission: `PRECHECK_OK_NOT_AUTHORIZED`.
 - Add failure-to-prevention template and next-unverified-gate restart rules.
 - Preserve existing root/child gates and historical evidence; no automatic budget changes.
-
-# Changelog
 
 All notable versions are recorded here. Version 1 follows semantic versioning: `MAJOR.MINOR.PATCH`.
 

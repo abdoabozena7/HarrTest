@@ -228,6 +228,28 @@ record minimal reproduction, general failure cause, negative-control check,
 smallest reusable safeguard and explicitly excluded cases before updating
 the skill. Preserve project-specific numbers in the project, not the skill.
 
+## 6b. Experiment economy and strict tail acceptance
+
+When a costly or resource-gated test is blocked, read
+[Experiment economy and tail criteria](references/experiment-economy.md).
+Inspect the actual current policy API before declaring a resource minimum:
+**policy execution floor + fixed cleanup reserve** differs from a preferred
+run length, and both differ from the unchanged minimum scientifically useful
+experiment. Use `scripts/experiment_budget.py` for read-only arithmetic only;
+it never authorizes, reserves, modifies a policy, or replaces real admission.
+Check original requirements before selecting a shorter legal experiment. Do
+not substitute protected budgets or claim a one-run shortfall funds the mission.
+
+Treat acceptance requirements as conjunctions. Passing percentile or average
+metrics never waives a required zero-error/zero-late/max-outlier condition.
+Keep all original samples, inspect the exact failed identity and its neighbors,
+and use `scripts/strict_gates.py` only as an unauthenticated numeric helper.
+The preserved original contract, source-qualified evidence, live behavior and
+root gate remain authoritative; do not fabricate or narrow the required list.
+Preserve any live UI/camera proof during a genuinely authorized running session;
+recorded screenshots after shutdown are not live proof. On residual failures,
+diagnose offline first and avoid uninformative repeats.
+
 ## 7. Continue intelligently; stop truthfully
 
 Continue while there is a concrete, authorized next experiment or fix. On a

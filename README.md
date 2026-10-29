@@ -7,7 +7,7 @@
 **A tool-first, evidence-first skill for autonomous coding agents.**  
 **HarrTest** is the public standalone repository for the **HarrTest** skill (`harrtest`).
 
-[![Version](https://img.shields.io/badge/version-v2.1.0-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v2.2.0-65e7c9?style=flat-square)](CHANGELOG.md)
 [![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
 [![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
@@ -230,3 +230,15 @@ The internal skill ID is now `harrtest` (previously `harrnist`, `oh-my-harness`,
 Ideas and fixes are welcome: propose a real failure case and a measurable verification improvement. See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).
 
 <div align="center"><sub>Built for agents that demonstrate results instead of merely reporting progress.</sub></div>
+
+## Experiment economy and strict acceptance (v2.2)
+
+When a test has a fixed startup/cleanup reserve, distinguish the official
+minimum from an agent-chosen preferred duration and the shortest experiment
+that still answers the **unchanged** original question. The new read-only
+`scripts/experiment_budget.py` proposes a candidate but never authorizes it.
+
+When p95/p99 pass but even one original zero-late requirement fails, the
+`scripts/strict_gates.py` helper reports failure. Preserve all samples,
+original oracles and complete product evidence. See
+[experiment economy](references/experiment-economy.md).
