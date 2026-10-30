@@ -1,0 +1,64 @@
+{
+  "base_url": "http://127.0.0.1:8765/",
+  "environment": "local",
+  "headed": false,
+  "timeout_ms": 5000,
+  "scenarios": [
+    {
+      "name": "start-pause-resume-reset",
+      "steps": [
+        {
+          "action": "goto"
+        },
+        {
+          "action": "click",
+          "selector": "#start"
+        },
+        {
+          "action": "wait_ms",
+          "milliseconds": 450
+        },
+        {
+          "action": "click",
+          "selector": "#pause"
+        },
+        {
+          "action": "capture_text",
+          "selector": "#clock",
+          "name": "paused"
+        },
+        {
+          "action": "wait_ms",
+          "milliseconds": 450
+        },
+        {
+          "action": "expect_text_same",
+          "selector": "#clock",
+          "name": "paused"
+        },
+        {
+          "action": "click",
+          "selector": "#start"
+        },
+        {
+          "action": "wait_ms",
+          "milliseconds": 450
+        },
+        {
+          "action": "expect_text_changed",
+          "selector": "#clock",
+          "name": "paused"
+        },
+        {
+          "action": "click",
+          "selector": "#reset"
+        },
+        {
+          "action": "expect_text",
+          "selector": "#clock",
+          "value": "02:00"
+        }
+      ]
+    }
+  ]
+}

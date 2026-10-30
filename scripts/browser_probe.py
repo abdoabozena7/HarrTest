@@ -20,6 +20,29 @@ def stamp():
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+def assert_text_comparison(captures, name, current, *, must_change):
+    if not isinstance(name, str) or not name or name not in captures:
+        raise ValueError("Missing named browser snapshot")
+    reference = captures[name]
+    if not isinstance(reference, str) or not isinstance(current, str) or type(must_change) is not bool:
+        raise ValueError("Comparison requires text snapshots and a boolean mode")
+    if (current != reference) is not must_change:
+        raise AssertionError(f"Browser snapshot {name!r}: expected {'change' if must_change else 'no change'}")
+
+
+def validate_transition_step(step):
+    action = step.get("action")
+    if action == "wait_ms":
+        n = step.get("milliseconds")
+        if type(n) is not int or not 0 <= n <= 10000:
+            raise ValueError("wait_ms requires integer milliseconds 0..10000")
+    if action in {"capture_text", "expect_text_same", "expect_text_changed"}:
+        if not isinstance(step.get("name"), str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", step["name"]):
+            raise ValueError("State comparison requires a named capture")
+        if not isinstance(step.get("selector"), str) or not step["selector"].strip():
+            raise ValueError("State comparison requires selector")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path, required=True)
@@ -77,9 +100,11 @@ def main() -> int:
                 screenshot_dir = output / "screens" / f"{si:02d}-{name}"
                 screenshot_dir.mkdir(parents=True, exist_ok=True)
                 scenario_failed = False
+                captures = {}
                 from playwright.sync_api import expect
                 for index, step in enumerate(steps):
                     action = step["action"]
+                    validate_transition_step(step)
                     entry = {"scenario": name, "index": index, "action": action,
                              "selector": step.get("selector"), "at": stamp(), "passed": False}
                     locator = page.locator(step["selector"]) if step.get("selector") else None
@@ -108,6 +133,12 @@ def main() -> int:
                         elif action == "expect_count": expect(locator).to_have_count(step["value"])
                         elif action == "expect_attribute": expect(locator).to_have_attribute(step["name"], step["value"])
                         elif action == "expect_url_contains": expect(page).to_have_url(re.compile(re.escape(step["value"])))
+                        elif action == "wait_ms": page.wait_for_timeout(step["milliseconds"])
+                        elif action == "capture_text":
+                            captures[step["name"]] = locator.inner_text()
+                        elif action in {"expect_text_same", "expect_text_changed"}:
+                            assert_text_comparison(captures, step["name"], locator.inner_text(),
+                                                   must_change=(action == "expect_text_changed"))
                         elif action == "screenshot": pass
                         else: raise ValueError(f"Unsupported action: {action}")
                         if action.startswith("expect_"): report["assertion_count"] += 1

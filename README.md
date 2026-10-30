@@ -7,7 +7,7 @@
 **A tool-first, evidence-first skill for autonomous coding agents.**  
 **HarrTest** is the public standalone repository for the **HarrTest** skill (`harrtest`).
 
-[![Version](https://img.shields.io/badge/version-v2.2.0-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v2.3.0-65e7c9?style=flat-square)](CHANGELOG.md)
 [![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
 [![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
@@ -242,3 +242,8 @@ When p95/p99 pass but even one original zero-late requirement fails, the
 `scripts/strict_gates.py` helper reports failure. Preserve all samples,
 original oracles and complete product evidence. See
 [experiment economy](references/experiment-economy.md).
+
+
+## Behavioral evidence integrity (v2.3)
+
+The optional `scripts/goal_guard.py` audits structured action outcomes against ordered, same-run journeys and hashes. It rejects contradictory PASS, tampered/stale or missing evidence, and an incomplete new run inheriting old success. `scripts/browser_probe.py` now supports `capture_text`, `expect_text_same`, `expect_text_changed` and `wait_ms` so a timer can pass Pause but fail Resume correctly. Root requirements must still pass the separate sealed `root_gate.py`; typed evidence is not an oracle for product truth. See [verification guide](references/goal-verification.md) and [timer journey](examples/timer-journey.json).

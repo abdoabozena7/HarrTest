@@ -18,3 +18,27 @@ jobs:
           python -c "from pathlib import Path; s=Path('SKILL.md').read_text(); assert s.splitlines()[:2] == ['---', 'name: harrtest']; assert Path('agents/openai.yaml').is_file(); assert Path('visual/banner.svg').is_file()"
       - name: Unit checks
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Package installable skill
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          root = Path('.')
+          excluded = {'.git', '.github', '__pycache__', '.pytest_cache', '.runtime-proof', '.venv'}
+          with ZipFile('skill.zip', 'w', ZIP_DEFLATED) as archive:
+              for file in sorted(root.rglob('*')):
+                  if file.is_file() and file.name != 'skill.zip' and not any(part in excluded for part in file.parts):
+                      archive.write(file, 'harrtest/' + file.as_posix())
+          with ZipFile('skill.zip') as archive:
+              names = set(archive.namelist())
+              assert 'harrtest/SKILL.md' in names
+              assert 'harrtest/scripts/goal_guard.py' in names
+              assert 'harrtest/agents/openai.yaml' in names
+          PY
+      - name: Upload skill ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: harrtest-skill-v2.3.0
+          path: skill.zip
+          if-no-files-found: error
