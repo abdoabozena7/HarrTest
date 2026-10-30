@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "comparison_scope": "CONTROLLED_CODING_AGENT_EVALUATION_NOT_AUTOMATIC_PRODUCT_SUCCESS",
+  "original_goal_reference": "REPLACE_ME_ORIGINAL_REQUEST_AND_FIXED_EVALUATOR",
+  "starting_repository_snapshot": "REPLACE_ME_SHA256_OR_COMMIT",
+  "matched_conditions": {
+    "model": "REPLACE_ME",
+    "host_and_tools": "REPLACE_ME",
+    "permissions_and_resource_limits": "REPLACE_ME",
+    "evaluator": "REPLACE_ME_INDEPENDENT_EVALUATOR"
+  },
+  "baseline": {
+    "harness": "copilot-no-harrtest",
+    "skill_version": null,
+    "root_goal_verified": false,
+    "verified_original_requirements": [],
+    "real_runtime_evidence": [],
+    "false_success_claims": 0,
+    "authorized_resource_cost": null
+  },
+  "candidate": {
+    "harness": "copilot+harrtest",
+    "skill_version": "REPLACE_ME_LATEST",
+    "skill_revision": "REPLACE_ME_SHA",
+    "host_skill_invocation_trace": "REPLACE_ME_TOOL_REFERENCE",
+    "root_goal_verified": false,
+    "verified_original_requirements": [],
+    "real_runtime_evidence": [],
+    "false_success_claims": 0,
+    "authorized_resource_cost": null
+  },
+  "limitation": "A single comparable pair is preliminary, not proof of causal general improvement. Do not count child-only verification as root success."
+}

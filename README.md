@@ -7,7 +7,7 @@
 **A tool-first, evidence-first skill for autonomous coding agents.**  
 **HarrTest** is the public standalone repository for the **HarrTest** skill (`harrtest`).
 
-[![Version](https://img.shields.io/badge/version-v2.3.0-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v2.4.0-65e7c9?style=flat-square)](CHANGELOG.md)
 [![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
 [![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
@@ -247,3 +247,21 @@ original oracles and complete product evidence. See
 ## Behavioral evidence integrity (v2.3)
 
 The optional `scripts/goal_guard.py` audits structured action outcomes against ordered, same-run journeys and hashes. It rejects contradictory PASS, tampered/stale or missing evidence, and an incomplete new run inheriting old success. `scripts/browser_probe.py` now supports `capture_text`, `expect_text_same`, `expect_text_changed` and `wait_ms` so a timer can pass Pause but fail Resume correctly. Root requirements must still pass the separate sealed `root_gate.py`; typed evidence is not an oracle for product truth. See [verification guide](references/goal-verification.md) and [timer journey](examples/timer-journey.json).
+
+## Latest-only preflight and safe continuity (v2.4)
+
+The read-only `python scripts/version_guard.py --installed PATH_TO_HARRTEST`
+compares every installed skill file with the current public GitHub main tree,
+including Git blob hashes, and accepts explainable CRLF normalization only.
+It does not install updates or prove the host invoked the skill. In a
+latest-only session, any missing/modified file or unavailable GitHub check
+means stop before doing project work. Confirm a separate genuine host
+`harrtest` invocation as well.
+
+[Continuing an existing task safely](references/continuation-integrity.md)
+explains how to preserve an unfinished task owned by another session, why
+source manifests and telemetry populations can have different scopes, and
+how to compare real goal improvements instead of simply counting tests.
+Use the [controlled evaluation template](assets/templates/skill-evaluation.json)
+for baseline-vs-HarrTest measurement; a single unpaired project run cannot
+establish that a new version improved outcomes.

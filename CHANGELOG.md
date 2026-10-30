@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.4.0] - 2026-10-30
+
+- Add fail-closed read-only latest-version/source-tree verification, accounting for Git blob hashes and CRLF normalization; require separate actual host skill invocation.
+- Preserve active tasks and their ownership before initializing new audits; never bypass unfinished-session restrictions.
+- Clarify evidence population scopes, manifest subset validation and nested versus disjoint timing measurements.
+- Prioritize observable original-goal progress over repeated metadata-only audits, with honest external blockers.
+- Add an independent matched-baseline evaluation template to measure skill effect rather than assume improvement.
+- Add 13 local offline version guard regression tests; no claim of CARLA or Copilot production acceptance.
+
 ## [2.3.0] - 2026-10-30
 
 - Add independent, fail-closed `scripts/goal_guard.py` for typed outcomes, same-run ordered journey steps, source/target/mode identity and artifact SHA-256 integrity.

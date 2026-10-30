@@ -29,6 +29,34 @@ Read [Goal verification](references/goal-verification.md) for false-success prev
 
 Before beginning an agent run, compare the installed local VERSION and scripts with the latest authoritative HarrTest release/commit when network access and authority are available. If the user requires latest-only operation and a newer version exists, **stop before touching the task** and request update; if latest cannot be checked, mark version UNVERIFIED and stop rather than claiming currency. Existing sealed receipts are invalid after harness script updates.
 
+## v2.4: existing-session integrity and measurable impact
+
+For latest-only sessions and existing-project resumption, read
+[Continuation integrity](references/continuation-integrity.md). If the host
+has loaded `harrtest`, execute the read-only `scripts/version_guard.py`
+before project work; require a full latest public-tree match and a separate
+real host skill invocation. GitHub's `main` revision and `VERSION` are the
+authority, not release-tag presence. If verification is unavailable, stop
+under the user's latest-only requirement; do not claim the model actually
+followed a skill merely because its files match.
+
+Inspect active task/session ownership BEFORE calling `proof.py init`.
+Never replace another active unfinished task, forge a blocked marker, or
+overwrite the root to bypass a collision. Favor safe explicitly addressed
+resumption or a separately scoped audit child. Discover and validate distinct
+evidence populations and overlapping timing stages before comparing counts,
+hashes or timing sums. Prefer user-visible goal progress to repeated
+metadata-only analysis; when blocked by genuine authority, report the one
+specific missing approval. A green offline child is not an improved product.
+
+When evaluating whether HarrTest itself helps, use
+[Controlled comparison template](assets/templates/skill-evaluation.json)
+in a separately authorized matched trial against no-skill Copilot or a pinned
+historical version. Keep the original goal, model, tools, initial source,
+budget and independent evaluator comparable; distinguish measured success
+from unsupported claims. If no comparable control was run, report
+`BEHAVIORAL_IMPACT_UNPROVEN` rather than advertising an uplift.
+
 ## 0. Bind the original root goal
 
 Before any implementation, preserve the exact original user request and any governing repository acceptance contracts. Read [Root Goal Binding](references/root-goal.md), create and seal a complete source-anchored root contract using `scripts/root_gate.py`. Map all original requirements to independent expected outcomes and required child evidence, including final integration. In instruction-only mode keep a durable root ledger but do not claim mechanical enforcement.
