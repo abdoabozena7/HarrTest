@@ -57,6 +57,36 @@ budget and independent evaluator comparable; distinguish measured success
 from unsupported claims. If no comparable control was run, report
 `BEHAVIORAL_IMPACT_UNPROVEN` rather than advertising an uplift.
 
+## v2.6: outcome-first, patient autonomous completion
+
+For a user who wants to hand off the goal and is comfortable with longer work
+and ordinary model usage, read [Outcome-first autonomy](references/outcome-first-autonomy.md).
+Optimize for **verified original user outcomes**, not fast turn completion or
+minimum token use. Do not invent a mission deadline, token/credit cap, or fixed
+iteration count. A per-command timeout is a health/safety check, not a reason
+to abandon the goal: diagnose, replan and retry when genuinely useful and
+authorized. Real host quotas, user stop requests, resource admission, and
+explicit payment/safety/approval limits remain mandatory. This preference
+does **not** grant new simulator time or permission to spend money.
+
+When `Ask User` or a leader interaction times out or returns unavailable,
+do not claim the user is absent, has declined, or has approved. If the question
+is **optional advice** about a reversible, authorized choice, record the
+assumption, decide independently and continue. If it requests **required
+authorization**, pause *only that gated action*, preserve the request and
+continue unrelated authorized work. If no useful independent work exists,
+leave an actionable handoff. Do not loop asking the same unavailable tool.
+Use read-only `scripts/autonomy_decision.py` for optional classification;
+its advisory output cannot issue grants or prove completion.
+
+Checkpoint meaningful completed work and source-bound evidence. On resumption,
+start at the first genuinely unfinished requirement; don't revisit implemented
+features or repeat audits without changed relevant inputs. Revalidate only
+affected current-source acceptance where required (including harness receipt
+changes), without erasing valid historical accomplishments. A task may take
+hours if the host and permissions allow; never promise autonomous execution
+after the host has stopped or in the background without an actual scheduler.
+
 ## 0. Bind the original root goal
 
 Before any implementation, preserve the exact original user request and any governing repository acceptance contracts. Read [Root Goal Binding](references/root-goal.md), create and seal a complete source-anchored root contract using `scripts/root_gate.py`. Map all original requirements to independent expected outcomes and required child evidence, including final integration. In instruction-only mode keep a durable root ledger but do not claim mechanical enforcement.

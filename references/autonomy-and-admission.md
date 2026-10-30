@@ -4,6 +4,22 @@
 
 An agent can make genuine progress while the parent goal stays incomplete because the next real-world verification is disallowed by an expired grant, quota, required reservation, scarce disk, absent tool, or external policy. It is wrong to declare that the goal succeeded; it is also inefficient to repeatedly ask permission without packaging a precise decision. Apply this procedure to coding, simulations, browser accounts, data jobs, deployment, and costly model evaluations.
 
+## Outcome-first preference and optional questions (v2.6)
+
+A hands-off user may value a **verified finished result** more than time or
+ordinary model credits. Use that as an optimization priority *within* the
+existing permission/host envelope; do not invent hour, token or retry caps.
+Keep finite subprocess health timeouts and obey nonextendable host deadlines.
+The preference is NOT authorization to extend project diagnostic ledgers,
+paid services or protected holdouts.
+
+Distinguish an optional leader opinion from mandatory consent. A failed
+`Ask User` dispatch is not proof the user is absent. Skip optional advice
+and continue reversible authorized work; if consent is essential, pause only
+the gated action, continue independent authorized work, and preserve a
+specific outstanding decision. See
+[Outcome-first autonomy](outcome-first-autonomy.md).
+
 ## 1. Discover the authority hierarchy
 
 Keep separate: (a) user's goal and source-of-truth acceptance; (b) user-approved authorization envelope; (c) host/organization/resource policy; (d) experiment's protected reservation ledger; and (e) current evidence. Higher or more restrictive real policies still govern. A broad command like "finish autonomously" is not a license to override budget guards, destructive-action confirmation, payment restrictions, production access, or safety conditions.

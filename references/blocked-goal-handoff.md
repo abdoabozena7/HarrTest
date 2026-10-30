@@ -8,6 +8,18 @@ At each resumed session, inspect the last sealed root, task state, current proje
 
 Before `proof.py init`, inspect the existing active task/session ownership and prefer existing sealed tasks. Never steal `active.json` from an unfinished session or create a new parent whose goal is easier than the original. Preserve prior blocked/failure reports and raw data. When the installed proof scripts change, previous seals and receipts may cease to verify as **current**; this is deliberate integrity behavior, not proof of a new product regression. Do not repeatedly verify with `--write-report` against an old seal and overwrite its previous historical `gate.json`. If necessary, copy or archive the old gate first and run a non-writing verification or a clearly separate audit scope. Never claim old receipts became current merely because the old gate is preserved.
 
+### Interaction-timeout clarification (v2.6)
+
+A failed or timed-out `Ask User` delivery means **the interaction channel
+failed**, not that the user is physically absent, has declined, or consented.
+Before escalating, classify the question: optional reversible consultation may
+be skipped with a recorded autonomous choice; mandatory authorization may NOT
+be skipped. When approval is genuinely required, pause only the protected
+action, continue other meaningful pre-authorized work, and use
+`ACTION_REQUIRED` only if no useful independent work remains. An agent-made
+time estimate, slow model response, or optional review timeout is not a
+project-wide stop condition; actual policy/host limits still apply.
+
 ## 2. Convert a real blocker into a single decision
 
 When the next original native/live step cannot be admitted and no other evidence-supported authorized implementation experiment is ready:
@@ -15,7 +27,7 @@ When the next original native/live step cannot be admitted and no other evidence
 1. Verify the **actual host/source-of-truth** allowance, policy minimum, cleanup reserve and protected budgets. Do not infer authorization from a user goal, an agent-created JSON file or a helpful script.
 2. Identify one minimum *meaningful* step and the separate resources needed **for that step**, not the complete mission. Do not assume that the arithmetic minimum is scientifically useful.
 3. If the host has a supported `Ask User` tool and the user has not opted out, present **one** succinct, bounded request: action and resource pool, amount/units, where/when valid, unchanged safety/acceptance requirements, and what will be run after approval. Repeated empty answers or old approvals are not consent.
-4. Without an interactive user decision, end with `ACTION_REQUIRED: [specific user grant/host fix]`, `ROOT_GOAL_UNVERIFIED` and a clear choice to approve or decline. The UI's **Task completed** indicator only means the agent turn ended.
+4. Without an interactive user decision, continue other authorized independent work first. When none remains, end with `ACTION_REQUIRED: [specific user grant/host fix]`, `ROOT_GOAL_UNVERIFIED` and a clear choice to approve or decline. The UI's **Task completed** indicator only means the agent turn ended.
 5. Do not run protected work until a **new explicit grant** and real project/host admission succeed. On valid grant, resume the next pending original gate; do not repeat an unchanged offline audit for the sake of showing activity.
 
 For optional deterministic communication support, run `python scripts/blocker_handoff.py --current current-blocker.json --previous previous-blocker.json` (omit `--previous` if unknown). This is **read-only**. The JSON input is assembled from independently verified facts, not taken as authority. Its output is a decision *request*, never a permission or a success verdict. A signature over source, evidence, authorization identity, gate and budget detects **unchanged repeated blockers** even when log timestamps differ. A changed signature indicates new input and requires reevaluation, not automatic approval.

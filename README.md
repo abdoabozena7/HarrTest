@@ -7,7 +7,7 @@
 **A tool-first, evidence-first skill for autonomous coding agents.**  
 **HarrTest** is the public standalone repository for the **HarrTest** skill (`harrtest`).
 
-[![Version](https://img.shields.io/badge/version-v2.5.0-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v2.6.0-65e7c9?style=flat-square)](CHANGELOG.md)
 [![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
 [![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
@@ -74,6 +74,22 @@ flowchart TD
 ```
 
 Use `scripts/root_gate.py init` to preserve the exact original request, populate a source-anchored `root-contract.json`, seal it **before** child execution, and verify the complete goal with `root_gate.py verify`. See [root-goal runbook](references/root-goal.md). A successful `proof.py verify` only means **CHILD_TASK_ONLY**. Scope coverage still needs a meaningful independent review; no model-authored test can guarantee global correctness.
+
+## 🧭 Outcome-first autonomous mode (v2.6)
+
+When you hand off a goal, HarrTest prioritizes the **real verified result**.
+It must not stop merely because an agent-estimated deadline, model-token budget,
+or optional leader dialog timed out. A nonessential `Ask User` failure is not
+a user rejection: choose a reversible, authorized next step and keep going.
+
+Actual paid-resource limits, host sessions, project admission and protected
+budgets are **not** overridden. Missing mandatory consent pauses only that
+action; unrelated permitted work can continue. The read-only
+[`autonomy_decision.py`](scripts/autonomy_decision.py) helps classify such
+interruptions without granting permission. See
+[outcome-first autonomy](references/outcome-first-autonomy.md).
+A working skill cannot guarantee continuous multi-hour execution if the
+host itself stops the session; durable handoffs support genuine resumption.
 
 ## 🔄 The verification loop
 

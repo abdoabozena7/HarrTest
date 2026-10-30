@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.6.0] - 2026-10-30
+
+- Default to outcome-first progress for hands-off goals: quality and real
+  acceptance take priority over agent-invented deadlines, early turn endings
+  and token minimization, within all authentic host/user/resource limits.
+- Distinguish optional leader consultation from mandatory consent. When the
+  host's Ask User delivery fails, do not infer user absence, decline or assent;
+  skip optional questions and continue independent authorized work.
+- Keep operation health timeouts and actual host/project budget limits intact;
+  resume from durable checkpoints instead of treating soft time estimates as
+  whole-goal deadlines.
+- Add read-only `scripts/autonomy_decision.py` and 17 locally passing
+  positive and negative regression tests; results never grant permissions.
+- Reconcile blocked-goal and authorization references, and publish the full
+  installable bundle from GitHub Actions under a stable artifact name.
+- No claim that CARLA native root acceptance, an external grant, or multi-hour
+  host execution is now verified.
+
 ## [2.5.0] - 2026-10-30
 
 - Add reusable blocked-goal decision protocol: detect repeated unchanged blockers, avoid audit loops, preserve historical gate receipts, and ask one scoped actionable user decision instead of equating turn completion with root success.

@@ -34,11 +34,12 @@ jobs:
               names = set(archive.namelist())
               assert 'harrtest/SKILL.md' in names
               assert 'harrtest/scripts/goal_guard.py' in names
+              assert 'harrtest/scripts/autonomy_decision.py' in names
               assert 'harrtest/agents/openai.yaml' in names
           PY
       - name: Upload skill ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: harrtest-skill-v2.3.0
+          name: harrtest-skill
           path: skill.zip
           if-no-files-found: error
