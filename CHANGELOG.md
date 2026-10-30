@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.3.0] - 2026-10-30
+
+- Add independent, fail-closed `scripts/goal_guard.py` for typed outcomes, same-run ordered journey steps, source/target/mode identity and artifact SHA-256 integrity.
+- Reject false PASS from contradictory/missing states, stale or tampered artifacts and mixed or incomplete attempts; allow only a complete valid fresh run to supersede a failure.
+- Add browser `capture_text`, `expect_text_same`, `expect_text_changed`, and bounded `wait_ms` to detect Pause->Resume style defects.
+- Retain full original root requirement IDs while assigning children only scoped obligations; guard is supplemental to sealed root and live acceptance.
+- Add negative regressions and browser demonstration. No claim of generalized live model reliability.
+
+
 ## [2.2.0] - 2026-10-30
 
 - Distinguish official minimum reservation, preferred execution length, fixed
