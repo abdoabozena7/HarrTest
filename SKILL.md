@@ -23,6 +23,12 @@ Follow system, organization, user, repository, safety and spending restrictions.
 Never disable a sandbox, borrow protected experiment time, erase failed runs,
 weaken thresholds, or reset a budget merely to complete a task.
 
+## v2.3: verification integrity and end-user state transitions
+
+Read [Goal verification](references/goal-verification.md) for false-success prevention, ordered browser transitions, child-scoped acceptance and full-root retention. Do not derive PASS from a clipped log, prose keyword, or an unavailable newer check. Run the read-only `scripts/goal_guard.py` on structured source-bound event evidence when the workflow uses multi-step journeys; this is an **additional integrity screen**, not a substitute for proof.py, live product acceptance, or the sealed root_gate.py. Do not manufacture receipts.
+
+Before beginning an agent run, compare the installed local VERSION and scripts with the latest authoritative HarrTest release/commit when network access and authority are available. If the user requires latest-only operation and a newer version exists, **stop before touching the task** and request update; if latest cannot be checked, mark version UNVERIFIED and stop rather than claiming currency. Existing sealed receipts are invalid after harness script updates.
+
 ## 0. Bind the original root goal
 
 Before any implementation, preserve the exact original user request and any governing repository acceptance contracts. Read [Root Goal Binding](references/root-goal.md), create and seal a complete source-anchored root contract using `scripts/root_gate.py`. Map all original requirements to independent expected outcomes and required child evidence, including final integration. In instruction-only mode keep a durable root ledger but do not claim mechanical enforcement.
