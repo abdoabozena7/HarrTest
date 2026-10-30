@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>HarrTest transition fixture</title><link rel="icon" href="data:,"></head><body><output id="clock">02:00</output><button id="start">Start</button><button id="pause">Pause</button><button id="reset">Reset</button><script>
+let remaining=120, interval=null;
+function display(){document.querySelector('#clock').textContent=String(Math.floor(remaining/60)).padStart(2,'0')+':'+String(remaining%60).padStart(2,'0')}
+function start(){if(interval!==null)return;interval=setInterval(()=>{remaining=Math.max(0,remaining-1);display()},125)}
+function pause(){clearInterval(interval);interval=null}
+function reset(){clearInterval(interval);interval=null;remaining=120;display()}
+document.querySelector('#start').addEventListener('click',start);
+document.querySelector('#pause').addEventListener('click',pause);
+document.querySelector('#reset').addEventListener('click',reset);
+</script></body></html>
