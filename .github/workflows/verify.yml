@@ -25,7 +25,7 @@ jobs:
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           root = Path('.')
-          excluded = {'.git', '.github', '__pycache__', '.pytest_cache', '.runtime-proof', '.venv'}
+          excluded = {'.git', '__pycache__', '.pytest_cache', '.runtime-proof', '.venv'}
           with ZipFile('skill.zip', 'w', ZIP_DEFLATED) as archive:
               for file in sorted(root.rglob('*')):
                   if file.is_file() and file.name != 'skill.zip' and not any(part in excluded for part in file.parts):
@@ -35,6 +35,7 @@ jobs:
               assert 'harrtest/SKILL.md' in names
               assert 'harrtest/scripts/goal_guard.py' in names
               assert 'harrtest/scripts/autonomy_decision.py' in names
+              assert 'harrtest/.github/workflows/verify.yml' in names
               assert 'harrtest/agents/openai.yaml' in names
           PY
       - name: Upload skill ZIP

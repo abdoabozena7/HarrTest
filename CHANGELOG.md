@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.6.1] - 2026-10-30
+
+- Fix GitHub Actions `skill.zip` packaging: include the tracked `.github/workflows` files so the complete installable ZIP passes HarrTest's strict latest-source tree verification. Add a CI bundle assertion to prevent dropping the workflow again.
+- Retain outcome-first autonomy, optional-leader timeout recovery and real protected permission boundaries from v2.6.0 unchanged.
+
 ## [2.6.0] - 2026-10-30
 
 - Default to outcome-first progress for hands-off goals: quality and real

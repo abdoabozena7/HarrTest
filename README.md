@@ -7,7 +7,7 @@
 **A tool-first, evidence-first skill for autonomous coding agents.**  
 **HarrTest** is the public standalone repository for the **HarrTest** skill (`harrtest`).
 
-[![Version](https://img.shields.io/badge/version-v2.6.0-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v2.6.1-65e7c9?style=flat-square)](CHANGELOG.md)
 [![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
 [![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
