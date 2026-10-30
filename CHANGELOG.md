@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.4.1] - 2026-10-30
+
+- Fix latest-version guard failing on GitHub's legitimate line-wrapped base64 Git Blob responses (`Only base64 data is allowed`). Strip only CR/LF transport line breaks before strict decoding, then verify Git object identity as before.
+- Add regression tests for LF/CRLF wrapping and malformed base64 (must still fail closed).
+- No CARLA authorization, evidence gate, runtime policy or scope changes.
+
 ## [2.4.0] - 2026-10-30
 
 - Add fail-closed read-only latest-version/source-tree verification, accounting for Git blob hashes and CRLF normalization; require separate actual host skill invocation.

@@ -112,7 +112,11 @@ def inspect(root: Path, repo: str = REPO, fetch=fetch_json) -> dict:
     blob = fetch(f'{base}/git/blobs/{version_entry["sha"]}')
     if blob.get('encoding') != 'base64' or not isinstance(blob.get('content'), str):
         raise ValueError('Invalid remote VERSION blob')
-    version_bytes = base64.b64decode(blob['content'], validate=True)
+    # GitHub's Git Blobs API may wrap base64 text across multiple lines.
+    # Remove only transport line breaks: keeping validate=True rejects other
+    # invalid characters, and the Git blob SHA is still checked below.
+    encoded = blob['content'].replace('\r', '').replace('\n', '')
+    version_bytes = base64.b64decode(encoded, validate=True)
     if git_blob_sha(version_bytes) != version_entry['sha']:
         raise ValueError('Remote VERSION contents did not match remote tree')
     version = version_bytes.decode('utf-8-sig').strip()

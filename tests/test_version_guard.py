@@ -109,6 +109,34 @@ class VersionGuardTests(unittest.TestCase):
         self.assertEqual(result['status'], 'LATEST_VERIFIED')
         self.assertFalse(result['host_skill_invocation_verified'])
 
+
+    def test_inspect_wrapped_github_base64_passes(self):
+        # GitHub Git Blob JSON commonly uses base64 with embedded newlines.
+        content = base64.b64encode(self.contents['VERSION']).decode()
+        wrapped = content[:4] + '\n' + content[4:] + '\n'
+        def fetch(url):
+            if '/git/ref/' in url: return {'object': {'sha': REVISION}}
+            if '/git/trees/' in url: return self.tree
+            return {'content': wrapped, 'encoding': 'base64'}
+        self.assertEqual(version_guard.inspect(self.root, fetch=fetch)['status'], 'LATEST_VERIFIED')
+
+    def test_inspect_wrapped_crlf_base64_passes(self):
+        content = base64.b64encode(self.contents['VERSION']).decode()
+        def fetch(url):
+            if '/git/ref/' in url: return {'object': {'sha': REVISION}}
+            if '/git/trees/' in url: return self.tree
+            return {'content': content[:4] + '\r\n' + content[4:] + '\r\n', 'encoding': 'base64'}
+        self.assertEqual(version_guard.inspect(self.root, fetch=fetch)['status'], 'LATEST_VERIFIED')
+
+    def test_inspect_malformed_base64_still_fails_closed(self):
+        content = base64.b64encode(self.contents['VERSION']).decode()
+        def fetch(url):
+            if '/git/ref/' in url: return {'object': {'sha': REVISION}}
+            if '/git/trees/' in url: return self.tree
+            return {'content': content[:4] + '!' + content[4:], 'encoding': 'base64'}
+        with self.assertRaisesRegex(Exception, 'base64'):
+            version_guard.inspect(self.root, fetch=fetch)
+
     def test_fails_if_expected_skill_missing_in_tree(self):
         t = copy.deepcopy(self.tree)
         t['tree'] = [f for f in t['tree'] if f['path'] != 'SKILL.md']
