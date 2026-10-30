@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.5.0] - 2026-10-30
+
+- Add reusable blocked-goal decision protocol: detect repeated unchanged blockers, avoid audit loops, preserve historical gate receipts, and ask one scoped actionable user decision instead of equating turn completion with root success.
+- Keep genuine permission and project admission authoritative. No budget grants, protected-window use, or acceptance relaxation.
+- Add a cross-project reference based on the observed CARLA authorization stall. Tested a separate read-only blocker handoff prototype locally (13 tests); its Python implementation is not part of this tagged repository revision.
+
 ## [2.4.1] - 2026-10-30
 
 - Fix latest-version guard failing on GitHub's legitimate line-wrapped base64 Git Blob responses (`Only base64 data is allowed`). Strip only CR/LF transport line breaks before strict decoding, then verify Git object identity as before.

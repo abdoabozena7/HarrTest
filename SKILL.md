@@ -284,6 +284,32 @@ Preserve any live UI/camera proof during a genuinely authorized running session;
 recorded screenshots after shutdown are not live proof. On residual failures,
 diagnose offline first and avoid uninformative repeats.
 
+## v2.5: user-actionable blocked-goal handoff
+
+When a goal remains incomplete and actual host admission prevents the next live
+step, read [Blocked-goal recovery](references/blocked-goal-handoff.md).
+**Before repeating an audit**, compare the source, evidence, permission state,
+first pending gate and actual remaining spendable budget with the previous
+attempt. Unchanged inputs plus no new falsifiable hypothesis mean do not
+rebuild the same audit. A root remains UNVERIFIED; a tool's "Task completed"
+indicator is not a passed user goal.
+
+If an external restriction is the only remaining useful next step, present
+**one precise user decision** instead of an undifferentiated BLOCKED summary:
+actual observed restriction, next meaningful authorized action, smallest
+relevant resource reservation or scope, unchanged protected budgets and
+original acceptance, and explicit approve/decline choices. Where a host Ask User
+tool is genuinely available, use it once; silence never implies approval.
+If the request is refused or unanswered, pause with ACTION_REQUIRED and a
+durable resume reference; never self-grant, edit budget ledgers or consume
+protected holdouts. An arithmetic one-run shortfall is not whole-goal funding.
+
+Preserve previous sealed gate reports before a new verification run; a
+changed harness engine hash makes older receipts stale as *current* proofs,
+not necessarily new product defects. When diagnosing live failures, distinguish
+the verified offline diagnosis from demonstrated product repair. Prioritize
+falsifiable source changes with real evidence over repetitive metadata checks.
+
 ## 7. Continue intelligently; stop truthfully
 
 Continue while there is a concrete, authorized next experiment or fix. On a
