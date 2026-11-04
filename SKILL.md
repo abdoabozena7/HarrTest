@@ -54,6 +54,12 @@ Before editing, initialize `scripts/project_memory.py --project PROJECT bootstra
 using the existing authoritative `ROOT_GOAL.md`; if absent, pass `--goal-file`
 pointing to the sealed original request. Preserve original goal revisions; never
 invent a goal from README or overwrite changed text without explicit approval.
+On the first visit, inspect only the relevant high-level documents and actual
+entrypoints: application purpose, public interfaces, data flow, major modules,
+shared contracts, persistence, tests, and external resource boundaries. Save a
+small, factual project brief as source-qualified notes; do NOT scan/dump the
+whole repo or invent architecture. On later sessions, reuse notes whose source
+hashes still match and refresh only changed/uncertain areas.
 Read `brief` and use `pack --task "specific next outcome" --role implement`
 for selective context. Record source-qualified facts with `note`, and real
 work/checkpoints with `checkpoint` (not as substitutes for `proof.py` verification).

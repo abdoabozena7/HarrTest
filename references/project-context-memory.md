@@ -30,6 +30,20 @@ Changing goal text fails closed unless the user approved `--revise-goal`.
 Don't replace the original contract or silently edit its acceptance scope.
 Run `brief` on each new session. Refresh source notes after changes.
 
+## First-pass project mapping (agent responsibility)
+
+The deterministic manifest lists names, not architecture. The executing agent
+must inspect the real high-level docs, public entrypoints, current interfaces,
+storage and tests, then record only relevant verified facts with source hashes.
+Capture purpose, core components and dependencies, data flow, invariants, public
+entrypoints, test commands and known failure modes. Avoid whole-repo ingestion.
+A new session should first read the existing brief, compare source identities,
+then inspect changed or missing areas rather than reconstructing context.
+For each delegated task, curate only the files/notes needed to reason about that
+particular outcome, its integration interface and failure history. If a stronger
+host model is genuinely available for curation, it may challenge the proposed
+context pack; its choices must pass local source/provenance validation.
+
 ## Source-qualified knowledge
 
 Only record concrete observations with actual file provenance:
