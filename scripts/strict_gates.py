@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from decimal import Decimal, InvalidOperation
 import json
+import strict_io
 from pathlib import Path
 import sys
 
@@ -80,8 +81,8 @@ def main(argv=None):
     parser.add_argument('readings', type=Path)
     args = parser.parse_args(argv)
     try:
-        result = evaluate(json.loads(args.contract.read_text(encoding='utf-8-sig')),
-                          json.loads(args.readings.read_text(encoding='utf-8-sig')))
+        result = evaluate(strict_io.loads(args.contract.read_text(encoding='utf-8-sig')),
+                          strict_io.loads(args.readings.read_text(encoding='utf-8-sig')))
     except (OSError, ValueError, TypeError) as exc:
         print(json.dumps({'status': 'INVALID_GATE_INPUT', 'error': str(exc)}), file=sys.stderr)
         return 2

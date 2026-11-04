@@ -1,6 +1,7 @@
 """Validate an explicit work DAG. This module never spawns or invents agents."""
 from __future__ import annotations
 import re
+import strict_io
 
 STATES = {"TODO", "IN_PROGRESS", "IMPLEMENTED", "VERIFIED", "BLOCKED"}
 ROLES = {"investigate", "implement", "integrate", "review"}
@@ -68,4 +69,17 @@ def validate(plan, requirement_ids, check_ids):
         raise ValueError("An integration task must depend transitively on every implementation/investigation task")
     if plan["strategy"] == "serial" and any(t["execution"] == "subagent" for t in tasks):
         raise ValueError("A serial-only plan cannot claim delegated execution; choose hybrid or serial steps")
+    for task in tasks:
+        for field in ("write_scope", "read_scope"):
+            for name in task.get(field, []):
+                strict_io.scope_key(name)
+        resources = task.get("resources", [])
+        if not isinstance(resources, list) or any(not isinstance(x, str) or not x for x in resources):
+            raise ValueError("resources must list explicit exclusive resource IDs")
+    if plan["strategy"] != "serial":
+        for i, left in enumerate(tasks):
+            for right in tasks[i + 1:]:
+                ordered = left["id"] in ancestor_cache[right["id"]] or right["id"] in ancestor_cache[left["id"]]
+                if not ordered and (left["execution"] == "subagent" or right["execution"] == "subagent") and strict_io.conflicts(left, right):
+                    raise ValueError(f"Concurrent scope/resource conflict: {left['id']} and {right['id']}; add ordering or disjoint ownership")
     return index

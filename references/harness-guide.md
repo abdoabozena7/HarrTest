@@ -7,8 +7,8 @@ blocked/resume; hooks; revisions and large projects; operational boundaries.
 
 Use Python 3.10 or newer. The collector, planner and installer use only the
 standard library. Browser execution additionally needs Playwright, Chromium
-and its video dependency. Use one installed skill copy consistently; scripts
-are fingerprinted, and changing them invalidates sealed evidence.
+and its video dependency. Use one installed skill copy consistently; the collector and declared verifier dependencies are fingerprinted. Changes to
+those dependencies invalidate acceptance; unrelated helpers do not automatically do so.
 
 In the commands below, `PROOF` means the actual absolute path to
 `harrtest/scripts/proof.py`; `TASK` is the created task directory. Replace these
@@ -215,3 +215,10 @@ For large projects, use bounded child contracts plus a parent integration
 contract. Keep the original request covered. This initial harness is intentionally
 conservative; it does not automatically compute file-level dependency invalidation
 or launch a multi-agent scheduler. The coding agent chooses and orchestrates work.
+
+
+## v3 coordination
+
+See [v3 workflow](v3-workflow.md) for root coverage, detached children, persistent
+resource leases and real host worker handoffs. See [migration](v3-migration.md)
+before applying the new collector to old seals.

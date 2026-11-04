@@ -60,7 +60,7 @@ class BrowserE2E(unittest.TestCase):
                 c['plan']['tasks'][0]['checks']=['browser']
                 task=project/'.runtime-proof/browser-demo'; task.mkdir(parents=True)
                 proof.save(task/'contract.json',c); proof.save(task/'context.json',{'project':str(project)})
-                proof.validate_contract(c); proof.save(task/'seal.json',{'contract_hash':proof.digest(c),'engine_hash':proof.engine_hash()})
+                proof.validate_contract(c); proof.save(task/'seal.json',{'contract_hash':proof.digest(c),'engine_hash':proof.engine_hash(c)})
                 with contextlib.redirect_stdout(io.StringIO()): good=proof.run_check(task,'browser')
                 run=task/proof.load(task/'latest/browser.json')['run']
                 shutil.copytree(run,output/(('working-' if good['passed'] else 'failed-') + good['run_id']),dirs_exist_ok=True)

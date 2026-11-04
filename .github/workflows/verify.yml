@@ -7,19 +7,24 @@ permissions:
   contents: read
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
       - name: Validate layout
-        run: |
-          python -c "from pathlib import Path; s=Path('SKILL.md').read_text(); assert s.splitlines()[:2] == ['---', 'name: harrtest']; assert Path('agents/openai.yaml').is_file(); assert Path('visual/banner.svg').is_file()"
-      - name: Unit checks
-        run: python -m unittest discover -s tests -p 'test_*.py' -v
-
-      - name: Package installable skill
+        run: python -c "from pathlib import Path; s=Path('SKILL.md').read_text(encoding='utf-8'); assert s.splitlines()[:2] == ['---', 'name: harrtest']; assert Path('agents/openai.yaml').is_file(); assert Path('scripts/workflow.py').is_file(); assert Path('visual/banner.svg').is_file()"
+      - name: Unit and actual CLI workflow regressions
+        run: python -B -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Package complete installable skill
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -28,17 +33,18 @@ jobs:
           excluded = {'.git', '__pycache__', '.pytest_cache', '.runtime-proof', '.venv'}
           with ZipFile('skill.zip', 'w', ZIP_DEFLATED) as archive:
               for file in sorted(root.rglob('*')):
+                  if file.is_symlink():
+                      raise RuntimeError('Refuse symlink in published skill: ' + str(file))
                   if file.is_file() and file.name != 'skill.zip' and not any(part in excluded for part in file.parts):
                       archive.write(file, 'harrtest/' + file.as_posix())
           with ZipFile('skill.zip') as archive:
+              assert archive.testzip() is None
               names = set(archive.namelist())
-              assert 'harrtest/SKILL.md' in names
-              assert 'harrtest/scripts/goal_guard.py' in names
-              assert 'harrtest/scripts/autonomy_decision.py' in names
-              assert 'harrtest/.github/workflows/verify.yml' in names
-              assert 'harrtest/agents/openai.yaml' in names
+              for required in ('SKILL.md', 'scripts/proof.py', 'scripts/root_gate.py', 'scripts/workflow.py', 'scripts/runtime_store.py', 'scripts/coverage.py', '.github/workflows/verify.yml', 'agents/openai.yaml'):
+                  assert 'harrtest/' + required in names, required
           PY
-      - name: Upload skill ZIP
+      - name: Upload complete skill ZIP
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         uses: actions/upload-artifact@v4
         with:
           name: harrtest-skill

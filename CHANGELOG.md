@@ -1,5 +1,36 @@
 # Changelog
 
+## [3.0.0] - 2026-11-04
+
+### Implemented local reliability core
+- Root-aware stop decisions now check explicitly bound or discovered original roots,
+  preserve historical gate files, and distinguish completion from an allowed pause.
+- Add schema-3 whole-request span mapping and hash-bound separate coverage review;
+  retain schema 2 with explicit legacy coverage assurance. Semantic completeness and
+  reviewer independence are not automatically authenticated.
+- Reject duplicate/nonfinite JSON at evidence boundaries and detect unordered
+  subagent file/read-write/exclusive-resource conflicts.
+- Add a transactional SQLite workflow registry with ready tasks, renewable leases,
+  stale-worker fencing, durable handoffs, explicit expired-work recovery, and
+  operation-intent reconciliation that prevents blind replay of unknown effects.
+- Connect workflow verification to actual proof.py/root_gate.py; include focused
+  source-bound context packets and retained historical failure metadata.
+- Support detached child setup without stealing active-session ownership.
+- Fingerprint collector and actual declared verifier dependencies instead of all
+  unrelated helper scripts. Do not rewrite legacy seals; document migration.
+- Add matched evaluation summaries with missing trials, false-success counters and
+  explicit no-uplift-from-fixtures labels; no paid models are invoked.
+- Replace accumulated version-specific skill prose with a concise operational entrypoint,
+  add runnable templates/runbook and a real broken-CLI repair/restart demonstration.
+- Expand CI to Linux/Windows and Python 3.10/3.12 with a complete installable artifact.
+
+### Scope and limits
+- Implemented and tested local coordination, structural evidence and real subprocess
+  acceptance. Native Copilot subagents, live CARLA, production enforcement and the
+  proposed large model benchmark were NOT validated in this release environment.
+- Coordination is cooperative, not a sandbox. Imported identities/observations are
+  not authentication. No secret model client, permission grant or billing path added.
+
 ## [2.6.1] - 2026-10-30
 
 - Fix GitHub Actions `skill.zip` packaging: include the tracked `.github/workflows` files so the complete installable ZIP passes HarrTest's strict latest-source tree verification. Add a CI bundle assertion to prevent dropping the workflow again.

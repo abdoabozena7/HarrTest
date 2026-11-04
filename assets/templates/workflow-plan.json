@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "goal_id": "mission",
+  "root_goal": ".runtime-proof/root-goals/mission",
+  "tasks": [
+    {
+      "id": "implementation",
+      "proof_task": ".runtime-proof/implementation",
+      "outcome": "REPLACE_ME concrete observable component outcome",
+      "depends_on": [],
+      "write_scope": [
+        "REPLACE_ME/source-directory"
+      ],
+      "read_scope": [],
+      "resources": [],
+      "context_files": []
+    },
+    {
+      "id": "integration",
+      "proof_task": ".runtime-proof/integration",
+      "role": "integrate",
+      "outcome": "REPLACE_ME whole original integrated user journey",
+      "depends_on": [
+        "implementation"
+      ],
+      "write_scope": [],
+      "read_scope": [
+        "REPLACE_ME/source-directory"
+      ],
+      "resources": []
+    }
+  ]
+}

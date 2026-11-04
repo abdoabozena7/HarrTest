@@ -18,8 +18,8 @@ def root_dir(project: Path, goal_id: str) -> Path:
 
 
 def validate(project: Path, goal: Path, contract: dict) -> None:
-    if not isinstance(contract, dict) or contract.get("schema") != 2:
-        raise proof.ProofError("Root contract must have schema=2")
+    if not isinstance(contract, dict) or contract.get("schema") not in {2, 3}:
+        raise proof.ProofError("Root contract must have schema 2 or 3")
     if contract.get("goal_id") != goal.name:
         raise proof.ProofError("Root ID mismatch")
     original_file = goal / "original-request.txt"
@@ -93,6 +93,10 @@ def validate(project: Path, goal: Path, contract: dict) -> None:
     if (task_id, req_id) not in all_links:
         raise proof.ProofError("Final integration is not linked to a root requirement")
 
+    if contract["schema"] == 3:
+        import coverage
+        coverage.validate(original, contract, goal)
+
 
 def mode_satisfies(required: str, actual: str) -> bool:
     return actual == required or (required == "offline" and actual == "live")
@@ -146,11 +150,12 @@ def check_root(goal: Path) -> dict:
         integration = contract["integration"]["task_id"]
         if integration not in children or not children[integration][1]["passed"]:
             errors.append("Final integrated acceptance is unverified")
-        return {"schema": 2, "goal_id": contract["goal_id"],
+        return {"schema": contract["schema"], "goal_id": contract["goal_id"],
                 "root_status": "ROOT_GOAL_VERIFIED" if not errors else "ROOT_GOAL_UNVERIFIED",
                 "root_goal_achieved": not errors,
                 "request_sha256": contract["request_sha256"],
                 "contract_hash": proof.digest(contract),
+                "coverage_assurance": "FULL_TEXT_MAPPED_REVIEW_DECLARED" if contract["schema"] == 3 else "LEGACY_DECLARED_COVERAGE",
                 "requirements": details,
                 "verified_children": [k for k, v in children.items() if v[1]["passed"]],
                 "errors": errors,
@@ -172,6 +177,8 @@ def main() -> int:
     verify = commands.add_parser("verify")
     verify.add_argument("--goal", type=Path, required=True)
     verify.add_argument("--write-report", action="store_true")
+    inventory = commands.add_parser("inventory")
+    inventory.add_argument("--goal", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.action == "init":
@@ -186,6 +193,11 @@ def main() -> int:
                               "status": "ROOT_GOAL_UNVERIFIED"}))
             return 0
         goal = args.goal.resolve()
+        if args.action == "inventory":
+            import coverage
+            request = (goal / "original-request.txt").read_text(encoding="utf-8")
+            print(json.dumps({"request_segments": coverage.inventory(request)}, indent=2))
+            return 0
         if args.action == "seal":
             c = proof.load(goal / "root-contract.json")
             validate(goal.parents[2], goal, c)

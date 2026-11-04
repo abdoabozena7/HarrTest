@@ -1,0 +1,13 @@
+{
+  "request_sha256": "REPLACE_ME",
+  "segments_sha256": "REPLACE_ME",
+  "acceptance_sha256": "REPLACE_ME",
+  "method": "fresh-context-agent",
+  "planner": "REPLACE_ME actual planner identity",
+  "reviewer": "REPLACE_ME actual distinct reviewer identity",
+  "verdict": "unreviewed",
+  "unresolved_findings": [
+    "REPLACE_ME perform actual coverage challenge"
+  ],
+  "observations": "REPLACE_ME what the independent review actually checked and found"
+}

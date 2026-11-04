@@ -30,7 +30,11 @@ When the next original native/live step cannot be admitted and no other evidence
 4. Without an interactive user decision, continue other authorized independent work first. When none remains, end with `ACTION_REQUIRED: [specific user grant/host fix]`, `ROOT_GOAL_UNVERIFIED` and a clear choice to approve or decline. The UI's **Task completed** indicator only means the agent turn ended.
 5. Do not run protected work until a **new explicit grant** and real project/host admission succeed. On valid grant, resume the next pending original gate; do not repeat an unchanged offline audit for the sake of showing activity.
 
-For optional deterministic communication support, run `python scripts/blocker_handoff.py --current current-blocker.json --previous previous-blocker.json` (omit `--previous` if unknown). This is **read-only**. The JSON input is assembled from independently verified facts, not taken as authority. Its output is a decision *request*, never a permission or a success verdict. A signature over source, evidence, authorization identity, gate and budget detects **unchanged repeated blockers** even when log timestamps differ. A changed signature indicates new input and requires reevaluation, not automatic approval.
+Use the installed `scripts/autonomy_decision.py` for optional read-only event
+classification and `workflow.py status` for persistent task state. Neither grants
+permission. Compare actual source, evidence, authorization, pending gate and resource
+state before repeating an audit. The earlier `blocker_handoff.py` prototype was never
+shipped; do not invoke a nonexistent helper.
 
 Example input (`current-blocker.json`):
 

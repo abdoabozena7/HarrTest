@@ -31,6 +31,7 @@
       "role": "acceptance",
       "command": [
         "{python}",
+        "-S",
         "demo_cli.py",
         "7",
         "5"

@@ -1,283 +1,174 @@
 <div align="center">
 
-<img src="visual/banner.svg" alt="HarrTest v2 — Plan, Build, Run, Observe, Verify" width="100%" />
+<img src="visual/banner.svg" alt="HarrTest - plan, run, inspect and verify" width="100%" />
 
-# HarrTest · HarrTest
+# HarrTest v3
 
-**A tool-first, evidence-first skill for autonomous coding agents.**  
-**HarrTest** is the public standalone repository for the **HarrTest** skill (`harrtest`).
+**Original-goal verification + persistent execution coordination for coding agents.**
 
-[![Version](https://img.shields.io/badge/version-v2.6.1-65e7c9?style=flat-square)](CHANGELOG.md)
-[![Agent Skills](https://img.shields.io/badge/standard-Agent_Skills-blueviolet?style=flat-square)](https://agentskills.io)
-[![Python](https://img.shields.io/badge/harness-Python_3.10+-3776ab?style=flat-square)](scripts/proof.py)
-[![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
+[![Version](https://img.shields.io/badge/version-v3.0.0-65e7c9?style=flat-square)](CHANGELOG.md)
 [![CI](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml/badge.svg)](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml)
+[![Python](https://img.shields.io/badge/core-Python_3.10+-3776ab?style=flat-square)](scripts/workflow.py)
+[![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
 
-**Plan it. Run it. Test the real thing.**
+**A worker finishing is not your goal finishing.**
 
-[Quick install](#-install) · [How it works](#-the-verification-loop) · [Use cases](#-what-it-checks) · [Safety](#-important-limitations) · [Versions](CHANGELOG.md)
+[Install](#install) | [What changed](#what-v3-adds) | [Workflow](references/v3-workflow.md) | [Migration](references/v3-migration.md) | [Validation](references/v3-validation.md)
 
 </div>
 
----
+## Install
 
-## ⚡ Install
-
-> **Official repository:** `abdoabozena7/HarrTest`. The `SKILL.md` is at the repository root and the installable skill identifier stays `harrtest`. Installing the skill is **not** the same as enabling optional project-level stop hooks.
-
-```bash
-# Install in the current project from the canonical public repository
-npx skills add https://github.com/abdoabozena7/HarrTest --skill harrtest
-
-# Or, to choose from all supported coding-agent integrations
-npx skills add https://github.com/abdoabozena7/HarrTest
-
-# Verify what was installed
-npx skills list
-```
-
-Requires Node.js 22.20+ for the current skills CLI. Check `npx skills --help` for supported agents and unattended options. To install globally, pass `-g` and explicitly choose the supported agent if needed. To install from a local clone of this repository instead:
+The portable skill ID remains **`harrtest`**. Update the complete skill using your
+host's supported skill installation. For the Agent Skills CLI:
 
 ```bash
-npx skills add ./HarrTest
+npx skills add https://github.com/abdoabozena7/HarrTest --skill harrtest -g
 ```
 
-### Dedicated optional enforcement harness
+Select the coding agent you actually use. Restart/reload that host's skill discovery,
+then ask it to invoke HarrTest and verify the installation. Do not assume a successful
+copy proves the skill or stop hook was invoked. New sessions should use v3; don't
+silently replace the engine in the middle of an active mission.
 
-The portable `SKILL.md` works as instructions. To enable deterministic local evidence receipts and optional stop hooks, review the included Python tools, then run the installer's dry-run first:
+A direct project install is also supported by the bundled standard-library installer:
 
 ```powershell
-# From the unzipped skill folder:
-py -3 .\scripts\install.py --agent copilot --scope user --project C:\path\to\your\repo --instructions --hooks --dry-run
-py -3 .\scripts\install.py --agent copilot --scope user --project C:\path\to\your\repo --instructions --hooks
+py -3 .\scripts\install.py --agent copilot --scope user --project C:\path\to\repo --instructions --hooks --update --dry-run
+py -3 .\scripts\install.py --agent copilot --scope user --project C:\path\to\repo --instructions --hooks --update
 ```
 
-`--agent codex`, `--agent claude`, or `--agent generic` are supported for instructions/install; hooks only for Copilot and Claude where supported. The installer preserves existing instructions and backs up modified files; validate host-specific hook support in your actual client. Read [security boundaries](SECURITY.md) first.
+Review the dry run. Existing project instructions are merged and backups retained.
+Hooks are optional and host-specific (Copilot CLI/compatible hosts and Claude); no
+Codex bridge or extra provider is installed. The skill can be used without hooks,
+but then automatic stop enforcement must not be claimed. Read [migration notes](references/v3-migration.md)
+before using v3 with old sealed tasks or legacy `prove-it` hooks.
 
-## Root goal integrity — new in v2
+## What v3 adds
 
-A passing smoke test is **not** the same as completed original user requirements. HarrTest now distinguishes a passing **child** receipt from a separately sealed **root** contract.
+| Capability | Actual implementation | Boundary |
+|---|---|---|
+| Root-aware completion | Stop callback checks original roots as well as the child | Host must actually invoke the hook; user/host stop remains honored |
+| Request coverage | Schema-3 span inventory plus a separately declared reviewer artifact | Structural coverage does not prove natural-language understanding |
+| Persistent work | Transactional SQLite registry, ready nodes, worker tokens and renewable leases | Cooperative coordination, not an OS sandbox |
+| Conflict control | Read/write-prefix conflicts and exclusive resource ownership | Undeclared/outside writers are not intercepted |
+| Safe resumption | Preserve handoffs; expired workers require evidence-backed reconciliation | Expiry does not prove the old process stopped |
+| External effects | Stable operation intents; UNKNOWN_EFFECT blocks blind replay | No universal exactly-once guarantee or new permission |
+| Context packets | Original goal, focused file hashes, scopes and historical failures | Files must be selected appropriately; no secret environment dump |
+| Evidence identities | Collector plus declared check dependencies, not every unrelated helper | Relevant verifier/source changes still invalidate current acceptance |
+| Evaluation summaries | Matched-condition checks, all assigned trials, false-success counters | No fabricated model-performance uplift or causal claim |
+| Strict parsing | Reject duplicate JSON keys and nonfinite evidence values | Authenticity still requires trusted execution/review |
 
-```mermaid
-flowchart TD
-  U[Original user request] --> R[Sealed root contract]
-  R --> A[Real operation]
-  R --> B[Performance requirement]
-  R --> C[Full mission acceptance]
-  A --> D[Smoke test PASSED]
-  B --> E[Performance FAILED]
-  C --> F[Scenario matrix UNVERIFIED]
-  D --> G{Root completion gate}
-  E --> G
-  F --> G
-  G --> H[ROOT_GOAL_UNVERIFIED]
-```
-
-Use `scripts/root_gate.py init` to preserve the exact original request, populate a source-anchored `root-contract.json`, seal it **before** child execution, and verify the complete goal with `root_gate.py verify`. See [root-goal runbook](references/root-goal.md). A successful `proof.py verify` only means **CHILD_TASK_ONLY**. Scope coverage still needs a meaningful independent review; no model-authored test can guarantee global correctness.
-
-## 🧭 Outcome-first autonomous mode (v2.6)
-
-When you hand off a goal, HarrTest prioritizes the **real verified result**.
-It must not stop merely because an agent-estimated deadline, model-token budget,
-or optional leader dialog timed out. A nonessential `Ask User` failure is not
-a user rejection: choose a reversible, authorized next step and keep going.
-
-Actual paid-resource limits, host sessions, project admission and protected
-budgets are **not** overridden. Missing mandatory consent pauses only that
-action; unrelated permitted work can continue. The read-only
-[`autonomy_decision.py`](scripts/autonomy_decision.py) helps classify such
-interruptions without granting permission. See
-[outcome-first autonomy](references/outcome-first-autonomy.md).
-A working skill cannot guarantee continuous multi-hour execution if the
-host itself stops the session; durable handoffs support genuine resumption.
-
-## 🔄 The verification loop
+## The working loop
 
 ```mermaid
 flowchart LR
-    A[User goal] --> B[Source requirements]
-    B --> C[Challenge the plan]
-    C --> D[TODO DAG + scoped workers]
-    D --> E[Build the smallest runnable slice]
-    E --> F[Run real product]
-    F --> G[Inspect UI / traces / outcomes]
-    G --> H{Behavior meets acceptance?}
-    H -- No --> I[Classify failure + targeted fix]
-    I --> E
-    H -- Yes --> J[Fresh integration verification]
-    J --> K{Every requirement proven?}
-    K -- No --> D
-    K -- Yes --> L[VERIFIED_WITHIN_SCOPE]
+    U[Original request] --> C[Coverage challenge]
+    C --> P[Sealed goal and task graph]
+    P --> S[Persistent coordinator]
+    S --> W[Actual host workers and tools]
+    W --> E[Real execution and inspected evidence]
+    E --> G{Original root verified?}
+    G -- No --> S
+    G -- Yes --> D[Verified within declared scope]
+    S --> A[Scoped approval only when actually required]
+    A --> S
 ```
 
-A green unit-test suite, a passing commit, a worker saying “done”, or a screenshot file no one inspected **does not** prove the user's requested outcome.
+Use the current host's models, authentication and billing. Native subagents are
+chosen for genuinely independent work, not forced on every button fix. The runtime
+returns real task packets and coordinates ownership; it does **not** pretend that
+writing `worker-1` to a file spawned another agent. See [the runbook](references/v3-workflow.md).
 
-## 🧠 Hivo-inspired, but agent-agnostic
-
-| Mechanism | What it prevents | Output |
-|:--|:--|:--|
-| **Requirement ledger** | User goals disappearing during decomposition | Stable `REQ-*` IDs + original-source provenance |
-| **Impact challenger** | Perfectly executed but incomplete plans | Reviewed change/preserve/test ownership |
-| **Context sufficiency** | Workers guessing APIs and editing wrong files | Targeted repository facts before mutation |
-| **Adaptive task DAG** | Monolithic prompts and pointless agent proliferation | Serial / hybrid / real subagent missions |
-| **Failure taxonomy** | Repeated ineffective attempts | Falsifiable next experiments |
-| **Verified memory** | Outdated "it worked" claims crossing revisions | Durable constraints vs source-bound facts |
-| **Runtime acceptance** | Unit-test theater and mocked success | Inspected browser/simulator/CLI behavior |
-
-The architecture is inspired by techniques explored in [Mini Hivo](https://github.com/abdoabozena7/mini_hivo); it does not import Mini Hivo's pinned model or claim its experimental results have universal validity. See [the detailed adaptation](references/hivo-patterns.md).
-
-## 🧪 What it checks
-
-| Project | Real interaction required | Proof to collect |
-|:--|:--|:--|
-| **Front-end / UI** | Start app; click buttons, type, resize, reload, test failures | Rendered screenshots + browser traces + state/network outcomes |
-| **Back-end / API** | Call actual public API; verify persistence/error handling | Status/response/state changes and negative cases |
-| **Simulation / CARLA** | Start authorized native engine, tick physics, observe ego/sensors and full required runs | Live run IDs, measured motion, video, collision/route metrics |
-| **Mini Hivo / CLI agents** | Submit a real prompt through the actual CLI; execute generated artifact | Worker/tool trace + evaluated output behavior |
-| **ML workflow** | Execute supported inference/training/validation path when authorized | Measured outputs; distinguish model, rendering, simulation and replay |
-
-```mermaid
-flowchart TD
-    P[Planner + requirement coverage] --> W1[Worker A: scoped interface]
-    P --> W2[Worker B: scoped implementation]
-    P --> W3[Worker C: data / integration]
-    W1 --> G[Coordinator integration]
-    W2 --> G
-    W3 --> G
-    G --> R[Real product verifier]
-    R -->|real failure| P
-    R -->|inspected pass| DONE[Source-bound evidence receipt]
-```
-
-Subagents are **optional**. Use them only when your host actually supports delegation and tasks are independent. Otherwise execute the same DAG serially.
-
-## ✅ Honest completion states
+## Use it with a short goal
 
 ```text
-TODO  →  IN_PROGRESS  →  IMPLEMENTED  →  VERIFIED
-                  ↘ BLOCKED_UNVERIFIED ↗
+Use the latest verified harrtest skill. Complete my original project goal,
+fix the remaining problems, and verify the real running result. Decide the
+steps yourself; preserve existing permissions and acceptance criteria.
+Do not call a passing child or a finished session a completed original goal.
 ```
 
-`IMPLEMENTED` ≠ `VERIFIED`. A completed subagent ≠ completed user goal. Every verified item needs current-source evidence and an integrated user-journey check. The final report must say `VERIFIED_WITHIN_SCOPE`, `PARTIAL`, `FAILED`, or `BLOCKED_UNVERIFIED`.
+The agent creates and maintains plans/contracts; users should not need to fill out
+JSON manually for ordinary tasks. The package supplies [templates](assets/templates/)
+and concrete commands to support that work.
 
-## 🧰 What's in the box?
+For a new whole-goal contract use schema 3. A distinct real reviewer challenges its
+coverage. Legacy schema 2 is still readable and explicitly labelled legacy/self-reviewed
+coverage. Do not invent an independent reviewer when none is available.
+
+## Actual runtime adapters
+
+**Web:** real browser interactions, persistence/error recovery, visual inspection.
+**API/library:** actual public calls and independently expected effects.
+**CLI/code generation:** real prompt/command, then run and evaluate the generated app.
+**Simulation:** actual simulator, sensors, measured physical motion and original gates.
+
+Only use tools/permissions the host genuinely provides. Browser tools and Playwright
+are optional, separate dependencies; a skill does not install a GPU, CARLA or a
+browser. Mock/replay success never certifies a live integration.
+
+## Persistent workflow quick reference
 
 ```text
-HarrTest/                   # repository root / one skill
-├── SKILL.md                      # universal agent instructions
-├── references/
-│   ├── hivo-patterns.md          # better planning, recovery and memory
-│   ├── planning-and-delegation.md
-│   ├── acceptance-and-test-quality.md
-│   ├── web-validation.md
-│   ├── simulation-validation.md
-│   └── cli-agent-validation.md
-├── scripts/
-│   ├── proof.py                  # local evidence receipts + gate
-│   ├── planning.py               # DAG validation
-│   ├── browser_probe.py          # optional real browser journey runner
-│   └── install.py                # install, instructions, optional hooks
-├── assets/templates/             # mission and evidence templates
-├── tests/                        # harness regression tests
-├── examples/                     # disposable demos
-├── CHANGELOG.md                  # v1 → future updates
-├── SECURITY.md
-└── visual/banner.svg
+python scripts/workflow.py --project PROJECT init --plan workflow-plan.json
+python scripts/workflow.py --project PROJECT ready --goal mission
+python scripts/workflow.py --project PROJECT claim --goal mission --task backend --worker ACTUAL_HOST_ID --lease-seconds 600
+python scripts/workflow.py --project PROJECT handoff --goal mission --task backend --token TOKEN --evidence .runtime-proof/backend/handoff.md
+python scripts/workflow.py --project PROJECT verify --goal mission --task backend
+python scripts/workflow.py --project PROJECT root --goal mission
 ```
 
-## ▶️ A practical invocation
+These examples require actual sealed children/root and permissions. A lease is a
+renewable coordination mechanism, not an artificial mission budget. The agent may
+spend longer on useful work, but must honor cancellation, actual host limits and
+protected resource policies. Optional consultation failure is not a reason to stop;
+mandatory consent is never inferred from silence.
 
-Use this in your coding agent after installation:
+## Reproduce the local verification
 
-```text
-Use harrtest for this task.
-1. Capture the original user requirements and build a dependency-aware TODO plan.
-2. Challenge omissions before touching implementation; select real subagents only if useful.
-3. Execute the actual product in its real environment; collect and inspect evidence.
-4. Classify failures; repair the smallest valid cause and rerun.
-5. Integrate all branches/workers and verify the original journeys on final code.
-6. Do not claim completion without current evidence and an honest final status.
-
-Task: [your actual coding task]
+```bash
+python -B -m unittest discover -s tests -p 'test_*.py' -v
+python examples/workflow_demo.py --output /path/to/new/disposable-demo
 ```
 
-For a source-bound local evidence contract, read [the harness guide](references/harness-guide.md) and call `python scripts/proof.py --help`. Optional browser probes use Playwright installed separately: `python -m pip install playwright && python -m playwright install chromium`.
+The demo really launches a broken CLI, observes lost persistence across separate
+processes, repairs it, reopens the workflow database across commands, blocks child-only
+completion, verifies integration, and rejects stale evidence after a source edit.
+It is a **local subprocess test**, not a Copilot/model benchmark. See the explicit
+[tested/untested boundaries](references/v3-validation.md).
 
-## 🔒 Bounded autonomy and recovery (v2.1)
+CI exercises Linux and Windows on Python 3.10/3.12 and publishes the full `skill.zip`.
+Optional live-browser testing is separate; skipped browser tests are not passes.
 
-For native simulation, paid compute, deployments, browser integrations and
-other resource-gated tasks, separate **explicit user authorization**, actual
-host/ownership admission, resource arithmetic, protected budgets, and root
-acceptance. A passing offline check cannot close the original root goal.
+## Upgrade without erasing history
 
-```text
-User goal → Scoped approval? → Read-only resource precheck
-                       │                    │
-                  No: precise         Host's REAL gate
-                  approval request     ├── Denied: diagnose/recover
-                                       └── Granted: next original gate
-```
+Keep old recordings, receipts and root contracts. Legacy all-script seals are not
+silently re-stamped as v3 evidence. New v3 checks fingerprint direct skill-command
+dependencies automatically; declare further imported verifier files using
+`harness_dependencies`. An unrelated release-lookup change need not invalidate a
+child, but an actual collector/source/oracle change does. [Migration guide](references/v3-migration.md).
 
-`python scripts/admission.py intent.json policy.json` checks only supplied
-metadata and arithmetic; it never grants permission or mutates a budget. A
-successful check explicitly returns `PRECHECK_OK_NOT_AUTHORIZED` because
-approval provenance and real resource ownership must be independently
-verified. Do not hardcode CARLA's numerical limits as universal rules.
+## Honest enterprise boundaries
 
-Read [the autonomy guide](references/autonomy-and-admission.md) for a portable
-failure-to-prevention protocol and examples.
+This release implements the **local reliability core**, not every research roadmap
+item. It does not claim independent signed enforcement, automatic LLM planning,
+production certification, universal model improvement or uninterrupted execution
+when the host stops. A worker with unrestricted access to contracts, code and evidence
+can tamper with all three. Consequential deployments need a trusted verifier and
+policy outside worker write access.
 
-## 🛡️ Important limitations
+No new model-provider credentials, remote logging service or paid endpoints are
+introduced. Preserve resource limits, safety criteria, holdouts, user files and
+secrets. Read [SECURITY.md](SECURITY.md) and [the capability boundaries](references/security-and-limitations.md).
 
-This is a **skill, not a universal agent runtime**. It cannot create browser access, GPU access, credentials, external service permissions, infinite background work, or unlimited budgets. It does not turn mocked data into native simulation evidence. The evidence gate checks declared contracts and current artifacts, **not mathematical correctness** of a self-authored oracle. A stop hook can request continuation but cannot defeat user stops or host execution limits.
+## Evolution and measured impact
 
-Never bypass research holdout restrictions, experiment budgets, sandbox policies, protected files or safety controls to obtain a green result. Screenshots and traces can expose secrets; keep runtime evidence out of public Git commits. Full boundaries: [SECURITY.md](SECURITY.md) · [skill rules](SKILL.md).
+Inspired by deterministic workflow control, durable state, scoped coordination and
+independent behavioral evaluation. The accompanying research informs the design;
+Microsoft/Google code or SDKs are not bundled as mandatory dependencies.
 
-## 🔁 Migrating existing installations
-
-The internal skill ID is now `harrtest` (previously `harrnist`, `oh-my-harness`, and `prove-it`). Updating the GitHub URL does not automatically migrate older per-project instruction blocks, old skill folders, or stop hooks. Review and remove the previous skill and its managed hook after validating the new installation; **do not leave two stop hooks targeting different versions active**. For previous `harrnist`, `oh-my-harness` or `prove-it` installations, check `.github/copilot-instructions.md`, `.github/hooks/`, and your personal skill folder. Make a backup before editing; do not delete unrelated hooks or instructions. The existing `.runtime-proof/` evidence and sealed contracts remain intact.
-
-## 🗓️ Versioning and updates
-
-**v1.0.0** = first distributable public baseline, now in the dedicated `HarrTest` repository. Future versions follow semantic versioning and should include a tested [CHANGELOG](CHANGELOG.md), a reproducible `skill.zip` and explicit limitations. Use `npx skills check` / `npx skills update` for supported installs; project-level hooks need separate review when version changes.
-
-## 🤝 Contributions
-
-Ideas and fixes are welcome: propose a real failure case and a measurable verification improvement. See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).
-
-<div align="center"><sub>Built for agents that demonstrate results instead of merely reporting progress.</sub></div>
-
-## Experiment economy and strict acceptance (v2.2)
-
-When a test has a fixed startup/cleanup reserve, distinguish the official
-minimum from an agent-chosen preferred duration and the shortest experiment
-that still answers the **unchanged** original question. The new read-only
-`scripts/experiment_budget.py` proposes a candidate but never authorizes it.
-
-When p95/p99 pass but even one original zero-late requirement fails, the
-`scripts/strict_gates.py` helper reports failure. Preserve all samples,
-original oracles and complete product evidence. See
-[experiment economy](references/experiment-economy.md).
-
-
-## Behavioral evidence integrity (v2.3)
-
-The optional `scripts/goal_guard.py` audits structured action outcomes against ordered, same-run journeys and hashes. It rejects contradictory PASS, tampered/stale or missing evidence, and an incomplete new run inheriting old success. `scripts/browser_probe.py` now supports `capture_text`, `expect_text_same`, `expect_text_changed` and `wait_ms` so a timer can pass Pause but fail Resume correctly. Root requirements must still pass the separate sealed `root_gate.py`; typed evidence is not an oracle for product truth. See [verification guide](references/goal-verification.md) and [timer journey](examples/timer-journey.json).
-
-## Latest-only preflight and safe continuity (v2.4)
-
-The read-only `python scripts/version_guard.py --installed PATH_TO_HARRTEST`
-compares every installed skill file with the current public GitHub main tree,
-including Git blob hashes, and accepts explainable CRLF normalization only.
-It does not install updates or prove the host invoked the skill. In a
-latest-only session, any missing/modified file or unavailable GitHub check
-means stop before doing project work. Confirm a separate genuine host
-`harrtest` invocation as well.
-
-[Continuing an existing task safely](references/continuation-integrity.md)
-explains how to preserve an unfinished task owned by another session, why
-source manifests and telemetry populations can have different scopes, and
-how to compare real goal improvements instead of simply counting tests.
-Use the [controlled evaluation template](assets/templates/skill-evaluation.json)
-for baseline-vs-HarrTest measurement; a single unpaired project run cannot
-establish that a new version improved outcomes.
+Use `scripts/evaluation.py` on independently evaluated, matched baseline/candidate
+runs. It retains missing/blocked outcomes and refuses to equate fixtures with
+live-agent evidence. The proposed large held-out model campaign remains future
+work, not a claimed result. See [CHANGELOG](CHANGELOG.md) and [CONTRIBUTING](CONTRIBUTING.md).

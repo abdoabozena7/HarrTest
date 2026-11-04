@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import strict_io
 import os
 from pathlib import Path
 import re
@@ -104,8 +105,8 @@ def assess(contract: dict, events_doc: dict, evidence_root: Path, root_contract:
                     raise ValueError(f"duplicate journey {rid}/{jid}")
                 specs[key] = {"target": target, "mode": req["mode"], "steps": steps}
         if contract["scope"] == "root":
-            if not isinstance(root_contract, dict) or root_contract.get("schema") != 2:
-                raise ValueError("root scope requires a v2 root contract; seal validation is delegated to root_gate.py")
+            if not isinstance(root_contract, dict) or root_contract.get("schema") not in {2, 3}:
+                raise ValueError("root scope requires a schema 2 or 3 root contract; seal validation is delegated to root_gate.py")
             if _sha(root_contract.get("request_sha256"), "root request hash") != _sha(contract.get("root_request_sha256"), "root_request_sha256"):
                 raise ValueError("original root request hash mismatch")
             original_ids = [r.get("id") for r in root_contract.get("requirements", [])]
@@ -189,9 +190,9 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
-        contract = json.loads(args.contract.read_text(encoding="utf-8-sig"))
-        events = json.loads(args.events.read_text(encoding="utf-8-sig"))
-        root = json.loads(args.root_contract.read_text(encoding="utf-8-sig")) if args.root_contract else None
+        contract = strict_io.loads(args.contract.read_text(encoding="utf-8-sig"))
+        events = strict_io.loads(args.events.read_text(encoding="utf-8-sig"))
+        root = strict_io.loads(args.root_contract.read_text(encoding="utf-8-sig")) if args.root_contract else None
         result = assess(contract, events, args.evidence_root or args.events.parent, root)
     except (OSError, ValueError, TypeError) as exc:
         result = {"schema": 1, "passed": False, "status": "UNVERIFIED", "errors": [f"invalid input: {exc}"]}

@@ -23,8 +23,10 @@ import time
 import uuid
 
 import planning
+import strict_io
 
-VERSION = "2.0.0"
+VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
+EVIDENCE_SCHEMA = 1
 SKILL = Path(__file__).resolve().parents[1]
 STATE = ".runtime-proof"
 SKIP_DIRS = {"__pycache__", ".git", ".pytest_cache", ".mypy_cache"}
@@ -62,8 +64,7 @@ def file_hash(path: Path) -> str:
 
 def load(path: Path):
     try:
-        return json.loads(path.read_text(encoding="utf-8-sig"),
-                          parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)))
+        return strict_io.load(path)
     except (OSError, ValueError) as exc:
         raise ProofError(f"Cannot read valid JSON: {path}: {exc}") from exc
 
@@ -110,8 +111,23 @@ def identifier(value, label="id"):
         raise ProofError(f"Invalid {label}: {value!r}")
 
 
-def engine_hash() -> str:
-    return digest({p.name: file_hash(p) for p in sorted((SKILL / "scripts").glob("*.py"))})
+def engine_hash(contract=None) -> str:
+    """Fingerprint verifier dependencies, not unrelated release/installer helpers."""
+    names = {"proof.py", "planning.py", "strict_io.py"}
+    files = {name: file_hash(SKILL / "scripts" / name) for name in sorted(names)}
+    dependencies = set((contract or {}).get("harness_dependencies", []))
+    for check in (contract or {}).get("checks", []):
+        for arg in check.get("command", []):
+            if arg.startswith("{skill}/"):
+                dependencies.add(arg[len("{skill}/"):])
+            elif arg.replace("\\", "/").startswith(SKILL.as_posix() + "/"):
+                dependencies.add(arg.replace("\\", "/")[len(SKILL.as_posix()) + 1:])
+    for name in sorted(dependencies):
+        path = relative_file(SKILL, name)
+        if not path.is_file():
+            raise ProofError("Declare explicit harness dependency files, not directories")
+        files[name] = file_hash(path)
+    return digest(files)
 
 
 def snapshot(project: Path, contract: dict) -> dict:
@@ -136,7 +152,7 @@ def snapshot(project: Path, contract: dict) -> dict:
 
 
 def validate_contract(c: dict):
-    if not isinstance(c, dict) or c.get("schema") != 1:
+    if not isinstance(c, dict) or type(c.get("schema")) is not int or c["schema"] != 1:
         raise ProofError("Contract schema must be 1")
     identifier(c.get("task_id"), "task_id")
     meaningful(c.get("goal"), "goal")
@@ -146,6 +162,9 @@ def validate_contract(c: dict):
         raise ProofError("source_paths must list the implementation, config and verification sources")
     meaningful(c.get("scope_rationale"), "scope_rationale")
     meaningful(c.get("authorization"), "authorization")
+    dependencies = c.get("harness_dependencies", [])
+    if not isinstance(dependencies, list) or any(not isinstance(x, str) or not x for x in dependencies):
+        raise ProofError("harness_dependencies must list actual dependency file paths")
     checks = c.get("checks")
     reqs = c.get("requirements")
     if not isinstance(checks, list) or not checks or not isinstance(reqs, list) or not reqs:
@@ -245,7 +264,7 @@ def task_context(task: Path, sealed=True):
         s = load(task / "seal.json")
         if s["contract_hash"] != digest(c):
             raise ProofError("Sealed contract changed. Preserve it; start a new documented contract revision")
-        if s["engine_hash"] != engine_hash():
+        if s["engine_hash"] != engine_hash(c):
             raise ProofError("Harness scripts changed since sealing; do not reuse the old gate")
     return task, project, c
 
@@ -366,7 +385,7 @@ def run_check(task: Path, cid: str) -> dict:
         stdin_bytes = relative_file(project, check["stdin_file"]).read_bytes()
     receipt = {"schema": 1, "harness": VERSION, "task_id": c["task_id"],
                "run_id": run_id, "check_id": cid, "role": check["role"], "mode": check["mode"],
-               "contract_hash": digest(c), "check_hash": digest(check), "engine_hash": engine_hash(),
+               "contract_hash": digest(c), "check_hash": digest(check), "engine_hash": engine_hash(c),
                "command": argv, "cwd": str(cwd), "started_at": now(),
                "source_before": source, "timeout": False, "interrupted": False,
                "overflow": False, "spawn_error": None, "exit_code": None, "pid": None}
@@ -484,7 +503,7 @@ def verify(task: Path, *, include_plan: bool = True) -> dict:
                 r = load(rpath)
                 if (r["task_id"] != c["task_id"] or r["check_id"] != cid or
                     r["contract_hash"] != digest(c) or r["check_hash"] != digest(check) or
-                    r["engine_hash"] != engine_hash()):
+                    r["engine_hash"] != engine_hash(c)):
                     raise ProofError("Receipt does not match the sealed task/check/harness")
                 if r["source_before"]["digest"] != current["digest"] or not r["source_after"] or r["source_after"]["digest"] != current["digest"]:
                     ce.append("Evidence is stale or the source changed during execution")
@@ -652,31 +671,8 @@ def find_active(cwd: Path):
 
 
 def hook(payload: dict) -> dict:
-    cwd = Path(payload.get("cwd") or os.getcwd())
-    task, active = find_active(cwd)
-    if task is None: return {}  # Deliberately inactive outside an opted-in task.
-    sid = payload.get("sessionId") or payload.get("session_id")
-    if active.get("session_id") and sid != active["session_id"]: return {}
-    result = verify(task)
-    save(task / "gate.json", result)
-    if result["passed"]: return {}
-    if (task / "blocked.json").exists(): return {}  # A truthful blocked handoff is not success.
-    signature = digest({"errors": result["errors"], "checks": result.get("checks", {}),
-                        "source_digest": result.get("source_digest"), "plan": result.get("plan", [])})
-    previous = load(task / "hook-state.json") if (task / "hook-state.json").exists() else {}
-    forced = bool(payload.get("stop_hook_active") or payload.get("stopHookActive"))
-    if forced and previous.get("signature") == signature:
-        save(task / "needs-attention.json", {"at": now(), "status": "PAUSED_UNVERIFIED",
-             "reason": "Same failed gate after a forced continuation. Host stop is allowed to prevent an infinite loop; completion is NOT verified.",
-             "errors": result["errors"]})
-        return {}
-    save(task / "hook-state.json", {"at": now(), "signature": signature})
-    reason = ("HarrTest: completion evidence is incomplete. Do not claim done. "
-              "Continue the next executable runtime validation/fix, inspect the actual artifacts, "
-              "then run proof.py verify. Do not edit the contract, harness or receipts to pass. "
-              "For a genuine external blocker, record BLOCKED_UNVERIFIED with the exact evidence and required action. "
-              "Task: " + str(task) + ". Failures: " + "; ".join(result["errors"][:6]))
-    return {"decision": "block", "reason": reason}
+    from completion import hook as root_aware_hook
+    return root_aware_hook(payload)
 
 
 def doctor():
@@ -694,6 +690,8 @@ def main() -> int:
     p.add_argument("--project", default="."); p.add_argument("--id", required=True)
     p.add_argument("--goal", required=True); p.add_argument("--kind", choices=sorted(KINDS), required=True)
     p.add_argument("--session-id")
+    p.add_argument("--root-goal", help="Existing original root goal ID")
+    p.add_argument("--detached", action="store_true", help="Create child without replacing active session ownership")
     for name in ("seal", "verify", "resume", "activate"):
         p = sub.add_parser(name); p.add_argument("--task", type=Path, required=True)
         if name == "verify": p.add_argument("--write-report", action="store_true")
@@ -713,7 +711,7 @@ def main() -> int:
         if args.command == "doctor": print(json.dumps(doctor(), indent=2)); return 0
         if args.command == "hook":
             try:
-                payload = json.load(sys.stdin)
+                payload = strict_io.loads(sys.stdin.read())
                 if not isinstance(payload, dict): raise ProofError("Hook input is not an object")
                 decision = hook(payload)
             except Exception as exc:
@@ -721,10 +719,11 @@ def main() -> int:
             print(json.dumps(decision)); return 0
         if args.command == "init":
             identifier(args.id, "task id")
+            if args.root_goal: identifier(args.root_goal, "root goal id")
             project = Path(args.project).resolve()
             if not project.is_dir(): raise ProofError("Project directory does not exist")
             active_path = project / STATE / "active.json"
-            if active_path.exists():
+            if active_path.exists() and not args.detached:
                 old = relative_file(project / STATE, load(active_path)["task"])
                 if not verify(old)["passed"] and not (old / "blocked.json").exists():
                     raise ProofError("Another unfinished task is active in this checkout; resume it or explicitly record its blocked state")
@@ -733,8 +732,10 @@ def main() -> int:
             template = load(SKILL / "assets" / "templates" / "contract.json")
             template.update({"task_id": args.id, "goal": args.goal, "kind": args.kind})
             save(task / "contract.json", template, exclusive=True)
-            save(task / "context.json", {"project": str(project), "created_at": now()}, exclusive=True)
-            save(active_path, {"task": args.id, "session_id": args.session_id})
+            save(task / "context.json", {"project": str(project), "created_at": now(), "root_goal": args.root_goal}, exclusive=True)
+            if not args.detached:
+                save(active_path, {"task": args.id, "session_id": args.session_id,
+                                   "root_goal": args.root_goal, "root_required": bool(args.root_goal)})
             print(f"Created UNVERIFIED task: {task}\nCustomize contract.json, then seal. No acceptance is implied."); return 0
         if args.command == "activate":
             task, project, c = task_context(args.task, sealed=False)
@@ -743,10 +744,11 @@ def main() -> int:
                 old = relative_file(project / STATE, load(active_path)["task"])
                 if old != task and not verify(old)["passed"] and not (old / "blocked.json").exists():
                     raise ProofError("Another unfinished task is active")
-            save(active_path, {"task": task.name, "session_id": args.session_id}); return 0
+            root_id = load(task / "context.json").get("root_goal")
+            save(active_path, {"task": task.name, "session_id": args.session_id, "root_goal": root_id, "root_required": bool(root_id)}); return 0
         if args.command == "seal":
             task, project, c = task_context(args.task, sealed=False)
-            s = {"at": now(), "contract_hash": digest(c), "engine_hash": engine_hash(),
+            s = {"at": now(), "contract_hash": digest(c), "engine_hash": engine_hash(c),
                  "source_at_seal": snapshot(project, c)}
             save(task / "seal.json", s, exclusive=True)
             render_todo(task, c, {}, s["source_at_seal"]["digest"])

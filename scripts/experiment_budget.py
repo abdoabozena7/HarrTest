@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 import json
+import strict_io
 from pathlib import Path
 import sys
 
@@ -97,8 +98,8 @@ def main(argv=None):
     parser.add_argument('experiment', type=Path)
     args = parser.parse_args(argv)
     try:
-        result = plan(json.loads(args.policy.read_text(encoding='utf-8-sig')),
-                      json.loads(args.experiment.read_text(encoding='utf-8-sig')))
+        result = plan(strict_io.loads(args.policy.read_text(encoding='utf-8-sig')),
+                      strict_io.loads(args.experiment.read_text(encoding='utf-8-sig')))
     except (OSError, ValueError, TypeError) as exc:
         print(json.dumps({'status': 'INVALID_PLAN', 'error': str(exc)}), file=sys.stderr)
         return 2

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import strict_io
 from pathlib import Path
 import shlex
 import shutil
@@ -43,8 +44,15 @@ before closing each item. Create/activate the task in `.runtime-proof/`; use act
 browser/terminal/native tools, not text claims. Keep the contract proportional
 to the task, cover every requested behavior, and use meaningful unit tests as
 supporting evidence rather than a substitute for runtime acceptance.
-Run the bundled `scripts/proof.py verify --task <task-directory> --write-report`
-before claiming completion. Inspect the captured evidence. Report VERIFIED only
+For multi-step/shared-resource work, use `scripts/workflow.py` to register the
+sealed original root and child plan, claim scoped tasks, hand off artifacts,
+and verify fresh child evidence. It coordinates actual host workers; it never
+creates another model client. Use `proof.py init --detached` for child setup
+without taking another session's active ownership.
+Run `scripts/proof.py verify --task <task-directory>` for child acceptance and
+`scripts/root_gate.py verify --goal <original-goal-directory>` for root acceptance
+before claiming completion. New root contracts use schema 3 full-text coverage
+and a separate reviewer; legacy schema 2 evidence is labelled as legacy. Inspect the captured evidence. Report VERIFIED only
 within the checked scope; otherwise report PARTIAL, BLOCKED_UNVERIFIED, or FAILED.
 Do not alter the harness, receipts, acceptance thresholds or scope merely to pass.
 Do not deactivate the task/hook to avoid a failed gate. Preserve all user safety,
@@ -107,7 +115,7 @@ def install(agent, scope, project, home, with_hook=False, instructions=False, up
                 "bash": shlex.join(argv), "powershell": "& " + " ".join(ps_quote(x) for x in argv), "timeoutSec": 120}]}}
         else:
             path = project / ".claude" / "settings.local.json"
-            config = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+            config = strict_io.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
             hook_map = config.setdefault("hooks", {})
             entries = hook_map.setdefault("Stop", [])
             if not isinstance(entries, list): raise ValueError("Existing Stop hooks are not a list")
@@ -125,6 +133,8 @@ def install(agent, scope, project, home, with_hook=False, instructions=False, up
             files[ignore] = content.rstrip() + "\n\n# Local runtime evidence can contain private data and large recordings.\n/.runtime-proof/\n"
             operations.append(f"Append evidence exclusion to {ignore}")
     if dry_run: return {"dry_run": True, "operations": operations}
+    if dest.resolve().is_relative_to(SOURCE) and dest.resolve() != SOURCE:
+        raise ValueError("Install target is inside the source skill; move the checkout outside discovery directories first")
     if dest.resolve() != SOURCE:
         if dest.exists():
             archive_dir = home / ".harrtest-backups"
@@ -133,7 +143,7 @@ def install(agent, scope, project, home, with_hook=False, instructions=False, up
             shutil.make_archive(str(base), "zip", root_dir=dest.parent, base_dir=dest.name)
             shutil.rmtree(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(SOURCE, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"))
+        shutil.copytree(SOURCE, dest, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".pytest_cache", "skill.zip"))
     backups = []
     for path, content in files.items():
         path.parent.mkdir(parents=True, exist_ok=True)

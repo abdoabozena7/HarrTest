@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "arms": [
+    "baseline",
+    "harrtest-v3"
+  ],
+  "trials": [
+    {
+      "id": "REPLACE_ME_predeclared_task_and_repetition"
+    }
+  ]
+}

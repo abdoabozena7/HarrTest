@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import strict_io
 from pathlib import Path
 import sys
 
@@ -83,7 +84,7 @@ def main(argv=None) -> int:
                         help='JSON facts from an independently validated host/policy state')
     args = parser.parse_args(argv)
     try:
-        result = decide(json.loads(args.input.read_text(encoding='utf-8-sig')))
+        result = decide(strict_io.loads(args.input.read_text(encoding='utf-8-sig')))
     except (OSError, ValueError, TypeError) as exc:
         print(json.dumps({'status': 'INVALID_INPUT', 'error': str(exc)}, indent=2), file=sys.stderr)
         return 2

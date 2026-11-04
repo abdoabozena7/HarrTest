@@ -74,6 +74,15 @@ class VersionGuardTests(unittest.TestCase):
             self.skipTest('Symlinks unsupported')
         self.assertIn('SKILL.md', self.check()['modified'])
 
+    def test_parent_directory_symlink_is_not_followed(self):
+        with tempfile.TemporaryDirectory() as outside:
+            target=Path(outside)/'version_guard.py';target.write_bytes(self.contents['scripts/version_guard.py'])
+            (self.root/'scripts/version_guard.py').unlink();(self.root/'scripts').rmdir()
+            try:(self.root/'scripts').symlink_to(Path(outside),target_is_directory=True)
+            except (OSError,NotImplementedError):self.skipTest('Symlinks unsupported')
+            result=self.check()
+            self.assertIn('scripts/version_guard.py',result['modified'])
+
     def test_remote_tree_truncation_fails(self):
         t = copy.deepcopy(self.tree)
         t['truncated'] = True

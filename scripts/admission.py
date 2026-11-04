@@ -6,6 +6,7 @@ A passing result ALWAYS requires the host's independent real admission gate.
 """
 import argparse
 import json
+import strict_io
 import math
 import sys
 from datetime import datetime, timezone
@@ -83,8 +84,8 @@ def main():
     parser.add_argument('policy', type=Path)
     args = parser.parse_args()
     try:
-        intent = json.loads(args.intent.read_text(encoding='utf-8-sig'))
-        policy = json.loads(args.policy.read_text(encoding='utf-8-sig'))
+        intent = strict_io.loads(args.intent.read_text(encoding='utf-8-sig'))
+        policy = strict_io.loads(args.policy.read_text(encoding='utf-8-sig'))
         report = precheck(intent, policy)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         print(json.dumps({'status': 'INVALID_PRECHECK', 'error': str(exc)}), file=sys.stderr)

@@ -11,6 +11,7 @@ import base64
 import binascii
 import hashlib
 import json
+import strict_io
 from pathlib import Path, PurePosixPath
 import sys
 from urllib.error import HTTPError, URLError
@@ -28,7 +29,7 @@ def git_blob_sha(data: bytes) -> str:
 def fetch_json(url: str) -> dict:
     req = Request(url, headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'HarrTest-version-guard'})
     with urlopen(req, timeout=12) as response:
-        return json.load(response)
+        return strict_io.loads(response.read().decode('utf-8'))
 
 
 def compare_installed(root: Path, tree: dict, remote_version: str, revision: str) -> dict:
@@ -53,17 +54,18 @@ def compare_installed(root: Path, tree: dict, remote_version: str, revision: str
         raise ValueError('Remote tree lacks required skill files')
     if not isinstance(remote_version, str) or not remote_version.strip():
         raise ValueError('Empty remote version')
-    root = Path(root)
+    root = Path(root).resolve()
     if not root.is_dir():
         raise ValueError('Installed skill directory is missing')
     local_version_path = root / 'VERSION'
-    local_version = local_version_path.read_text(encoding='utf-8-sig').strip() if local_version_path.is_file() else None
+    local_version = local_version_path.read_text(encoding='utf-8-sig').strip() if local_version_path.is_file() and not local_version_path.is_symlink() else None
     exact = 0
     normalized = 0
     missing, modified, extras = [], [], []
     for name, sha in sorted(entries.items()):
         file_path = root.joinpath(*PurePosixPath(name).parts)
-        if file_path.is_symlink():
+        parents = [root.joinpath(*PurePosixPath(name).parts[:i]) for i in range(1, len(PurePosixPath(name).parts)+1)]
+        if any(p.is_symlink() for p in parents):
             modified.append(name)  # No symlink resolution outside installed root.
             continue
         if not file_path.is_file():
