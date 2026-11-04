@@ -6,7 +6,7 @@
 
 **Original-goal verification + persistent execution coordination for coding agents.**
 
-[![Version](https://img.shields.io/badge/version-v3.2.1-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v3.2.2-65e7c9?style=flat-square)](CHANGELOG.md)
 [![CI](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml/badge.svg)](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml)
 [![Python](https://img.shields.io/badge/core-Python_3.10+-3776ab?style=flat-square)](scripts/workflow.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
@@ -45,6 +45,11 @@ but then automatic stop enforcement must not be claimed. Read [migration notes](
 before using v3 with old sealed tasks or legacy `prove-it` hooks.
 
 ## New in v3.2: Host-native Project Builder
+
+**v3.2.2 evidence integrity fix:** overlapping reruns now keep the latest admitted
+attempt authoritative. An older slow success cannot hide a newer failure or
+interrupted collector. All receipts remain available; running commands are not
+cancelled. See [race tests and validation boundaries](references/v3.2.2-validation.md).
 
 Build a new product in real, running milestones without changing your coding host,
 model provider or billing path. The host chooses the architecture and writes code;

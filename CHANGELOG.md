@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.2] - 2026-11-04
+
+- Fix a reproduced false-success race: an older collector finishing late could overwrite the latest pointer after a newer failed or interrupted attempt. Admission and conditional completion publication now share a short cross-process SQLite critical section.
+- Preserve every run and receipt, keep commands outside the lock, and fail closed on coordination errors. Collector output distinguishes its own result from whether it published the current pointer.
+- Add real subprocess regressions for both outcome orders, three overlapping attempts, interruption/restart, independent checks, killed lock owners, invalid lock databases, atomic comparison/admission, and current-source root/workflow/builder propagation with subsequent recovery.
+- Exercise the existing CLI persistence-repair and HTTP greenfield/restart/clean-package scenarios. Document collector-upgrade boundaries and local fixture limitations; no live-model performance claim.
+
 ## [3.2.1] - 2026-11-04
 
 - Fix project-path canonicalization at workflow/build boundaries. Windows short-name paths and equivalent relative aliases must compare as the same project without relaxing traversal or source-identity checks.

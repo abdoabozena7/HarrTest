@@ -7,6 +7,7 @@ proof of arbitrary program correctness, a sandbox, or a hostile-agent boundary.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing, contextmanager
 import datetime as dt
 import hashlib
 import json
@@ -16,6 +17,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -79,6 +81,40 @@ def save(path: Path, value, *, exclusive: bool = False):
         temp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
         temp.write_text(text, encoding="utf-8")
         os.replace(temp, path)
+
+
+@contextmanager
+def latest_guard(task: Path):
+    """Serialize brief latest-pointer updates across collector processes.
+
+    SQLite supplies an OS-released lock on Windows and POSIX, including after a
+    collector crash. This database is only a mutex; receipts and the atomic JSON
+    pointer remain the evidence format. Never hold it while executing a command.
+    """
+    path = relative_file(task, '.latest-lock.sqlite', must_exist=False)
+    try:
+        with closing(sqlite3.connect(path, timeout=10, isolation_level=None)) as db:
+            db.execute('BEGIN IMMEDIATE')
+            yield
+            db.commit()
+    except sqlite3.Error as exc:
+        raise ProofError(f'Cannot coordinate latest evidence publication: {exc}') from exc
+
+
+def publish_latest(task: Path, cid: str, run: Path, receipt_hash=None) -> bool:
+    """Admit a run, or publish completion only if no newer run was admitted.
+
+    Both writers use the same cross-process critical section. A read/compare
+    outside this lock would let a newer admission race with an older completion.
+    Admission order, not completion time or random run IDs, determines latest.
+    """
+    relative = run.relative_to(task).as_posix()
+    pointer = task / 'latest' / (cid + '.json')
+    with latest_guard(task):
+        if receipt_hash is not None and load(pointer).get('run') != relative:
+            return False
+        save(pointer, {'run': relative, 'receipt_hash': receipt_hash})
+    return True
 
 
 def relative_file(root: Path, name: str, *, must_exist: bool = True) -> Path:
@@ -392,7 +428,7 @@ def run_check(task: Path, cid: str) -> dict:
     # A start marker ensures an interrupted collector cannot be mistaken for a missing attempt.
     save(run / "started.json", receipt, exclusive=True)
     # A newer unfinished attempt invalidates the previous latest success.
-    save(task / "latest" / (cid + ".json"), {"run": run.relative_to(task).as_posix(), "receipt_hash": None})
+    publish_latest(task, cid, run)
     started = time.monotonic()
     overflow = threading.Event()
     threads = []
@@ -476,9 +512,9 @@ def run_check(task: Path, cid: str) -> dict:
     receipt["errors"] = errors
     receipt["passed"] = not errors
     save(run / "receipt.json", receipt, exclusive=True)
-    save(task / "latest" / (cid + ".json"), {"run": run.relative_to(task).as_posix(),
-                                               "receipt_hash": file_hash(run / "receipt.json")})
-    print(json.dumps({"check": cid, "passed": not errors, "errors": errors, "run": str(run)}, indent=2))
+    published = publish_latest(task, cid, run, file_hash(run / "receipt.json"))
+    print(json.dumps({"check": cid, "passed": not errors, "errors": errors, "run": str(run),
+                      "published_as_latest": published}, indent=2))
     return receipt
 
 

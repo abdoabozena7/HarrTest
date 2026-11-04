@@ -207,6 +207,11 @@ need not invalidate a new v3 child. Legacy all-script seals remain historical, n
 silently rewritten. Declare additional imported verifier files in `harness_dependencies`.
 Preserve previous gate reports before reevaluation; do not erase historical progress.
 
+For overlapping runs of one check, the latest admitted attempt is authoritative,
+including failure or interruption. A superseded run can pass on its own without
+satisfying current acceptance; use `verify`, not its exit code. The collector
+coordinates pointer publication, not runtime resource ownership or cancellation.
+
 A blocked or forced stop may end a turn but cannot authorize success. Report exact
 remaining original requirements. For sensitive delivery, run the verifier/contract
 outside worker write access. Hashes and separate reviewer IDs are integrity metadata,

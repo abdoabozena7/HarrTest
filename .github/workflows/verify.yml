@@ -41,7 +41,7 @@ jobs:
           with ZipFile('skill.zip') as archive:
               assert archive.testzip() is None
               names = set(archive.namelist())
-              for required in ('SKILL.md', 'scripts/proof.py', 'scripts/root_gate.py', 'scripts/workflow.py', 'scripts/runtime_store.py', 'scripts/coverage.py', 'scripts/builder.py', 'references/project-builder.md', '.github/workflows/verify.yml', 'agents/openai.yaml'):
+              for required in ('SKILL.md', 'scripts/proof.py', 'scripts/root_gate.py', 'scripts/workflow.py', 'scripts/runtime_store.py', 'scripts/coverage.py', 'scripts/builder.py', 'references/project-builder.md', 'references/v3.2.2-validation.md', 'tests/test_evidence_ordering.py', '.github/workflows/verify.yml', 'agents/openai.yaml'):
                   assert 'harrtest/' + required in names, required
           PY
       - name: Upload complete skill ZIP

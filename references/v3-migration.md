@@ -27,6 +27,15 @@ checks, collector or verifier dependencies still invalidate acceptance. Root cov
 is reevaluated separately. Historical progress and current acceptance are different.
 
 ## Planning and concurrency
+
+v3.2.2 changes the collector fingerprint to prevent older overlapping completions
+from replacing newer attempts. Preserve existing sealed tasks and evidence; use a
+documented acceptance revision with the same original goal and fresh execution
+when adopting the new collector. Do not restamp old seals or mix running collector
+versions in one task. The `.latest-lock.sqlite` file is a local publication mutex,
+not a replacement evidence store. Crashed processes release its OS lock; never
+delete a live lock file to bypass coordination. Receipt/pointer schemas stay intact.
+
 New parallel plans must use explicit scoped paths, not wildcard write scopes. Add
 ordering or separate ownership for overlapping read/write surfaces or resources.
 Detached child initialization does not move the active task. Keep one coordinator

@@ -126,6 +126,18 @@ exit status, timestamps, before/after source fingerprints and required artifacts
 It creates a unique run directory and marks that attempt current before launch;
 a killed/unfinished attempt cannot fall back to an older passing run.
 
+When collectors overlap, admission and completion publication share a short
+cross-process SQLite lock in `TASK/.latest-lock.sqlite`. A completion updates the
+pointer only while its run is still current. An older slow success cannot replace
+a newer failure or unfinished attempt; every run's receipts/logs remain in history.
+`published_as_latest` in collector output records this publication decision, not a
+lasting completion guarantee. An old command's exit code describes that command;
+use `verify` for current acceptance. Commands execute outside the lock, and
+different checks retain separate pointers. Lease/resource coordination is still
+the workflow's responsibility; this lock does not cancel commands or grant access.
+Coordination errors fail closed. Keep task state on a local filesystem with working
+SQLite locking; no distributed or hostile-writer enforcement is claimed.
+
 Start long-lived servers using the host's managed process tools. Do not put an
 infinite `npm run dev` into a finite acceptance check and expect it to pass.
 The check should exercise the already-owned server or use a task-specific
