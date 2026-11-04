@@ -19,7 +19,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Validate layout
-        run: python -c "from pathlib import Path; s=Path('SKILL.md').read_text(encoding='utf-8'); assert s.splitlines()[:2] == ['---', 'name: harrtest']; assert Path('agents/openai.yaml').is_file(); assert Path('scripts/workflow.py').is_file(); assert Path('visual/banner.svg').is_file()"
+        run: |
+          python -c "from pathlib import Path; s=Path('SKILL.md').read_text(encoding='utf-8'); assert s.splitlines()[:2] == ['---', 'name: harrtest']; assert Path('agents/openai.yaml').is_file(); assert Path('scripts/workflow.py').is_file(); assert Path('visual/banner.svg').is_file()"
       - name: Unit and actual CLI workflow regressions
         run: python -B -m unittest discover -s tests -p 'test_*.py' -v
       - name: Package complete installable skill
