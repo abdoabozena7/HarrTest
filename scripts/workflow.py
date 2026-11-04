@@ -14,6 +14,7 @@ import sqlite3
 import proof
 import root_gate
 import strict_io
+import project_memory
 from runtime_store import Store, RuntimeErrorState
 
 
@@ -87,9 +88,29 @@ def packet(project, spec, task):
         if sum(len(c['text']) for c in context) + len(content) > 256_000:
             raise ValueError('Context pack exceeds 256k characters; narrow the task context')
         context.append({'path': name, 'sha256': proof.file_hash(path), 'text': content})
+    # Durable, project-scoped memory lives in ~/.harrtest, not in the project
+    # repository nor in the replaceable installed skill directory.
+    memory = project_memory.Memory(project)
+    original_ref = spec['root_goal'] + '/original-request.txt'
+    memory.bootstrap(original_ref, goal_id=spec['goal_id'])
+    try:
+        memory_pack = memory.pack(spec['goal_id'], task['outcome'],
+                                  role=task.get('role', 'implement'),
+                                  budget=12000,
+                                  scopes=tuple(task.get('write_scope', [])) + tuple(task.get('read_scope', [])))
+    except ValueError as exc:
+        if 'Original goal too long for worker context' not in str(exc):
+            raise
+        # This same packet already includes the complete original_request below.
+        # Do not duplicate a huge original request into the small optional pack.
+        memory_pack = {'status': 'FULL_ORIGINAL_GOAL_IN_PARENT_PACKET',
+                       'goal_id': spec['goal_id'],
+                       'goal_sha256': memory.goal(spec['goal_id'])['sha256'],
+                       'memory_state': str(memory.directory),
+                       'instruction': 'Use original_request in this packet. Requery private project brief for source-qualified notes.'}
     return {'goal_id': spec['goal_id'], 'original_root': spec['root_goal'],
             'original_request': original_file.read_text(encoding='utf-8'),
-            'previous_observation': previous,
+            'previous_observation': previous, 'project_memory': memory_pack,
             'root_binding': spec['_bindings']['root_sha256'], 'task': task, 'context': context,
             'host_execution_required': True, 'provider_changed': False,
             'instruction': 'Use actual host tools. Report real invocation IDs and raw evidence. '

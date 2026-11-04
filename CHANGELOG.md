@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.1.0] - 2026-11-04
+
+- Add private, per-project durable memory under `~/.harrtest/projects/`, surviving skill replacement without changing target repository Git files.
+- Preserve original goal revisions, source-qualified project facts, and evidence-linked work checkpoints with stale hash detection and generated project briefs.
+- Add bounded role/task-specific context selection; include relevant memory in real `workflow.py` host-worker packets.
+- Support optional stronger host-model context curation via validated source-current note selections; no new provider or hidden billing.
+- Exclude secret/generated files and avoid automatic source-body dumps. No claim of general semantic memory, model uplift, or external-host runtime verification.
+
+
 ## [3.0.0] - 2026-11-04
 
 ### Implemented local reliability core

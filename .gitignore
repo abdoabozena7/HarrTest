@@ -13,3 +13,6 @@ venv/
 .env
 .env.*
 *.backup-*
+# Private durable context is stored outside this replaceable skill checkout.
+.harrtest/
+.harrtest-state/

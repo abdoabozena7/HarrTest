@@ -48,6 +48,24 @@ Legacy schema-2 roots remain readable with `LEGACY_DECLARED_COVERAGE`. When real
 independent review is unavailable, disclose that limitation; do not invent a reviewer.
 Never shrink an old root or rewrite its seal to make a passing smoke cover the mission.
 
+## 2b. Create and refresh private project context before planning
+
+Before editing, initialize `scripts/project_memory.py --project PROJECT bootstrap`
+using the existing authoritative `ROOT_GOAL.md`; if absent, pass `--goal-file`
+pointing to the sealed original request. Preserve original goal revisions; never
+invent a goal from README or overwrite changed text without explicit approval.
+Read `brief` and use `pack --task "specific next outcome" --role implement`
+for selective context. Record source-qualified facts with `note`, and real
+work/checkpoints with `checkpoint` (not as substitutes for `proof.py` verification).
+Recheck stale file hashes after edits. For long tasks/real subagents, `workflow.py`
+automatically attaches the relevant private pack when preparing a task packet.
+
+**State belongs to HarrTest, not the project Git tree:** the default per-project
+home is `~/.harrtest/projects/<name-hash>/`, surviving skill upgrades. Never store
+private notes inside the replaceable skill installation or auto-commit them.
+See [project memory](references/project-context-memory.md) for careful context
+retrieval, model-assisted curation, provenance, scope limits and recovery.
+
 ## 3. Inspect capabilities and plan verifiable slices
 
 Probe the real entrypoint, runtime identity, terminal, browser/image inspection,

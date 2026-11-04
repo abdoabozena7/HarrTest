@@ -172,3 +172,28 @@ Use `scripts/evaluation.py` on independently evaluated, matched baseline/candida
 runs. It retains missing/blocked outcomes and refuses to equate fixtures with
 live-agent evidence. The proposed large held-out model campaign remains future
 work, not a claimed result. See [CHANGELOG](CHANGELOG.md) and [CONTRIBUTING](CONTRIBUTING.md).
+
+## Persistent project brief and selective subagent context (v3.1)
+
+HarrTest now keeps private, project-specific state **outside both the target
+repository and the replaceable skill installation**, in
+`~/.harrtest/projects/<project-name>-<path-hash>/`. Upgrading the skill does not
+erase it. The goal is preserved verbatim; architecture notes are bound to source
+file hashes and marked stale after edits; child checkpoints remain historical.
+
+```powershell
+python scripts/project_memory.py --project C:\path\to\project bootstrap
+python scripts/project_memory.py --project C:\path\to\project brief
+python scripts/project_memory.py --project C:\path\to\project note --category architecture --text "API routes are implemented in backend/server.py" --source backend/server.py
+python scripts/project_memory.py --project C:\path\to\project pack --task "Implement persistence and verify reload" --role implement --budget-chars 12000
+```
+
+The `bootstrap` command detects `ROOT_GOAL.md` or `GOAL.md` automatically; pass
+`--goal-file` when neither exists. Every task's real `workflow.py claim` packet
+includes a selective project-memory pack anchored to the original sealed root.
+The pack contains relevant paths, source-qualified facts and last checkpoints,
+**not a dump of the repository or all conversation history**. Optional curation by
+an already-available stronger host model may select note IDs; deterministic
+validation enforces goal, task, role and source freshness. HarrTest never launches
+or charges another model secretly. See
+[the complete memory workflow](references/project-context-memory.md).
