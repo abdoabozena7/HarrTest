@@ -2,11 +2,11 @@
 
 <img src="visual/banner.svg" alt="HarrTest - plan, run, inspect and verify" width="100%" />
 
-# HarrTest v3
+# HarrTest v3.1
 
 **Original-goal verification + persistent execution coordination for coding agents.**
 
-[![Version](https://img.shields.io/badge/version-v3.0.0-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v3.1.0-65e7c9?style=flat-square)](CHANGELOG.md)
 [![CI](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml/badge.svg)](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml)
 [![Python](https://img.shields.io/badge/core-Python_3.10+-3776ab?style=flat-square)](scripts/workflow.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
