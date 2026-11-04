@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.2.1] - 2026-11-04
+
+- Fix project-path canonicalization at workflow/build boundaries. Windows short-name paths and equivalent relative aliases must compare as the same project without relaxing traversal or source-identity checks.
+- Add a regression that reproduces the failing containment check with a noncanonical project alias. Retain the original Windows CI failure; do not skip the affected tests.
+
+
 ## [3.2.0] - 2026-11-04
 
 ### Host-native Project Builder
@@ -136,7 +142,7 @@ All notable versions are recorded here. Version 1 follows semantic versioning: `
 
 ### Rebrand: HarrTest
 - Canonical public repository: `abdoabozena7/HarrTest`.
-- Portable skill ID, install directories and hooks: `harrtest`.
+- Portable skill ID, installation directories and hooks: `harrtest`.
 - Updated visual banner, agent metadata, README, installation commands and current documentation.
 - Added migration protection for the prior `harrnist` hooks/instructions, preserving earlier `prove-it` and `oh-my-harness` guards.
 - Preserved proof schema, root-goal validation and tests without falsely asserting cross-agent execution.

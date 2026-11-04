@@ -131,6 +131,13 @@ class BuilderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'previously attempted'):
             builder.reopen(self.project,self.store,self.saved,self.shape,'delivery','diagnosis.txt','Try to jump ahead without completing the runnable slice')
 
+    def test_project_alias_is_resolved_before_binding_comparisons(self):
+        alias = self.project / '..' / self.project.name
+        # On Windows the same issue occurs with RUNNER~1 vs runneradmin.
+        actual = builder.binding(alias, self.spec)
+        canonical = builder.binding(self.project.resolve(), self.spec)
+        self.assertEqual(actual, canonical)
+
     def test_architecture_missing_rejected(self):
         s=plan();s['build'].pop('architecture')
         with self.assertRaisesRegex(ValueError,'Architecture'):builder.validate_plan(s)

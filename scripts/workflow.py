@@ -26,6 +26,8 @@ def artifact(project, relative):
 
 
 def validate_bindings(project, spec):
+    # Normalize aliases (notably Windows short names) before identity/containment checks.
+    project = Path(project).resolve()
     goal = strict_io.scoped_path(project, spec['root_goal'])
     if not goal.is_relative_to(project / proof.STATE / root_gate.ROOT_DIR):
         raise ValueError('Workflow root must be an existing original .runtime-proof/root-goals directory')
@@ -68,6 +70,7 @@ def validate_bindings(project, spec):
 
 def packet(project, spec, task):
     """Explicit context, source identities and scope; no secret environment dump."""
+    project = Path(project).resolve()
     context = []
     original_file = strict_io.scoped_path(project, spec['root_goal'] + '/original-request.txt')
     if original_file.stat().st_size > 256_000:

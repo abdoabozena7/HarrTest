@@ -120,6 +120,7 @@ def validate_plan(spec):
 
 
 def binding(project, spec):
+    project = Path(project).resolve()
     shape = validate_plan(spec)
     linked = workflow.validate_bindings(project, spec)
     goal = strict_io.scoped_path(project, spec['root_goal'])
@@ -328,6 +329,7 @@ def reopen(project, store, spec, shape, tid, evidence, reason):
 
 
 def bootstrap(project, gid, request):
+    project = Path(project).resolve()
     proof.identifier(gid, 'goal ID')
     data = Path(request).read_bytes()
     require(len(data) <= 200000, 'Original request exceeds bounded intake; do not silently truncate')
