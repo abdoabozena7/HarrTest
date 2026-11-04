@@ -3,7 +3,7 @@ name: harrtest
 description: Plan, coordinate and verify coding work against the original user goal using real tools and current-source evidence. Use for implementation, debugging, frontend/UI, APIs, CLI/code-generation agents, simulation and long autonomous tasks. Preserve an acceptance-linked task graph; use real subagents when suitable and available, otherwise work serially. Coordinate shared files/resources, resume durable state, challenge missing requirements, test actual behavior, and distinguish child success from whole-goal completion. Never replace real verification with mock success, test counts or self-reports. Does not apply to conversation-only requests or work that explicitly excludes execution.
 ---
 
-# HarrTest v3
+# HarrTest v3.2
 
 **Deliver the original observable outcome. Plan -> run -> observe -> repair -> integrate -> verify.**
 
@@ -71,6 +71,27 @@ home is `~/.harrtest/projects/<name-hash>/`, surviving skill upgrades. Never sto
 private notes inside the replaceable skill installation or auto-commit them.
 See [project memory](references/project-context-memory.md) for careful context
 retrieval, model-assisted curation, provenance, scope limits and recovery.
+
+## 2c. Build new products as tested milestones, not one giant patch
+
+For greenfield products or substantial multi-component expansions, read
+[Project Builder](references/project-builder.md). Preserve the original request with
+`builder.py bootstrap`; let the current host choose a justified architecture after
+checking real tools, constraints, interfaces and risks. Create only minimal setup
+before sealing actual root/child acceptance. The user supplies the goal, not JSON.
+
+Register a `build-plan.json` in the existing workflow store. Require an early running
+vertical slice, live integration at each milestone, and final delivery linked to the
+original root. Use `builder.py next/claim/checks/gate` for build-mode coordination.
+The gate includes predecessor milestones on current source; a new passing component
+cannot hide a broken earlier one. Reuse fresh checks, not stale results. For a real
+repair use an evidence-linked `reopen`; preserve historical progress and acceptance.
+
+Delegate genuinely independent ready work through actual host tools; otherwise work
+serially. Use local diagnostics before expensive model escalation. A stronger model
+is only a suggestion when the host already supports and authorizes it. No separate
+provider, invisible agent, artificial mission budget or overnight scheduler is added.
+Small fixes can retain the lighter existing workflow instead of this build manifest.
 
 ## 3. Inspect capabilities and plan verifiable slices
 

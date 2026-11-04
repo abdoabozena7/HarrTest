@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.2.0] - 2026-11-04
+
+### Host-native Project Builder
+- Add greenfield intake, architecture/alternative/risk declarations, interface binding and original-root-linked build milestones.
+- Add deterministic `builder.py` coordination on the existing SQLite store: next work, scoped claims, cumulative integration gates, fresh-check reuse, and evidence-linked repair reopening.
+- Prevent advancement on missing/stale predecessor acceptance; permit a recorded repair to resolve that regression without weakening any gate.
+- Recommend native-host serial/parallel execution from declared capabilities and conflict-free ready tasks; no separate provider, model routing API or paid calls added.
+- Add a real scripted HTTP API build: blank intake, runnable slice, persistence failure/repair, restart, clean package execution, and stale-source rejection.
+- Keep small tasks on the lighter workflow and preserve v3.1 contracts/memory; do not silently convert existing tasks.
+- Local/controller tests are not live-host model performance measurements. See `references/v3.2-validation.md`.
+
+
 ## [3.1.0] - 2026-11-04
 
 - Add private, per-project durable memory under `~/.harrtest/projects/`, surviving skill replacement without changing target repository Git files.

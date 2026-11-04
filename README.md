@@ -2,11 +2,11 @@
 
 <img src="visual/banner.svg" alt="HarrTest - plan, run, inspect and verify" width="100%" />
 
-# HarrTest v3.1
+# HarrTest v3.2
 
 **Original-goal verification + persistent execution coordination for coding agents.**
 
-[![Version](https://img.shields.io/badge/version-v3.1.0-65e7c9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v3.2.0-65e7c9?style=flat-square)](CHANGELOG.md)
 [![CI](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml/badge.svg)](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml)
 [![Python](https://img.shields.io/badge/core-Python_3.10+-3776ab?style=flat-square)](scripts/workflow.py)
 [![License](https://img.shields.io/badge/license-MIT-ffd269?style=flat-square)](LICENSE)
@@ -43,6 +43,44 @@ Hooks are optional and host-specific (Copilot CLI/compatible hosts and Claude); 
 Codex bridge or extra provider is installed. The skill can be used without hooks,
 but then automatic stop enforcement must not be claimed. Read [migration notes](references/v3-migration.md)
 before using v3 with old sealed tasks or legacy `prove-it` hooks.
+
+## New in v3.2: Host-native Project Builder
+
+Build a new product in real, running milestones without changing your coding host,
+model provider or billing path. The host chooses the architecture and writes code;
+HarrTest validates the plan and coordinates its execution/acceptance.
+
+- **Architecture before bulk implementation:** record stack choice, alternatives,
+  constraints, interface contracts and early risk probes.
+- **Runnable milestone gates:** first vertical slice, incremental integration, final
+  delivery; every stage checks its predecessors on current source.
+- **Useful resumption:** select the next unfinished stage, preserve delivered work,
+  reopen evidence-backed defects, and avoid blind retries after an interruption.
+- **Native-host delegation:** choose conflict-free ready tasks only when real delegation
+  exists. No pretend agents, mandatory parallelism or extra model client.
+- **Local-first verification:** reuse fresh passing checks; rerun failed/stale ones.
+  A diagnostic fixture costs no paid model calls, but live-host use still consumes its
+  normal resources. No artificial mission time/token cap is introduced.
+
+[Builder commands and migration](references/project-builder.md) | [Validation boundaries](references/v3.2-validation.md)
+
+```text
+python scripts/builder.py --project PROJECT bootstrap --goal mission --request-file ORIGINAL_REQUEST.txt
+# The coding host drafts architecture, seals actual children/root, and fills the plan.
+python scripts/builder.py --project PROJECT init --plan build-plan.json
+python scripts/builder.py --project PROJECT next --goal mission
+python scripts/builder.py --project PROJECT gate --goal mission --milestone M1
+```
+
+Try the actual local HTTP/persistence/clean-package demonstration:
+
+```text
+python examples/builder_demo.py --output /path/to/new/disposable-build
+```
+
+This is an executable controller test with author-supplied code, not evidence that
+an LLM built a complete game autonomously. No live Copilot/model uplift, visual game
+quality or continuous overnight execution is claimed.
 
 ## What v3 adds
 

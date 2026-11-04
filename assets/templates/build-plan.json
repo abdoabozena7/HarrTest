@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "goal_id": "mission",
+  "root_goal": ".runtime-proof/root-goals/mission",
+  "tasks": [
+    {
+      "id": "slice",
+      "role": "integrate",
+      "outcome": "REPLACE_ME runnable first user journey",
+      "proof_task": ".runtime-proof/slice",
+      "depends_on": [],
+      "write_scope": [
+        "src"
+      ],
+      "read_scope": [],
+      "resources": [],
+      "context_files": []
+    },
+    {
+      "id": "delivery",
+      "role": "integrate",
+      "outcome": "REPLACE_ME final complete delivered user outcome",
+      "proof_task": ".runtime-proof/delivery",
+      "depends_on": [
+        "slice"
+      ],
+      "write_scope": [],
+      "read_scope": [
+        "src"
+      ],
+      "resources": []
+    }
+  ],
+  "build": {
+    "mode": "greenfield",
+    "architecture": {
+      "runtime": "REPLACE_ME actual supported runtime",
+      "selected_stack": "REPLACE_ME selected stack",
+      "rationale": "REPLACE_ME evidence and scope fit",
+      "deliverable": "REPLACE_ME executable/service/package",
+      "constraints": [
+        "REPLACE_ME original constraints"
+      ],
+      "alternatives": [
+        {
+          "option": "REPLACE_ME plausible alternative",
+          "tradeoff": "REPLACE_ME meaningful tradeoff"
+        }
+      ]
+    },
+    "host": {
+      "delegation_available": false,
+      "stronger_model_available": false,
+      "max_parallel_workers": 1,
+      "evidence": "REPLACE_ME actual host capability observations, not invented agent support"
+    },
+    "interfaces": [],
+    "risks": [
+      {
+        "failure": "REPLACE_ME largest early failure risk",
+        "probe": "REPLACE_ME falsifiable runtime probe",
+        "milestone": "M1"
+      }
+    ],
+    "milestones": [
+      {
+        "id": "M1",
+        "kind": "vertical_slice",
+        "outcome": "REPLACE_ME real runnable thin user journey",
+        "tasks": [
+          "slice"
+        ],
+        "requirements": [
+          "ROOT01"
+        ],
+        "depends_on": [],
+        "integration_task": "slice"
+      },
+      {
+        "id": "M2",
+        "kind": "delivery",
+        "outcome": "REPLACE_ME integrated final deliverable",
+        "tasks": [
+          "delivery"
+        ],
+        "requirements": [
+          "ROOT02"
+        ],
+        "depends_on": [
+          "M1"
+        ],
+        "integration_task": "delivery"
+      }
+    ]
+  }
+}
