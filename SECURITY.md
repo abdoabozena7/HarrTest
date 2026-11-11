@@ -8,5 +8,9 @@ It cannot override organization policies, host stop limits, resource quotas or c
 - Use disposable accounts and test data; restrict side effects and preserve real users' files.
 - Do not use acceptance bypasses, credit/ledger resets, or privileged simulator truth to "pass" testing.
 - Treat evidence from the same agent that authored the implementation as potentially correlated; use independent review where feasible.
+- Gold validates worker and comparison records against the retained local artifacts.
+  It does not authenticate the host or evaluator. Keep acceptance, invocation
+  traces, and measurement evidence outside the implementer's write access when
+  an independent party must trust the result.
 
 For private vulnerabilities, contact the maintainer privately rather than including secrets in a public issue.

@@ -201,6 +201,20 @@ class ProofTests(unittest.TestCase):
         self.assertIn('bash', hook)
         self.assertIn('powershell', hook)
 
+    def test_installer_does_not_copy_private_gold_evidence(self):
+        source = self.project / 'skill-source'
+        source.mkdir()
+        (source / 'SKILL.md').write_text('Installable skill instructions.', encoding='utf-8')
+        for name in ('.runtime-proof', 'output', '.agent_evidence'):
+            (source / name).mkdir()
+            (source / name / 'private.txt').write_text('Private evidence canary.', encoding='utf-8')
+        (source / '.env.local').write_text('PRIVATE_CANARY=not-a-real-secret', encoding='utf-8')
+        project = self.project / 'install-target'
+        project.mkdir()
+        with patch.object(install, 'SOURCE', source):
+            result = install.install('copilot', 'project', project, self.project / 'home')
+        self.assertEqual([p.name for p in Path(result['installed']).iterdir()], ['SKILL.md'])
+
     def test_previous_oh_my_harness_instructions_rejected(self):
         previous = self.project / '.github/copilot-instructions.md'
         previous.parent.mkdir(parents=True, exist_ok=True)

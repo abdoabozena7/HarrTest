@@ -160,7 +160,7 @@ class Store:
                 row.pop('token')  # Tokens are not public status evidence.
             return rows
 
-    def claim(self, gid, tid, owner, seconds):
+    def claim(self, gid, tid, owner, seconds, *, packet_sha256=None, independent_of=(), expected_dependencies=None):
         concrete(owner, 'actual host/worker identity')
         require(type(seconds) in (int, float) and math.isfinite(seconds) and seconds > 0, 'A finite positive coordination lease is required')
         require(math.isfinite(self.clock() + seconds), 'Lease expiry overflows the clock')
@@ -169,7 +169,13 @@ class Store:
             row = next((r for r in rows if r['goal'] == gid and r['id'] == tid), None)
             require(row is not None and row['state'] == 'TODO', 'Task not ready; expired workers require explicit reconciliation')
             deps = {r['id']: r for r in rows if r['goal'] == gid}
-            require(all(deps[d]['state'] in {'IMPLEMENTED', 'VERIFIED'} for d in row['spec'].get('depends_on', [])), 'Dependency not implemented')
+            require(all(deps[d]['state'] in {'IMPLEMENTED', 'VERIFIED'} for d in row['spec'].get('depends_on', [])),
+                    'Dependency not implemented')
+            if expected_dependencies is not None:
+                require(all(deps[d]['state'] == 'VERIFIED' and deps[d]['generation'] == gen
+                            for d, gen in expected_dependencies.items()), 'Verified dependencies changed before claim')
+            require(all(deps[d]['owner'] and deps[d]['owner'].casefold() != owner.casefold() for d in independent_of),
+                    'Review requires a different host worker from each reviewed implementer')
             for running in rows:
                 if running['state'] == 'RUNNING' and strict_io.conflicts(row['spec'], running['spec']):
                     raise RuntimeErrorState(f'Resource/write conflict with {running["goal"]}/{running["id"]}; expired leases still need recovery')
@@ -177,7 +183,10 @@ class Store:
             generation = row['generation'] + 1
             db.execute('UPDATE tasks SET state=?,generation=?,owner=?,token=?,expires=? WHERE goal=? AND id=?',
                        ('RUNNING', generation, owner, token, self.clock() + seconds, gid, tid))
-            self.event(db, 'TASK_CLAIMED', {'goal': gid, 'task': tid, 'generation': generation, 'owner': owner})
+            body = {'goal': gid, 'task': tid, 'generation': generation, 'owner': owner}
+            if packet_sha256 is not None:
+                body['packet_sha256'] = packet_sha256
+            self.event(db, 'TASK_CLAIMED', body)
             return {'goal': gid, 'task': tid, 'generation': generation, 'owner': owner, 'token': token,
                     'lease_seconds': seconds, 'spec': row['spec'], 'permission_granted': False}
 
@@ -214,6 +223,32 @@ class Store:
             require(not pending, 'Unknown external effects: reconcile before retry')
             db.execute('UPDATE tasks SET state=?,token=NULL,expires=NULL,owner=NULL WHERE goal=? AND id=?', ('TODO', gid, tid))
             self.event(db, 'EXPIRED_WORK_RECONCILED', {'goal': gid, 'task': tid, 'evidence': evidence})
+
+    def retry(self, gid, tid, evidence, *, token=None):
+        require(isinstance(evidence, dict) and evidence.get('sha256') and evidence.get('path'),
+                'Retry needs retained failure evidence')
+        with self.transaction() as db:
+            rows = {r['id']: r for r in self.rows(db, gid)}
+            if token is None:
+                require(tid in rows and rows[tid]['state'] in {'IMPLEMENTED', 'VERIFIED'},
+                        'Only a handed-off task can be reopened without an active lease token')
+            else:
+                self.owned(db, gid, tid, token)
+            affected = {tid}
+            while True:
+                descendants = {r['id'] for r in rows.values() if affected.intersection(r['spec'].get('depends_on', []))}
+                if descendants.issubset(affected):
+                    break
+                affected.update(descendants)
+            pending = {r[0] for r in db.execute("SELECT task FROM operations WHERE goal=? AND state='UNKNOWN_EFFECT'", (gid,))}
+            running = {t for t in affected if rows[t]['state'] == 'RUNNING'}
+            require(not affected.intersection(pending) and running.issubset({tid} if token is not None else set()),
+                    'Finish or reconcile all affected running work and uncertain effects before retry')
+            for node in sorted(affected):
+                db.execute('UPDATE tasks SET state=?,owner=NULL,token=NULL,expires=NULL,handoff=NULL WHERE goal=? AND id=?',
+                           ('TODO', gid, node))
+            self.event(db, 'WORKFLOW_TASKS_REOPENED', {'goal': gid, 'task': tid, 'affected': sorted(affected), 'evidence': evidence})
+            return sorted(affected)
 
     def verify(self, gid, tid, validator):
         # Hold coordinator transaction through validation to fence cooperative changes.

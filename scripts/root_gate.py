@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""HarrTest v2 root-goal verification: a passing child never closes the mission."""
+"""Verify the original goal, including the Gold protocol when sealed into it."""
 from __future__ import annotations
 import argparse
 import datetime as dt
 import json
 from pathlib import Path
+import sqlite3
 import sys
 import proof
 
@@ -20,6 +21,8 @@ def root_dir(project: Path, goal_id: str) -> Path:
 def validate(project: Path, goal: Path, contract: dict) -> None:
     if not isinstance(contract, dict) or contract.get("schema") not in {2, 3}:
         raise proof.ProofError("Root contract must have schema 2 or 3")
+    if "protocol" in contract and (contract["schema"] != 3 or contract["protocol"] != "golden-v1"):
+        raise proof.ProofError("Root protocol must be golden-v1 on a schema-3 root")
     if contract.get("goal_id") != goal.name:
         raise proof.ProofError("Root ID mismatch")
     original_file = goal / "original-request.txt"
@@ -150,6 +153,12 @@ def check_root(goal: Path) -> dict:
         integration = contract["integration"]["task_id"]
         if integration not in children or not children[integration][1]["passed"]:
             errors.append("Final integrated acceptance is unverified")
+        gold = None
+        if not errors and contract.get("protocol") == "golden-v1":
+            try:
+                gold = check_gold(project, goal)
+            except (proof.ProofError, KeyError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+                errors.append("Gold gate: " + str(exc))
         return {"schema": contract["schema"], "goal_id": contract["goal_id"],
                 "root_status": "ROOT_GOAL_VERIFIED" if not errors else "ROOT_GOAL_UNVERIFIED",
                 "root_goal_achieved": not errors,
@@ -158,11 +167,25 @@ def check_root(goal: Path) -> dict:
                 "coverage_assurance": "FULL_TEXT_MAPPED_REVIEW_DECLARED" if contract["schema"] == 3 else "LEGACY_DECLARED_COVERAGE",
                 "requirements": details,
                 "verified_children": [k for k, v in children.items() if v[1]["passed"]],
+                **({"golden": gold} if contract.get("protocol") == "golden-v1" else {}),
                 "errors": errors,
                 "limitation": "Mechanical coverage of a sealed scope does not prove the completeness or validity of self-authored natural-language oracles."}
     except (proof.ProofError, KeyError, OSError, TypeError, ValueError) as exc:
         return {"schema": 2, "goal_id": goal.name, "root_status": "ROOT_GOAL_UNVERIFIED",
                 "root_goal_achieved": False, "requirements": details, "errors": [str(exc)]}
+
+
+def check_gold(project, goal):
+    import strict_io
+    import workflow
+    from runtime_store import Store
+
+    database = strict_io.scoped_path(project, ".runtime-proof/workflows.sqlite")
+    store = Store(database)
+    spec = store.goal(goal.name)
+    if strict_io.scoped_path(project, spec["root_goal"]) != goal or spec["goal_id"] != goal.name:
+        raise ValueError("Workflow belongs to a different original root")
+    return workflow.check_golden_root(project, store, spec)
 
 
 def main() -> int:

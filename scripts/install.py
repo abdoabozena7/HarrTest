@@ -17,6 +17,11 @@ import sys
 SOURCE = Path(__file__).resolve().parents[1]
 START = "<!-- harrtest:begin -->"
 END = "<!-- harrtest:end -->"
+PACKAGE_IGNORES = shutil.ignore_patterns(
+    ".git", "__pycache__", "*.pyc", ".pytest_cache", "skill.zip", ".venv", "venv",
+    ".runtime-proof", ".agent_evidence", "runs", "output", ".harrtest", ".harrtest-state",
+    ".env", ".env.*", "*.mp4", "*.webm", "*.trace.zip", "*.backup-*",
+)
 
 
 def ps_quote(text):
@@ -49,6 +54,9 @@ sealed original root and child plan, claim scoped tasks, hand off artifacts,
 and verify fresh child evidence. It coordinates actual host workers; it never
 creates another model client. Use `proof.py init --detached` for child setup
 without taking another session's active ownership.
+For substantial new release work, follow the Gold protocol in
+`references/v4-gold.md`: evidence-backed intake, independent native testing,
+and a predeclared comparison before root completion.
 Run `scripts/proof.py verify --task <task-directory>` for child acceptance and
 `scripts/root_gate.py verify --goal <original-goal-directory>` for root acceptance
 before claiming completion. New root contracts use schema 3 full-text coverage
@@ -143,7 +151,7 @@ def install(agent, scope, project, home, with_hook=False, instructions=False, up
             shutil.make_archive(str(base), "zip", root_dir=dest.parent, base_dir=dest.name)
             shutil.rmtree(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(SOURCE, dest, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".pytest_cache", "skill.zip"))
+        shutil.copytree(SOURCE, dest, ignore=PACKAGE_IGNORES)
     backups = []
     for path, content in files.items():
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -23,25 +25,35 @@ jobs:
           python -c "from pathlib import Path; s=Path('SKILL.md').read_text(encoding='utf-8'); assert s.splitlines()[:2] == ['---', 'name: harrtest']; assert Path('agents/openai.yaml').is_file(); assert Path('scripts/workflow.py').is_file(); assert Path('visual/banner.svg').is_file()"
       - name: Unit and actual CLI workflow regressions
         run: python -B -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Matched comparison against v3.2.2
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        shell: bash
+        run: python -B scripts/golden_benchmark.py --output "$RUNNER_TEMP/harrtest-gold-comparison"
       - name: Package complete installable skill
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         shell: bash
         run: |
           python - <<'PY'
+          from fnmatch import fnmatchcase
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           root = Path('.')
-          excluded = {'.git', '__pycache__', '.pytest_cache', '.runtime-proof', '.venv'}
+          excluded = ('.git', '__pycache__', '*.pyc', '.pytest_cache', 'skill.zip',
+                      '.venv', 'venv', '.runtime-proof', '.agent_evidence', 'runs',
+                      'output', '.harrtest', '.harrtest-state', '.env', '.env.*',
+                      '*.mp4', '*.webm', '*.trace.zip', '*.backup-*')
           with ZipFile('skill.zip', 'w', ZIP_DEFLATED) as archive:
               for file in sorted(root.rglob('*')):
+                  if any(fnmatchcase(part, pattern) for part in file.parts for pattern in excluded):
+                      continue
                   if file.is_symlink():
                       raise RuntimeError('Refuse symlink in published skill: ' + str(file))
-                  if file.is_file() and file.name != 'skill.zip' and not any(part in excluded for part in file.parts):
+                  if file.is_file():
                       archive.write(file, 'harrtest/' + file.as_posix())
           with ZipFile('skill.zip') as archive:
               assert archive.testzip() is None
               names = set(archive.namelist())
-              for required in ('SKILL.md', 'scripts/proof.py', 'scripts/root_gate.py', 'scripts/workflow.py', 'scripts/runtime_store.py', 'scripts/coverage.py', 'scripts/builder.py', 'references/project-builder.md', 'references/v3.2.2-validation.md', 'tests/test_evidence_ordering.py', '.github/workflows/verify.yml', 'agents/openai.yaml'):
+              for required in ('SKILL.md', 'scripts/proof.py', 'scripts/root_gate.py', 'scripts/workflow.py', 'scripts/runtime_store.py', 'scripts/coverage.py', 'scripts/builder.py', 'references/project-builder.md', 'references/v3.2.2-validation.md', 'tests/test_evidence_ordering.py', '.github/workflows/verify.yml', 'agents/openai.yaml', 'scripts/golden.py', 'scripts/golden_benchmark.py', 'references/v4-gold.md', 'references/v4-validation.md', 'visual/banner.svg'):
                   assert 'harrtest/' + required in names, required
           PY
       - name: Upload complete skill ZIP

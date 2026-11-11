@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.0.0 — Gold
+
+- Added a Gold protocol for schema-3 goals. It binds the original interpretation,
+  resolved edge cases, and decision evidence before the workflow is registered.
+- Added portable worker packets, generation-bound handoffs, native invocation
+  evidence, and an independent QA stage in the strict workflow.
+- Gold root verification requires a predeclared before/after comparison with
+  complete retained attempts and candidate results on the current sealed sources.
+- Rebuilt the README and banner. Existing v3 workflows and Builder plans remain
+  readable without retroactively changing their acceptance contracts.
+- Excluded local proof and benchmark output from installation and packaging.
+
+
 ## [3.2.2] - 2026-11-04
 
 - Fix a reproduced false-success race: an older collector finishing late could overwrite the latest pointer after a newer failed or interrupted attempt. Admission and conditional completion publication now share a short cross-process SQLite critical section.

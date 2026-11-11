@@ -1,9 +1,9 @@
 ---
 name: harrtest
-description: Plan, coordinate and verify coding work against the original user goal using real tools and current-source evidence. Use for implementation, debugging, frontend/UI, APIs, CLI/code-generation agents, simulation and long autonomous tasks. Preserve an acceptance-linked task graph; use real subagents when suitable and available, otherwise work serially. Coordinate shared files/resources, resume durable state, challenge missing requirements, test actual behavior, and distinguish child success from whole-goal completion. Never replace real verification with mock success, test counts or self-reports. Does not apply to conversation-only requests or work that explicitly excludes execution.
+description: Deliver coding work against the original user goal with evidence for consequential decisions, scoped native parallel workers, independent testing and measured acceptance. Use for implementation, debugging, frontend/UI, APIs, CLI/code-generation agents, simulation and long autonomous tasks. Resolve material edge cases before planning; test the actual behavior and verify the integrated root on current source. Never replace real verification with mocks, test counts or worker self-reports. Does not apply to conversation-only requests or work that excludes execution.
 ---
 
-# HarrTest v3.2
+# HarrTest 4.0 Gold
 
 **Deliver the original observable outcome. Plan -> run -> observe -> repair -> integrate -> verify.**
 
@@ -11,6 +11,32 @@ Use the existing host's model, authentication, permissions and tools. Do not cre
 another model client, Codex bridge, paid service, fictional worker, or hidden billing
 path. This package is a cooperative reliability layer, not a sandbox or a replacement
 for the host. Clearly label instruction-only versus mechanically checked operation.
+
+## Gold protocol for new substantial work
+
+Use [Gold](references/v4-gold.md) for release work and substantial new multi-agent
+missions. Opt in by sealing a schema-3 root with `protocol: "golden-v1"` and
+registering a workflow with `golden: {intake, protocol, measurement}`. Use the
+lighter workflow for small changes and preserve existing legacy seals. If a user
+requires Gold, missing host delegation or missing matched evidence means the
+Gold root remains unverified; report the specific gap.
+
+1. Preserve the exact prompt. Explain what each requirement means in observable
+   terms. Ask the user about each unresolved material edge case before splitting
+   the prompt. Use authoritative answers already available and cite them. Record
+   a reason and retained evidence for every consequential implementation, test
+   and scope decision; capture new decisions with their owning task.
+2. Freeze allow/reject oracles and numeric thresholds before measuring. Create
+   small, independent work packets with their own expected results, scoped
+   inputs and evidence. Dispatch ready, disjoint workers together through the
+   host; dependency-bound work waits. Preserve the actual invocation traces.
+3. A distinct testing worker executes the sealed acceptance after each
+   implementation handoff. Review failures, repair and rerun; run the combined
+   entrypoint on the final source. A worker summary is a handoff, not a pass.
+4. Record both arms for every predeclared case. Gold recomputes the before/after
+   numbers from retained attempts and verifies them alongside the original goal.
+   Label fixture, offline and live results explicitly. No measured claim may
+   extend beyond its scenarios and conditions.
 
 ## 1. Activate and preserve the mission
 
