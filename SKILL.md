@@ -34,6 +34,11 @@ assembly file.
    understand it. Translate its intended outcome into observable acceptance.
    Ask about material unknowns that change behavior or external effects.
    When the user delegates design choices, choose a coherent design and proceed.
+   For a new product, follow [quality intent](references/quality-intent.md):
+   write a compact outcome/finishing brief and have a separate native
+   `intent_review` worker challenge it before production. Resolve material
+   findings and include the accepted brief and review in `validation_context`.
+   A review role does not replace the implementation owners below.
 2. Define a small production DAG with explicit outputs, interfaces, dependency
    order and a check for each component. Choose enough owners to give each
    distinct part focused attention. For a new visual product, consider the
@@ -121,6 +126,10 @@ and feedback. If the result is mostly placeholders or omits a requested
 interaction, return a concrete observation to the owning worker and repeat
 the actual check. A screenshot path alone does not establish visual quality.
 Give functionality, visual quality and responsiveness separate verdicts.
+Recognition and workmanship are separate checks. Verify the accepted finishing
+criteria for the primary artifact; a generic proxy does not become finished
+because its surrounding interface is polished. Retain temporal evidence when
+judging motion, rather than inferring continuity from stills or callback totals.
 An indistinct primary subject, unreadable content or an obstructed view of
 the interaction is a visual acceptance failure, rather than a caveat under
 a functional PASS. Check detail at the final scale and lighting in real frames.

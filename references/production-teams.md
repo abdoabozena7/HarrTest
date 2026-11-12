@@ -18,6 +18,11 @@ choices and proceed when the prompt delegates them.
 
 ## Codex quick start
 
+For a new product, complete the independent [quality-intent challenge](quality-intent.md)
+first. Add the accepted quality brief and its review to `validation_context`
+alongside any supplied runtime files. Production assignments inherit those
+observable finishing criteria; a review-only role cannot satisfy production.
+
 The coordinator writes the following compact JSON under
 `.runtime-proof/team-plan.json`. The user supplies the task and the agent
 fills in the plan. Keep `request` equal to the original request body.

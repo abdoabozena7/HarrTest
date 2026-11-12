@@ -127,6 +127,14 @@ For timed or interactive work, retain wall time, observable product progress
 and frame/response timing. Identify runtime and viewport. Repair measured
 responsiveness failures with their owner and repeat the same inputs afterward.
 
+When judging visual continuity, retain actual temporal evidence. The Node CLI
+supports `video-start PATH --size WIDTHxHEIGHT --fps 25` and `video-stop` in an
+owned browser session. Use the declared viewport dimensions and inspect the
+actual recording. Recording adds load, so keep its visual evidence separate
+from an unrecorded performance qualification. Do not enable cursor pacing or
+action overlays in a claim about normal product behavior. Close the owned
+recording/browser/server and retain any recording capability failure.
+
 Require actual UI journey receipts, screenshots/video/trace, real network or
 persistence evidence for integration claims, explicit visual inspection and a
 final current-source run. A browser driver PASS without a completed visual

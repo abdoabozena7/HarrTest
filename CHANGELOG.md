@@ -13,6 +13,8 @@
 - Recognize native exec envelopes, shell-session polls and supported yielded
   cell continuations without accepting unrelated receipt output. Preserve
   immutable QA narratives across replays.
+- Challenge a concrete finishing brief before production, bind it to worker
+  packets, and separate recognition, workmanship and temporal evidence in QA.
 
 - Route independent production scopes to native implementation workers before
   the coordinator writes integration glue. Keep review as a separate role.
