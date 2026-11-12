@@ -1,6 +1,9 @@
 # Changelog
 
-## 4.1.0 — Gold
+## 4.1.0 — Gold candidate (unreleased)
+
+- Frozen Luna-low live testing failed performance and delivery acceptance.
+  Keep the candidate local; see `references/v4.1-validation.md` for evidence.
 
 - Route independent production scopes to native implementation workers before
   the coordinator writes integration glue. Keep review as a separate role.

@@ -1,6 +1,11 @@
 <img src="visual/banner.svg" alt="HarrTest 4.1 Gold. Independent implementers build components, then integration and QA verify the result." width="100%" />
 
-# HarrTest 4.1 Gold
+# HarrTest 4.1 Gold candidate
+
+**Unreleased.** The frozen Luna-low comparison failed runtime and delivery
+acceptance. Production delegation worked; a usable completed game was not
+demonstrated. This candidate has not been published or installed globally.
+[4.1 validation and retained failures](references/v4.1-validation.md)
 
 HarrTest is a skill and local workflow coordinator for coding agents. Gold
 preserves what the user asked for, ties consequential decisions to evidence,
@@ -9,7 +14,7 @@ Version 4.1 routes a new product through native implementation workers before
 the coordinator assembles it. Each worker owns product files, a component
 contract and its checks.
 
-[Install](#install) · [Start a task](#start-a-task) · [Gold runbook](references/v4-gold.md) · [Measured results](references/v4-validation.md)
+[Install](#install) · [Start a task](#start-a-task) · [Gold runbook](references/v4-gold.md) · [4.0 results](references/v4-validation.md) · [4.1 candidate validation](references/v4.1-validation.md)
 
 ## Production workers in 4.1
 
