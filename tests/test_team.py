@@ -213,6 +213,130 @@ class ProductionTeam(unittest.TestCase):
                         source.replace('tools.apply_patch(patch)', 'tools.other(patch)')):
             self.assertEqual(team.patch_paths(self.project, {'name': 'exec', 'input': altered}, success), set())
 
+    def test_explicit_validation_context_is_sealed_and_reaches_all_packets(self):
+        target = '.runtime-proof/target.json'
+        self.source(target, '{"minimum_throughput": 30, "runtime": "declared"}\n')
+        self.plan['validation_context'] = [target]
+        self.deliver()
+        digest = team.proof.file_hash(self.project / target)
+        self.assertEqual(self.state['validation_inputs'], {target: digest})
+        for ready in self.result['ready']:
+            self.assertIn((self.project / target).as_posix(), ready['message'])
+            self.assertIn(digest, ready['message'])
+        _, qa = team.integrate(self.project, self.state)
+        self.assertIn((self.project / target).as_posix(), qa['message'])
+        self.assertIn(digest, qa['message'])
+        self.source(target, '{"minimum_throughput": 1}\n')
+        with self.assertRaisesRegex(ValueError, 'validation context changed'):
+            team.load_state(self.project, 'report')
+        with self.assertRaisesRegex(ValueError, 'validation context changed'):
+            team.packet(self.project, self.state, self.plan['tasks'][0])
+        with self.assertRaisesRegex(ValueError, 'validation context changed'):
+            team.integrate(self.project, self.state)
+        self.assertIn('validation context changed', self.verify()['errors'][0])
+
+    def test_validation_context_rejects_unbounded_and_escaping_inputs(self):
+        self.plan['validation_context'] = ['../outside.json']
+        with self.assertRaises(ValueError):
+            self.start()
+        self.source('target.json', 'x' * (team.MAX_VALIDATION_FILE_BYTES + 1))
+        self.plan['validation_context'] = ['target.json']
+        with self.assertRaisesRegex(ValueError, 'too large'):
+            self.start()
+        self.source('target.json', '{}')
+        self.plan['validation_context'] = ['target.json', 'target.json']
+        with self.assertRaisesRegex(ValueError, 'duplicate'):
+            self.start()
+
+    def test_failed_qa_repair_returns_to_owner_and_forces_reintegration(self):
+        target = '.runtime-proof/target.json'
+        self.source(target, '{"runtime": "same-profile"}\n')
+        self.plan['validation_context'] = [target]
+        self.deliver()
+        evidence = '.runtime-proof/teams/report/qa-evidence.txt'
+        self.source(evidence, 'Public malformed input accepted; parser boundary check failed.')
+        failed = team.review(self.project, self.state, evidence, 'fail')
+        request = team.repair(self.project, self.state, 'parser', evidence,
+                              'Malformed amount reaches output instead of rejecting before formatting.')
+        self.assertFalse(request['mission_complete'])
+        self.assertEqual(request['packet']['task_name'], 'parser')
+        self.assertIn('Exclusive product files: parse.py', request['packet']['message'])
+        self.assertIn((self.project / target).as_posix(), request['packet']['message'])
+        self.assertIn('Malformed amount', request['packet']['message'])
+        self.assertEqual([p['task_name'] for p in team.ready_packets(self.project, self.state)], ['parser'])
+        with self.assertRaisesRegex(ValueError, 'fresh owner handoffs'):
+            team.integrate(self.project, self.state)
+        old = team.current_receipt(self.project, self.state, 'integration')
+        self.source('parse.py', 'def parse(value):\n if not value.isdigit(): raise ValueError("amount")\n return int(value)\n')
+        repaired = team.handoff(self.project, self.state, self.plan['tasks'][0])
+        self.assertEqual(repaired['repair'], request['repair'])
+        # A successful old check cannot accept newly handed-off source.
+        with self.assertRaisesRegex(ValueError, 'Reintegrate fresh owner handoffs'):
+            team.review(self.project, self.state, evidence, 'pass')
+        integrated, _ = team.integrate(self.project, self.state)
+        self.assertNotEqual(old['sha256'], integrated['sha256'])
+        with self.assertRaisesRegex(ValueError, 'successful current subprocess'):
+            team.review(self.project, self.state, evidence, 'pass')
+        checked = team.runtime_check(self.project, self.state, [sys.executable, '-B', 'main.py'])
+        self.assertEqual(checked['exit_code'], 0)
+        # Rewriting the live narrative must not erase the retained failure.
+        self.source(evidence, 'Replayed public CLI after parser repair; output 7, malformed input separately rejected.')
+        accepted = team.review(self.project, self.state, evidence, 'pass')
+        self.assertEqual(accepted['integration'], integrated['sha256'])
+        self.assertEqual(team.ready_packets(self.project, self.state), [])
+        repair = team.current_receipt(self.project, self.state, 'repair-parser')
+        self.assertEqual(repair['qa'], failed['sha256'])
+        retained = self.project / next(iter(repair['files']))
+        self.assertIn('parser boundary check failed', retained.read_text(encoding='utf-8'))
+
+    def test_repair_requires_failed_current_qa_and_a_declared_owner(self):
+        self.deliver()
+        evidence = '.runtime-proof/teams/report/qa-evidence.txt'
+        with self.assertRaisesRegex(ValueError, 'failed QA'):
+            team.repair(self.project, self.state, 'parser', evidence, 'Observed failure.')
+        with self.assertRaisesRegex(ValueError, 'declared implementation owner'):
+            team.repair(self.project, self.state, 'invented', evidence, 'Observed failure.')
+        team.review(self.project, self.state, evidence, 'fail')
+        with self.assertRaisesRegex(ValueError, 'private team directory'):
+            team.repair(self.project, self.state, 'parser', 'parse.py', 'Observed failure.')
+
+    def test_failed_review_cli_is_nonzero_and_directs_owner_repair(self):
+        self.deliver()
+        result = subprocess.run([sys.executable, '-B', str(REPO / 'scripts/team.py'), '--project', str(self.project),
+                                 'review', '--team', 'report', '--evidence',
+                                 '.runtime-proof/teams/report/qa-evidence.txt', '--verdict', 'fail'],
+                                capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('"passed": false', result.stdout)
+        self.assertIn('"mission_complete": false', result.stdout)
+        self.assertIn('assign-owner-repair', result.stdout)
+
+    def test_ready_packets_reopen_stale_outputs_instead_of_suppressing_them(self):
+        self.deliver()
+        self.assertEqual(team.ready_packets(self.project, self.state), [])
+        self.source('parse.py', 'def parse(value): return 0\n')
+        self.assertEqual([p['task_name'] for p in team.ready_packets(self.project, self.state)], ['parser'])
+
+    def test_changed_prerequisite_reopens_dependent_chain_in_order(self):
+        self.plan['tasks'].extend([
+            {'id': 'writer', 'brief': 'Write validated records using the parser interface.',
+             'outputs': ['writer.py'], 'depends_on': ['parser'], 'outcomes': ['parse']},
+            {'id': 'archive', 'brief': 'Archive the writer output without changing its content.',
+             'outputs': ['archive.py'], 'depends_on': ['writer'], 'outcomes': ['format']},
+        ])
+        self.start()
+        for task in self.plan['tasks']:
+            self.source(task['outputs'][0], f'{task["id"]} output\n')
+            team.handoff(self.project, self.state, task)
+        self.assertEqual(team.ready_packets(self.project, self.state), [])
+        self.source('parse.py', 'Updated parser output\n')
+        team.handoff(self.project, self.state, self.plan['tasks'][0])
+        self.assertEqual([p['task_name'] for p in team.ready_packets(self.project, self.state)], ['writer'])
+        with self.assertRaisesRegex(ValueError, 'stale prerequisite'):
+            team.handoff(self.project, self.state, self.plan['tasks'][3])
+        team.handoff(self.project, self.state, self.plan['tasks'][2])
+        self.assertEqual([p['task_name'] for p in team.ready_packets(self.project, self.state)], ['archive'])
+
 
 if __name__ == '__main__':
     unittest.main()

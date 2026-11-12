@@ -29,6 +29,7 @@ fills in the plan. Keep `request` equal to the original request body.
   "kind": "greenfield",
   "request": "The exact user task goes here.",
   "contract": "Define exports, data, ownership and how the entrypoint connects them.",
+  "validation_context": [".runtime-proof/validation-target.json"],
   "outcomes": {
     "data": "Describe the observable behavior of the data component.",
     "view": "Describe what the user can see.",
@@ -49,6 +50,12 @@ fills in the plan. Keep `request` equal to the original request body.
 Use `kind: "change"` for existing code. The gate snapshots the existing
 files before work. Use exact product file paths. If the split would cause
 shared writes, put that interface or glue under one owner.
+`validation_context` is optional for existing plans. When the project supplies
+runtime profiles, workload bounds or validation targets, list their existing
+local files there. The gate binds their hashes and includes their absolute
+paths in implementation, QA and repair packets. These are shared constraints,
+not files for the implementers to change. Omit the example field if no such
+file exists; do not create an invented acceptance target just to fill it.
 
 ```text
 python <skill>/scripts/team.py --project . init --plan .runtime-proof/team-plan.json
@@ -81,6 +88,35 @@ Keep the exact packet name and its runtime-discovery instructions. A short
 replacement such as "review the fix" loses the project, tools and evidence
 contract. Inspect final native status and current receipts before repeating
 a wait; a completed or failed worker will not produce a new result unaided.
+
+## Early measurement and failed acceptance
+
+Schedule an early executable checkpoint with representative work, not all
+polish followed by the first runtime check. Each owner initially delivers a
+coherent component for the requested user path, with a stable interface and
+the supplied resource constraints. Assemble those first handoffs, measure the
+main interaction in the declared environment, and then deepen the result.
+An early checkpoint is development evidence; placeholders, reduced quality
+or missing outcomes cannot become the final acceptance.
+
+After a failed independent review, keep its evidence and route the concrete
+observation to the responsible implementer:
+
+```text
+python <skill>/scripts/team.py --project . repair --team mission --task view --evidence .runtime-proof/teams/mission/qa-evidence.txt --observation "The measured main interaction violates the retained target; diagnose the cost and preserve the requested output."
+```
+
+Dispatch the complete returned native worker packet. The implementer diagnoses
+and repairs its files, performs a focused check and hands off again. Collect
+all affected owners, reassemble, run `integrate` and give the full current
+packet to independent QA. A previous receipt cannot hide changed source or an
+outstanding repair. Failed QA commands/reviews remain in history and do not
+mean the original user goal is complete.
+
+When improving this skill, separate development cycles from a frozen comparison.
+End and retain a timeboxed failed trial, improve the general mechanism from its
+observed failure, then start a new pinned trial. Do not rewrite the old result
+or resume a held test under a changed package and call it the same experiment.
 
 The coordinator can prepare its HTML/CSS or configuration scaffold while
 the implementers work. The native record must show actual assembly work

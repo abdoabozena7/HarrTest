@@ -4,6 +4,12 @@
 
 - Frozen Luna-low live testing failed performance and delivery acceptance.
   Keep the candidate local; see `references/v4.1-validation.md` for evidence.
+- Bind supplied validation inputs into every producer, tester and repair packet;
+  reopen stale outputs and dependencies instead of hiding them behind old receipts.
+- Route failed independent QA back to named implementation owners with retained
+  evidence, fresh handoffs, reintegration and a new runtime check.
+- Measure a representative executable checkpoint before costly expansion and
+  continue authorized skill improvement after a timeboxed attempt fails.
 
 - Route independent production scopes to native implementation workers before
   the coordinator writes integration glue. Keep review as a separate role.

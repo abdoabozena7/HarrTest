@@ -43,7 +43,15 @@ assembly file.
    those distinct visible components separate implementation owners.
    Put the shared visual direction, proportions and meaningful subject detail
    in the contract that every worker receives. Keep the chosen style coherent.
+   Specify shared representations, units, lifecycle and boundary invariants
+   where components exchange state. Test a producer/consumer example against
+   that agreement; matching export names alone does not establish compatibility.
    A leaf can split further when a detail has its own meaningful deliverable.
+   Carry supplied runtime, resource and validation constraints into the sealed
+   plan's `validation_context` file paths. Every implementer needs those inputs,
+   not only the eventual tester. Make the first handoffs a small runnable
+   user path with representative work; integrate and measure that checkpoint
+   before expanding costly detail. Keep the full requested quality as acceptance.
 3. Read [production teams](references/production-teams.md). Create
    `.runtime-proof/team-plan.json` and run `scripts/team.py init` before
    product edits. On Codex, use its returned `task_name`, `fork_turns` and
@@ -78,6 +86,10 @@ assembly file.
    Include supplied verification-target paths and environment constraints in
    each affected worker/QA handoff; do not leave later clarifications only
    in the coordinator's context.
+   A failed review returns work to its named owners. Use `team.py repair` with
+   the retained failure evidence and concrete observation; dispatch its complete
+   owner packet, then collect a fresh handoff, reintegrate and rerun independent
+   QA. A stale handoff is unfinished work, not a reason to omit that owner.
 
 Use the host's actual parallel capacity. With fewer slots, run ready workers
 in waves. Keep one owner for shared configuration and exclusive resources.
@@ -112,6 +124,13 @@ that makes the requested interaction unusable before accepting the result.
 Profile the expensive work before optimizing, keep the quality criteria, and
 send measured regressions to the owning implementer. Compare the repaired
 result on the same runtime, viewport and inputs.
+Check the representative executable path early, while changing its structure
+is still cheap. Pass the target workload, timing and resource limits to every
+affected owner. Separate the cost of loading, rendering, computation and
+interaction using measurements from that runtime. A high idle callback rate
+does not establish useful rendered work. Preserve requested detail and behavior
+when reducing measured cost; reducing simulation progress or verification
+resolution does not repair responsiveness.
 When a project supplies a validation target or browser configuration, use it
 for verification rather than substituting a default runtime. Preserve the
 declared resolution and quality requirements while repairing performance.
@@ -135,6 +154,18 @@ Use observe, reproduce, explain, repair, rerun. Preserve each meaningful
 failure and failed attempt. Use independent expected outcomes and safe
 negative controls. Keep live, offline, replay and fixture evidence distinct.
 Check that the running source matches the files being delivered.
+
+When the user requests iterative improvement, a failed attempt is diagnostic
+input, not the end of the assignment. Retain its result, identify the specific
+missing or ineffective mechanism, make the smallest general harness correction,
+then test a new pinned revision. Keep benchmark product edits and task-specific
+implementation coaching outside a harness-only experiment. Record the hypothesis,
+change, full attempts and before/after observations. Do not silently lower
+acceptance, select only a winning retry or claim a general uplift from one case.
+An attempt timebox ends that attempt; it does not end an authorized improvement
+mission. Continue the next justified cycle while respecting actual user resource
+limits, permissions and cancellation. Publication/install still requires the
+user's acceptance condition to be demonstrated on the delivered revision.
 
 Team verification checks local native provenance, changed outputs, ownership,
 active overlap, integration order and independent QA receipts. Runtime and

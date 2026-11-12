@@ -23,6 +23,9 @@ EXEC_PATCH = re.compile(r'\A\s*(?:const\s+([A-Za-z_$][\w$]*)\s*=\s*|text\s*\(\s*
                         r'await\s+tools\.apply_patch\s*\(\s*')
 RECEIPT = 'HARRTEST_TEAM_RECEIPT '
 MAX_ROLLOUT_BYTES = 32 * 1024 * 1024
+MAX_VALIDATION_FILES = 8
+MAX_VALIDATION_FILE_BYTES = 64 * 1024
+MAX_VALIDATION_TOTAL_BYTES = 128 * 1024
 
 
 def require(test, message):
@@ -85,6 +88,7 @@ def validate_plan(project, plan):
     require(plan.get('kind') in ('greenfield', 'change'), 'Choose greenfield or change')
     concrete(plan.get('request'), 'Original request')
     concrete(plan.get('contract'), 'Shared interface and integration contract')
+    validation_files(project, plan)
     outcomes = plan.get('outcomes')
     require(isinstance(outcomes, dict) and outcomes, 'Preserve observable original outcomes')
     for rid, acceptance in outcomes.items():
@@ -124,6 +128,45 @@ def validate_plan(project, plan):
     return tasks, owned
 
 
+def validation_files(project, plan):
+    """Only explicitly declared, bounded local inputs; never discover private files."""
+    paths = plan.get('validation_context', [])
+    require(isinstance(paths, list) and len(paths) <= MAX_VALIDATION_FILES,
+            f'validation_context must list at most {MAX_VALIDATION_FILES} local input files')
+    keys, total = set(), 0
+    for rel in paths:
+        require(isinstance(rel, str), 'validation_context needs relative local file paths')
+        key = product_key(rel)
+        require(key not in keys, 'validation_context contains a duplicate file')
+        keys.add(key)
+        path = strict_io.scoped_path(project, rel)
+        require(path.is_file(), f'Validation input is not a regular file: {rel}')
+        size = path.stat().st_size
+        require(size <= MAX_VALIDATION_FILE_BYTES, f'Validation input is too large: {rel}')
+        total += size
+    require(total <= MAX_VALIDATION_TOTAL_BYTES, 'Validation inputs exceed the total size limit')
+    return paths
+
+
+def validation_snapshot(project, plan):
+    return {rel: proof.file_hash(strict_io.scoped_path(project, rel))
+            for rel in validation_files(project, plan)}
+
+
+def validation_message(project, state):
+    expected = state.get('validation_inputs', {})
+    require(validation_snapshot(project, state['plan']) == expected,
+            'Sealed validation context changed; preserve this attempt and seal a new plan for changed inputs')
+    if not expected:
+        return ''
+    rows = '\n'.join(f'- {strict_io.scoped_path(project, rel).as_posix()} (SHA-256 {digest})'
+                     for rel, digest in expected.items())
+    return ('Sealed validation context: read these explicit local inputs before design or checks.\n'
+            f'{rows}\nUse the supplied full runtime/profile and acceptance constraints for your '
+            'component and integrated checks; do not substitute defaults. Coordinate exclusive '
+            'runtime ownership with the coordinator.\n')
+
+
 def snapshot(project, paths):
     result = {}
     for rel in paths:
@@ -139,6 +182,8 @@ def init(project, plan):
     if plan['kind'] == 'greenfield':
         require(not any(baseline.values()), 'Seal a greenfield plan before creating its product files')
     state = {'plan': plan, 'plan_sha256': strict_io.digest(plan), 'baseline': baseline, 'created': proof.now()}
+    if plan.get('validation_context'):
+        state['validation_inputs'] = validation_snapshot(project, plan)
     proof.save(team_path(project, plan['id'], must_exist=False), state, exclusive=True)
     return {'team': plan['id'], 'plan_sha256': state['plan_sha256'],
             'ready': [packet(project, state, row) for row in tasks.values() if not row['depends_on']]}
@@ -151,6 +196,7 @@ def load_state(project, team_id):
     require(plan['id'] == team_id and strict_io.digest(plan) == state['plan_sha256'],
             'Sealed production plan changed')
     require(set(owned) == set(state['baseline']), 'Production baseline does not cover all owners')
+    validation_message(project, state)
     return state
 
 
@@ -185,6 +231,7 @@ def packet(project, state, task):
         'use absolute product paths if the native patch tool has a different working directory.\n'
         f'Original request: {plan["request"]}\n'
         f'Shared interface: {plan["contract"]}\n'
+        f'{validation_message(project, state)}'
         f'Assignment: {task["brief"]}\n'
         f'Acceptance:\n{outcomes}\n'
         f'Exclusive product files: {", ".join(task["outputs"])}. '
@@ -195,6 +242,19 @@ def packet(project, state, task):
         'Run a focused check on your component and then record the current output by running:\n'
         f'{command}'
     )
+    repair = pending_repair(project, state, tid)
+    if repair:
+        evidence = next(iter(repair['files']))
+        message += (
+            '\nRepair the observed integrated failure in your existing owned scope. '
+            'The failed attempt remains evidence; it does not complete the original mission.\n'
+            f'Observation: {repair["observation"]}\n'
+            f'Read the retained failure evidence: {strict_io.scoped_path(project, evidence).as_posix()} '
+            f'(SHA-256 {repair["files"][evidence]}).\n'
+            'Diagnose the cause, repair through your component interface, run the relevant actual '
+            'check using the same validation context and execute the handoff command above again. '
+            'Do not edit another owner\'s files. Report evidence when a boundary change is needed.'
+        )
     return {'task_name': tid, 'fork_turns': 'none', 'message': message}
 
 
@@ -229,16 +289,99 @@ def record(project, state, tid, files, **extra):
 
 
 def handoff(project, state, task):
-    inputs = {dep: current_receipt(project, state, dep)['sha256'] for dep in task['depends_on']}
+    validation_message(project, state)
+    inputs = {dep: usable_handoff(project, state, dep)['sha256'] for dep in task['depends_on']}
     files = snapshot(project, task['outputs'])
     require(all(digest and digest != state['baseline'][rel] for rel, digest in files.items()),
             f'{task["id"]}: deliver a changed file for every assigned output')
-    return record(project, state, task['id'], files, inputs=inputs)
+    extra = {}
+    repair_path = receipt_path(project, state, 'repair-' + task['id'])
+    if repair_path.is_file():
+        extra['repair'] = current_receipt(project, state, 'repair-' + task['id'])['sha256']
+    return record(project, state, task['id'], files, inputs=inputs, **extra)
+
+
+def pending_repair(project, state, tid):
+    path = receipt_path(project, state, 'repair-' + tid)
+    if not path.is_file():
+        return None
+    request = current_receipt(project, state, 'repair-' + tid)
+    try:
+        owner = current_receipt(project, state, tid)
+    except (ValueError, proof.ProofError):
+        return request
+    return request if owner.get('repair') != request['sha256'] else None
+
+
+def usable_handoff(project, state, tid):
+    require(not pending_repair(project, state, tid),
+            f'{tid}: assigned repairs need fresh owner handoffs before dependent work')
+    task = next(row for row in state['plan']['tasks'] if row['id'] == tid)
+    receipt = current_receipt(project, state, tid)
+    expected = {dep: usable_handoff(project, state, dep)['sha256'] for dep in task['depends_on']}
+    require(receipt.get('inputs') == expected, f'{tid}: stale prerequisite handoff needs refresh')
+    return receipt
+
+
+def ready_packets(project, state):
+    ready = []
+    for task in state['plan']['tasks']:
+        tid = task['id']
+        try:
+            inputs = {dep: usable_handoff(project, state, dep)['sha256'] for dep in task['depends_on']}
+        except (ValueError, proof.ProofError):
+            continue
+        if not pending_repair(project, state, tid):
+            try:
+                delivered = current_receipt(project, state, tid)
+                if delivered.get('inputs') == inputs:
+                    continue
+            except (ValueError, proof.ProofError):
+                pass
+        ready.append(packet(project, state, task))
+    return ready
+
+
+def repair(project, state, tid, evidence, observation):
+    """Bind a failed integrated observation to an existing implementation owner."""
+    validation_message(project, state)
+    tasks = {row['id']: row for row in state['plan']['tasks']}
+    require(tid in tasks, 'Repair must return to a declared implementation owner')
+    concrete(observation, 'Concrete failure observation')
+    integrated = current_receipt(project, state, 'integration')
+    qa = current_receipt(project, state, 'qa')
+    require(qa.get('verdict') == 'fail' and qa.get('integration') == integrated['sha256'],
+            'Repair needs a retained failed QA review on the current integration')
+    prefix = f'{proof.STATE}/teams/{state["plan"]["id"]}/'
+    require(evidence.startswith(prefix), 'Keep repair evidence in the private team directory')
+    path = strict_io.scoped_path(project, evidence)
+    require(path.is_file() and 0 < path.stat().st_size <= MAX_ROLLOUT_BYTES,
+            'Missing bounded repair evidence')
+    # QA may overwrite its live narrative on replay. Preserve an immutable copy.
+    digest = proof.file_hash(path)
+    retained = f'{prefix}repair-evidence/{digest}.txt'
+    destination = strict_io.scoped_path(project, retained, must_exist=False)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.exists():
+        with destination.open('xb') as saved:
+            saved.write(path.read_bytes())
+    require(proof.file_hash(destination) == digest, 'Retained repair evidence changed')
+    owner = current_receipt(project, state, tid)
+    request = record(project, state, 'repair-' + tid, {retained: digest},
+                     observation=observation, qa=qa['sha256'], integration=integrated['sha256'],
+                     handoff=owner['sha256'], owner=tid)
+    return {'team': state['plan']['id'], 'action': 'repair', 'mission_complete': False,
+            'repair': request['sha256'], 'owner': tid, 'packet': packet(project, state, tasks[tid])}
 
 
 def integrate(project, state):
+    validation_message(project, state)
     plan = state['plan']
     children = {task['id']: current_receipt(project, state, task['id']) for task in plan['tasks']}
+    require(not any(pending_repair(project, state, tid) for tid in children),
+            'Assigned repairs need fresh owner handoffs before reintegration')
+    for tid in children:
+        usable_handoff(project, state, tid)
     files = snapshot(project, plan['integration']['outputs'])
     require(all(digest and digest != state['baseline'][rel] for rel, digest in files.items()),
             'Integration needs the changed shared entrypoint or glue files')
@@ -254,6 +397,7 @@ def integrate(project, state):
         f'for private evidence files. Pinned HarrTest package: {Path(__file__).resolve().parents[1].as_posix()}; '
         'do not substitute another installed HarrTest version. '
         f'Original request: {plan["request"]}\n'
+        f'{validation_message(project, state)}'
         f'Check the public entrypoint on current source: {plan["integration"]["check"]}\n'
         f'Run the actual product check using {check} -- COMMAND ARGUMENTS. '
         'Use a finite acceptance command that exercises behavior and exits. Start any long-running '
@@ -279,6 +423,12 @@ def integrate(project, state):
         'Leave those journey outcomes unverified until real public actions reach them. '
         'Read any supplied project validation target/browser configuration before choosing the '
         'runtime. '
+        f'For browser timing, use the pinned generic read-only probe at '
+        f'{(Path(__file__).resolve().parents[1] / "assets/probes/browser-timing.js").as_posix()} '
+        'when present, after exercising the public main interaction. It observes callback cadence '
+        'and public-page state; verify the actual backend separately. Callbacks are not completed '
+        'rendered work and cannot pass an idle or blank page: pair measurements with inspected '
+        'frames and actual product progress over elapsed time. '
         'Verify the effective runtime configuration, including the actual renderer/backend when '
         'relevant; matching only viewport or browser name is not enough if launch options differ. '
         'Give separate functional, visual and responsiveness verdicts. An indistinct '
@@ -291,6 +441,7 @@ def integrate(project, state):
 
 
 def runtime_check(project, state, argv):
+    validation_message(project, state)
     integrated = current_receipt(project, state, 'integration')
     require(argv and all(isinstance(arg, str) for arg in argv), 'Supply actual test argv after --')
     team_id = state['plan']['id']
@@ -316,6 +467,7 @@ def runtime_check(project, state, argv):
 
 
 def review(project, state, evidence, verdict):
+    validation_message(project, state)
     integrated = current_receipt(project, state, 'integration')
     team_id = state['plan']['id']
     prefix = f'{proof.STATE}/teams/{team_id}/'
@@ -325,6 +477,12 @@ def review(project, state, evidence, verdict):
     check = current_receipt(project, state, 'check') if verdict == 'pass' else {}
     require(verdict != 'pass' or (check['exit_code'] == 0 and check['integration'] == integrated['sha256']),
             'Independent QA needs a successful current subprocess check')
+    if verdict == 'pass':
+        children = {task['id']: current_receipt(project, state, task['id']) for task in state['plan']['tasks']}
+        require(not any(pending_repair(project, state, tid) for tid in children),
+                'Assigned repairs need fresh owner handoffs before QA acceptance')
+        require(integrated['inputs'] == {tid: row['sha256'] for tid, row in children.items()},
+                'Reintegrate fresh owner handoffs before QA acceptance')
     return record(project, state, 'qa', {evidence: proof.file_hash(path)},
                   integration=integrated['sha256'], check=check.get('sha256'), verdict=verdict)
 
@@ -605,7 +763,7 @@ def main(argv=None):
     parser.add_argument('--project', type=Path, default=Path('.'))
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('init').add_argument('--plan', required=True)
-    for action in ('packets', 'handoff', 'integrate', 'check', 'review', 'verify'):
+    for action in ('packets', 'handoff', 'integrate', 'check', 'review', 'repair', 'verify'):
         command = commands.add_parser(action)
         command.add_argument('--team', required=True)
         if action == 'handoff':
@@ -613,6 +771,10 @@ def main(argv=None):
         if action == 'review':
             command.add_argument('--evidence', required=True)
             command.add_argument('--verdict', choices=('pass', 'fail'), required=True)
+        if action == 'repair':
+            command.add_argument('--task', required=True)
+            command.add_argument('--evidence', required=True)
+            command.add_argument('--observation', required=True)
         if action == 'check':
             command.add_argument('argv', nargs=argparse.REMAINDER)
         if action == 'verify':
@@ -633,16 +795,7 @@ def main(argv=None):
             state = load_state(project, args.team)
             tasks = {row['id']: row for row in state['plan']['tasks']}
             if args.command == 'packets':
-                def ready(task):
-                    if receipt_path(project, state, task['id']).exists():
-                        return False
-                    try:
-                        for dep in task['depends_on']:
-                            current_receipt(project, state, dep)
-                    except (ValueError, proof.ProofError):
-                        return False
-                    return True
-                result = {'ready': [packet(project, state, task) for task in tasks.values() if ready(task)]}
+                result = {'ready': ready_packets(project, state)}
             elif args.command == 'handoff':
                 result = handoff(project, state, tasks[args.task])
             elif args.command == 'integrate':
@@ -651,8 +804,14 @@ def main(argv=None):
             elif args.command == 'check':
                 result = runtime_check(project, state, args.argv[1:] if args.argv[:1] == ['--'] else args.argv)
                 result['passed'] = result['exit_code'] == 0
+            elif args.command == 'repair':
+                result = repair(project, state, args.task, args.evidence, args.observation)
             else:
                 result = review(project, state, args.evidence, args.verdict)
+                if args.verdict == 'fail':
+                    result = {**result, 'passed': False, 'action': 'assign-owner-repair', 'mission_complete': False,
+                              'next': 'Use repair --task OWNER --evidence FILE --observation TEXT; '
+                                      'dispatch the full returned packet to that owner, then reintegrate and rerun QA.'}
             if 'sha256' in result:
                 print(RECEIPT + result['sha256'])
         print(json.dumps(result, ensure_ascii=False, indent=2))

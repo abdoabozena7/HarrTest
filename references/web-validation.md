@@ -30,6 +30,19 @@ Use a bounded `run-code` journey for interactions that need held keys or
 telemetry. Keep startup, actual behavior and visual inspection distinct.
 Retain failures and report a missing runtime if neither adapter works.
 
+For an existing Playwright-compatible page, the pinned
+`assets/probes/browser-timing.js` is a finite, read-only 3-second observation:
+
+```text
+npx.cmd --offline --package @playwright/cli playwright-cli run-code --filename <skill>/assets/probes/browser-timing.js
+```
+
+Run it after the public main interaction under the declared profile. It reports
+page/driver elapsed time, callback rate, largest frame gap, canvas dimensions
+and public text. Compare visible product progress across the sample and inspect
+real frames separately. It does not test controls, assert quality, discover the
+effective rendering backend, or prove that callbacks rendered useful content.
+
 ## Inventory and exercise
 
 Create a control/state matrix using `assets/templates/interaction-matrix.md`.
@@ -95,6 +108,16 @@ This exception is for an intentionally exercised error path, not a general way
 to hide failures. Raw events remain in the report.
 
 ## Evidence before completion
+
+Establish a representative executable checkpoint before expensive visual or
+behavioral expansion. Read the declared runtime/workload target at planning
+time and pass it to implementers as well as QA. Measure the main interaction
+under the actual profile, with its visible output intact; a blank canvas or
+idle overlay with fast callbacks is not a rendering success. When cost fails,
+retain a profile that distinguishes loading, render, computation and interaction
+work, send the observation to its owner and measure the repair under identical
+conditions. Do not trade away requested quality, backing resolution or correct
+product-time progress to make the number pass.
 
 Use public controls for user-journey claims. State injection, accelerated
 controller stepping and component simulations can test logic, but do not show
