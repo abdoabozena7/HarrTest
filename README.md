@@ -2,9 +2,11 @@
 
 # HarrTest 4.1 Gold candidate
 
-**Unreleased.** The frozen Luna-low comparison failed runtime and delivery
-acceptance. Production delegation worked; a usable completed game was not
-demonstrated. This candidate has not been published or installed globally.
+**Unreleased; validation continues.** After an earlier failed comparison,
+Luna-only development reached 23/24 with a working public play/restart journey
+and 27.16 sampled FPS in the observer's software-renderer profile. A fresh
+comparison on the corrected frozen harness is in progress. This candidate has
+not been published or installed globally.
 [4.1 validation and retained failures](references/v4.1-validation.md)
 
 HarrTest is a skill and local workflow coordinator for coding agents. Gold
