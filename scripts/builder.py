@@ -123,6 +123,9 @@ def binding(project, spec):
     project = Path(project).resolve()
     shape = validate_plan(spec)
     linked = workflow.validate_bindings(project, spec)
+    if 'production_team' in linked:
+        require(spec['build']['host']['delegation_available'],
+                'A production team build needs the host native delegation capability')
     goal = strict_io.scoped_path(project, spec['root_goal'])
     root = proof.load(goal / 'root-contract.json')
     require(shape['requirements'] == {r['id'] for r in root['requirements']},
@@ -297,7 +300,10 @@ def claim(project, store, spec, shape, tid, owner, seconds):
                                'interfaces': [i for i in spec['build'].get('interfaces', [])
                                               if tid == i['producer'] or tid in i['consumers']],
                                'original_acceptance_unchanged': True}
-    result = store.claim(spec['goal_id'], tid, owner, seconds)
+    if 'golden' in spec:
+        result = workflow.golden_claim(project, store, spec, shape['tasks'][tid], owner, seconds, context)
+    else:
+        result = store.claim(spec['goal_id'], tid, owner, seconds)
     result['packet'] = context
     result['repair_mode'] = repair
     return result

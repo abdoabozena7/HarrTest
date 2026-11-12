@@ -25,6 +25,10 @@ def validate(project: Path, goal: Path, contract: dict) -> None:
         raise proof.ProofError("Root protocol must be golden-v1 on a schema-3 root")
     if contract.get("goal_id") != goal.name:
         raise proof.ProofError("Root ID mismatch")
+    if "production_team" in contract:
+        proof.identifier(contract["production_team"], "production team ID")
+        if contract["schema"] != 3 or contract["production_team"] != contract["goal_id"]:
+            raise proof.ProofError("Production team must match the goal ID on a schema-3 root")
     original_file = goal / "original-request.txt"
     if not original_file.is_file():
         raise proof.ProofError("Original user request snapshot missing")
@@ -105,6 +109,34 @@ def mode_satisfies(required: str, actual: str) -> bool:
     return actual == required or (required == "offline" and actual == "live")
 
 
+def require_team_sources(project, child, outputs):
+    """Ensure the sealed runtime proof fingerprints the exact Team outputs."""
+    sources = [proof.relative_file(project, path, must_exist=False) for path in child["source_paths"]]
+    for output in sorted(set(outputs)):
+        path = proof.relative_file(project, output, must_exist=False)
+        if not any(path.is_relative_to(source) for source in sources):
+            raise proof.ProofError(f'{child["task_id"]} proof must fingerprint Team output: {output}')
+
+
+def team_outputs(binding):
+    outputs = set(binding["integration_outputs"])
+    for contributor in binding["tasks"].values():
+        outputs.update(contributor["outputs"])
+    return outputs
+
+
+def check_production_team(project, contract):
+    import team
+
+    team_id = contract["production_team"]
+    binding = team.binding(project, team_id, contract["request_sha256"])
+    child_id = contract["integration"]["task_id"]
+    path = proof.relative_file(project / proof.STATE, child_id)
+    child = proof.load(path / "contract.json")
+    require_team_sources(project, child, team_outputs(binding))
+    return team.verify_registered(project, team_id, require_qa=True)
+
+
 def check_root(goal: Path) -> dict:
     goal = goal.resolve()
     project = goal.parents[2]
@@ -117,6 +149,15 @@ def check_root(goal: Path) -> dict:
         if (sealed.get("root_hash") != proof.digest(contract) or
             sealed.get("request_sha256") != contract["request_sha256"] or not sealed.get("sealed_at")):
             raise proof.ProofError("Root contract/request changed after sealing; do not narrow the original goal")
+        production_team = None
+        if "production_team" in contract:
+            try:
+                production_team = check_production_team(project, contract)
+                if production_team.get("passed") is not True:
+                    errors.extend("Production team: " + e for e in
+                                  (production_team.get("errors") or ["verification is incomplete"]))
+            except (proof.ProofError, KeyError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+                errors.append("Production team: " + str(exc))
         children = {}
         for row in contract["requirements"]:
             failures = []
@@ -168,6 +209,7 @@ def check_root(goal: Path) -> dict:
                 "requirements": details,
                 "verified_children": [k for k, v in children.items() if v[1]["passed"]],
                 **({"golden": gold} if contract.get("protocol") == "golden-v1" else {}),
+                **({"production_team": production_team} if "production_team" in contract else {}),
                 "errors": errors,
                 "limitation": "Mechanical coverage of a sealed scope does not prove the completeness or validity of self-authored natural-language oracles."}
     except (proof.ProofError, KeyError, OSError, TypeError, ValueError) as exc:

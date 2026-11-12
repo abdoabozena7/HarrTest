@@ -1,4 +1,4 @@
 interface:
-  display_name: "HarrTest 4.0 Gold"
+  display_name: "HarrTest 4.1 Gold"
   short_description: "Plan, exercise, inspect, and verify real behavior."
   default_prompt: "Use HarrTest to plan this task, execute real user journeys, and verify current-source evidence before completion."

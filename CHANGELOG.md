@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.1.0 — Gold
+
+- Route independent production scopes to native implementation workers before
+  the coordinator writes integration glue. Keep review as a separate role.
+- Check native writes, changed output hashes, actual worker overlap,
+  integration order and independent QA through the production team gate.
+- Bind Team evidence to a schema-3 root when the plan opts in. Preserve the
+  verification protocol of earlier roots.
+- Require an old and new entrypoint replay when a task preserves existing
+  behavior.
+
 ## 4.0.0 — Gold
 
 - Added a Gold protocol for schema-3 goals. It binds the original interpretation,

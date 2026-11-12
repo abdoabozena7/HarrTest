@@ -14,6 +14,22 @@ Headless execution can still be real product execution; disclose it and inspect
 captured output. Do not claim to have opened a user's visible desktop from a
 remote container. Do not bypass browser/admin/sandbox restrictions.
 
+Python Playwright and the Node Playwright CLI are separate installations.
+An absent Python import or global `playwright` command does not establish
+that browser automation is unavailable. Check the host's browser skill and
+existing Node CLI before declaring a capability gap:
+
+```text
+npx.cmd --offline --package @playwright/cli playwright-cli --help
+```
+
+Use `npx` instead of `npx.cmd` on other systems. This checks an existing npm
+cache without fetching a package. If available, use its documented `open`,
+`snapshot`, keyboard actions and `screenshot` commands on the real entrypoint.
+Use a bounded `run-code` journey for interactions that need held keys or
+telemetry. Keep startup, actual behavior and visual inspection distinct.
+Retain failures and report a missing runtime if neither adapter works.
+
 ## Inventory and exercise
 
 Create a control/state matrix using `assets/templates/interaction-matrix.md`.
@@ -79,6 +95,14 @@ This exception is for an intentionally exercised error path, not a general way
 to hide failures. Raw events remain in the report.
 
 ## Evidence before completion
+
+Use public controls for user-journey claims. State injection, accelerated
+controller stepping and component simulations can test logic, but do not show
+that a user reached a terminal state through the application. Label them
+separately and leave the public outcome unverified until real actions reach it.
+For timed or interactive work, retain wall time, observable product progress
+and frame/response timing. Identify runtime and viewport. Repair measured
+responsiveness failures with their owner and repeat the same inputs afterward.
 
 Require actual UI journey receipts, screenshots/video/trace, real network or
 persistence evidence for integration claims, explicit visual inspection and a

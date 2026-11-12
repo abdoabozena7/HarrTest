@@ -1,12 +1,35 @@
-<img src="visual/banner.svg" alt="HarrTest 4.0 Gold. A request branches into independent work, passes separate checks and converges on final verification." width="100%" />
+<img src="visual/banner.svg" alt="HarrTest 4.1 Gold. Independent implementers build components, then integration and QA verify the result." width="100%" />
 
-# HarrTest 4.0 Gold
+# HarrTest 4.1 Gold
 
 HarrTest is a skill and local workflow coordinator for coding agents. Gold
 preserves what the user asked for, ties consequential decisions to evidence,
 and requires independent testing before accepting the integrated result.
+Version 4.1 routes a new product through native implementation workers before
+the coordinator assembles it. Each worker owns product files, a component
+contract and its checks.
 
 [Install](#install) · [Start a task](#start-a-task) · [Gold runbook](references/v4-gold.md) · [Measured results](references/v4-validation.md)
+
+## Production workers in 4.1
+
+A short request for a new app still needs a production split. The coordinator
+assigns the components and their interfaces, dispatches independent workers,
+and integrates the files they actually deliver. A separate QA worker exercises
+the integrated entrypoint. The split follows the task's real components.
+Complex details can have their own bounded owner.
+
+`team.py` retains the plan before edits and connects native Codex patch
+events, handoff receipts and current output hashes. It checks distinct
+implementers, overlap of active turns, integration after production, and
+independent QA with retained subprocess output. A schema-3 root can seal the
+`production_team` ID so direct root verification also requires that evidence.
+[Production team instructions](references/production-teams.md)
+
+The skill directs the host to use that path. Tool-level blocking requires
+the host to load and trust an actual hook. The Team verifier checks the
+supported native records when invoked. Product and visual checks establish
+the quality of the assembled result.
 
 ## What Gold requires
 
@@ -54,19 +77,15 @@ supported hook that the host actually invokes.
 
 ## Start a task
 
-Give your host the original task together with a request to use Gold:
+Give your host the original task and invoke the skill:
 
 ```text
-Use HarrTest 4.0 Gold for this task. Capture my original request and ask about
-material edge cases you can't resolve from the available evidence. Tie key
-decisions to their sources. Give independent work to parallel native workers
-with focused prompts, and have a different agent test each implementation.
-Verify the integrated result and show the measured baseline comparison.
-
-Task: [your original request]
+$harrtest
+[your original request]
 ```
 
-The host prepares the contracts and plan. A Gold workflow declares
+For a new product the host starts with the production team plan and component
+workers. For formal acceptance and a baseline comparison, a Gold workflow declares
 `golden: {intake, protocol, measurement}` in its plan and sets
 `protocol: "golden-v1"` on its schema-3 root. That binds Gold checks to the
 root even when a verifier calls it directly. The coordinator uses the host's
@@ -92,8 +111,9 @@ process. The runbook covers each command and the evidence it expects.
 
 ## Measure before and after
 
-In 12 matched local CLI cases, correct gate decisions rose from **4/12 on
-v3.2.2 to 12/12 on Gold**. False accepts fell from **8/9 to 0/9**. A separate
+In the 4.0 validation's 12 matched local CLI cases, correct gate decisions
+rose from **4/12 on v3.2.2 to 12/12 on 4.0 Gold**. False accepts fell from
+**8/9 to 0/9**. A separate
 live intake probe scored **4/6 on both versions**. [Cases, raw evidence and reproduction](references/v4-validation.md)
 
 Predeclare cases, baseline and success thresholds. Keep failed, blocked and

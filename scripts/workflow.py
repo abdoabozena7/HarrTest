@@ -91,6 +91,32 @@ def golden_graph(project, spec, children):
                 raise ValueError(f'Unordered scope/resource conflict: {a} and {b}')
 
 
+def bind_production_team(project, contract, index, children, integration):
+    import team
+
+    binding = team.binding(project, contract['production_team'], contract['request_sha256'])
+    contributors = binding['tasks']
+    implementations = {tid for tid, node in index.items() if node.get('role', 'implement') == 'implement'}
+    if set(contributors) != implementations:
+        raise ValueError('Workflow implementation nodes must match the registered production team contributors')
+    for tid, contributor in contributors.items():
+        node = index[tid]
+        if node.get('role') != 'implement' or node.get('execution') != 'subagent':
+            raise ValueError(f'{tid} must be a declared native implementation worker')
+        if not set(contributor['depends_on']) <= dependencies(index, tid):
+            raise ValueError(f'{tid} must follow its registered production team dependencies')
+        outputs = contributor['outputs']
+        for output in outputs:
+            if not scope_contains(node.get('write_scope', []), output):
+                raise ValueError(f'{tid} write scope must include Team output: {output}')
+            for other_id, other in index.items():
+                if other_id != tid and any(strict_io.overlaps(output, scope) for scope in other.get('write_scope', [])):
+                    raise ValueError(f'Team output {output} is assigned to {tid}, but {other_id} can write it')
+        root_gate.require_team_sources(project, children[tid], outputs)
+    root_gate.require_team_sources(project, children[integration], root_gate.team_outputs(binding))
+    return binding
+
+
 def validate_bindings(project, spec):
     # Normalize aliases (notably Windows short names) before identity/containment checks.
     project = Path(project).resolve()
@@ -100,10 +126,11 @@ def validate_bindings(project, spec):
     contract = proof.load(goal / 'root-contract.json')
     root_gate.validate(project, goal, contract)
     is_golden = contract.get('protocol') == 'golden-v1'
+    is_team = 'production_team' in contract
     if is_golden != ('golden' in spec):
         raise ValueError('Golden workflow plan and sealed original root must both select golden-v1')
-    if is_golden and goal != root_gate.root_dir(project, spec['goal_id']):
-        raise ValueError('Golden workflow ID must match its sealed original root goal ID')
+    if (is_golden or is_team) and goal != root_gate.root_dir(project, spec['goal_id']):
+        raise ValueError('Workflow ID must match its sealed original root goal ID')
     seal = proof.load(goal / 'root-seal.json')
     if seal.get('root_hash') != proof.digest(contract):
         raise ValueError('Workflow root is not sealed or was changed')
@@ -116,9 +143,10 @@ def validate_bindings(project, spec):
         _, actual_project, child = proof.task_context(path)
         if actual_project != project or path.name not in children:
             raise ValueError('Task is not a sealed child of this original goal')
-        if is_golden and (path != project / proof.STATE / path.name or child['task_id'] != path.name
-                          or proof.load(path / 'context.json').get('root_goal') != goal.name):
-            raise ValueError('Golden task must bind the canonical sealed proof child of this original goal')
+        if ((is_golden or is_team) and
+                (path != project / proof.STATE / path.name or child['task_id'] != path.name
+                 or proof.load(path / 'context.json').get('root_goal') != goal.name)):
+            raise ValueError('Task must bind the canonical sealed proof child of this original goal')
         if path.name in present:
             raise ValueError('Use one workflow node per proof child')
         present.add(path.name)
@@ -141,6 +169,9 @@ def validate_bindings(project, spec):
         import golden
         bindings['golden'] = golden.validate_intake(project, spec)
         golden_graph(project, spec, child_contracts)
+    if is_team:
+        bindings['production_team'] = bind_production_team(project, contract, index, child_contracts,
+                                                            integration_nodes[0]['id'])
     return bindings
 
 
@@ -476,6 +507,8 @@ def main(argv=None):
             spec = proof.load(args.plan)
             Store.validate(spec)
             spec['_bindings'] = validate_bindings(project, spec)
+            if 'production_team' in spec['_bindings'] and 'build' in spec:
+                raise ValueError('Use builder.py init to register a production team build with milestones')
             result = {'created': store.create(spec), 'goal_id': spec['goal_id'], 'status': 'ROOT_GOAL_UNVERIFIED'}
         else:
             spec = store.goal(args.goal)
@@ -483,6 +516,9 @@ def main(argv=None):
             current = validate_bindings(project, spec)
             if current != spec['_bindings']:
                 raise ValueError('Workflow acceptance changed; preserve old workflow and create a reviewed revision')
+            if 'production_team' in current and 'build' in spec and args.command in {'claim', 'retry'}:
+                action = 'claim' if args.command == 'claim' else 'reopen'
+                raise ValueError(f'Use builder.py {action} so production team milestone gates are checked')
             task = next((n for n in spec['tasks'] if n['id'] == getattr(args, 'task', None)), None)
             if args.command in {'status', 'ready'}:
                 rows = store.inspect(args.goal)

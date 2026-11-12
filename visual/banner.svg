@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
-  <title id="title">HarrTest 4.0 Gold</title>
+  <title id="title">HarrTest 4.1 Gold</title>
   <desc id="desc">A warm black and gold banner. One request branches into three work streams, passes separate checks and converges on a final verification.</desc>
   <defs>
     <clipPath id="frame">
@@ -21,7 +21,7 @@
     <path d="M63 70h569M63 292h569" fill="none" stroke="#5d5442"/>
 
     <g font-family="Arial, Helvetica, sans-serif">
-      <text x="63" y="112" fill="#f2ce74" font-size="32" font-weight="700" letter-spacing="3">VERSION 4.0 / GOLD</text>
+      <text x="63" y="112" fill="#f2ce74" font-size="32" font-weight="700" letter-spacing="3">VERSION 4.1 / GOLD</text>
       <text x="57" y="224" fill="#fff5df" font-size="123" font-weight="700" letter-spacing="-6">HarrTest</text>
       <text x="63" y="267" fill="#ded2b7" font-size="36">Evidence for decisions and results</text>
     </g>
