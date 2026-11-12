@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -483,7 +484,15 @@ def review(project, state, evidence, verdict):
                 'Assigned repairs need fresh owner handoffs before QA acceptance')
         require(integrated['inputs'] == {tid: row['sha256'] for tid, row in children.items()},
                 'Reintegrate fresh owner handoffs before QA acceptance')
-    return record(project, state, 'qa', {evidence: proof.file_hash(path)},
+    digest = proof.file_hash(path)
+    retained = f'{prefix}review-evidence/{digest}.txt'
+    destination = strict_io.scoped_path(project, retained, must_exist=False)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.exists():
+        with destination.open('xb') as saved:
+            saved.write(path.read_bytes())
+    require(proof.file_hash(destination) == digest, 'Retained QA evidence changed')
+    return record(project, state, 'qa', {retained: digest}, evidence_source=evidence,
                   integration=integrated['sha256'], check=check.get('sha256'), verdict=verdict)
 
 
@@ -544,6 +553,175 @@ def result_text(value):
     return ''
 
 
+def command_call(call):
+    """Recognize a literal native command/poll, never a mention inside echoed JS."""
+    tool = call.get('name', '').rsplit('.', 1)[-1]
+    if tool in ('exec_command', 'write_stdin'):
+        try:
+            args = call.get('arguments', {})
+            args = strict_io.loads(args) if isinstance(args, str) else args
+            return (tool, args) if isinstance(args, dict) else (None, {})
+        except ValueError:
+            return None, {}
+    if tool != 'exec' or not isinstance(call.get('input'), str):
+        return None, {}
+    source = call['input']
+    pragma = re.match(r'\A[ \t]*//[ \t]*@exec:[ \t]*(\{[^\r\n]*\})[ \t]*\r?\n', source)
+    if pragma:
+        try:
+            options = strict_io.loads(pragma[1])
+            require(isinstance(options, dict) and set(options) <= {'yield_time_ms', 'max_output_tokens'}
+                    and all(type(value) is int and value > 0 for value in options.values()),
+                    'Unsupported exec pragma')
+        except ValueError:
+            return None, {}
+        source = source[pragma.end():]
+    match = re.match(r'\A\s*(?:(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*|text\s*\(\s*)'
+                     r'await\s+tools\.(exec_command|write_stdin)\s*\(\s*', source)
+    if not match:
+        return None, {}
+    # Supported wrappers use flat literal argument objects (JSON values and JS keys).
+    # Do not evaluate source, follow variables, or scan strings for nested commands.
+    rest, args = source[match.end():], {}
+    try:
+        require(rest.startswith('{'), 'Not a literal command argument object')
+        rest = rest[1:].lstrip()
+        while not rest.startswith('}'):
+            if rest.startswith('"'):
+                key, end = json.JSONDecoder().raw_decode(rest)
+            else:
+                key_match = re.match(r'[A-Za-z_$][\w$]*', rest)
+                require(key_match, 'Unsupported command argument key')
+                key, end = key_match.group(), key_match.end()
+            rest = rest[end:].lstrip()
+            require(rest.startswith(':'), 'Missing command argument separator')
+            value, end = json.JSONDecoder().raw_decode(rest[1:].lstrip())
+            require(key not in args, 'Duplicate command argument')
+            args[key] = value
+            rest = rest[1:].lstrip()[end:].lstrip()
+            if rest.startswith(','):
+                rest = rest[1:].lstrip()
+            else:
+                require(rest.startswith('}'), 'Unsupported command argument expression')
+        variable = match.group(1)
+        if variable and match.group(2) == 'exec_command':
+            bound = re.escape(variable)
+            poll_args = (r'\{\s*session_id\s*:\s*' + bound + r'\.session_id\s*'
+                         + r'(?:,\s*chars\s*:\s*""\s*)?,\s*yield_time_ms\s*:\s*\d+\s*'
+                         + r'(?:,\s*max_output_tokens\s*:\s*\d+\s*)?\}')
+            drain = (r'\s*\)\s*;\s*while\s*\(\s*' + bound + r'\.session_id\s*\)\s*'
+                     + bound + r'\s*=\s*await\s+tools\.write_stdin\s*\(\s*' + poll_args
+                     + r'\s*\)\s*;\s*text\s*\(\s*'
+                     + bound + r'\.output\s*\)\s*;?\s*')
+            collected = (r'\s*\)\s*;\s*let\s+(?P<collected>[A-Za-z_$][\w$]*)\s*=\s*'
+                         + bound + r'\.output\s*;\s*while\s*\(\s*' + bound + r'\.session_id\s*\)\s*\{\s*'
+                         + bound + r'\s*=\s*await\s+tools\.write_stdin\s*\(\s*' + poll_args
+                         + r'\s*\)\s*;\s*(?P=collected)\s*\+=\s*' + bound
+                         + r'\.output\s*;\s*\}\s*text\s*\(\s*(?P=collected)\s*\)\s*;?\s*')
+            if re.fullmatch(drain, rest[1:]) or re.fullmatch(collected, rest[1:]):
+                return 'exec_command', args
+        suffix = (r'\s*\)\s*;\s*text\s*\(\s*(?:' + re.escape(variable)
+                  + r'(?:\.output)?|JSON\.stringify\s*\(\s*' + re.escape(variable)
+                  + r'\s*\))\s*\)\s*;?\s*'
+                  + r'(?:text\s*\(\s*(?:' + re.escape(variable) + r'\.exit_code|`exit_code=\$\{'
+                  + re.escape(variable) + r'\.exit_code\}`)\s*\)\s*;?\s*)?'
+                  if variable else r'\s*\)\s*\)\s*;?\s*')
+        require(re.fullmatch(suffix, rest[1:]), 'Command wrapper has unrelated statements')
+        return match.group(2), args
+    except (ValueError, TypeError):
+        return None, {}
+
+
+def team_command(command):
+    if not isinstance(command, str):
+        return False
+    # Preserve literal quoted newlines; only shell line boundaries delimit commands.
+    normalized, quote, escaped = [], None, False
+    for char in command:
+        if escaped:
+            normalized.append(char)
+            escaped = False
+            continue
+        if char == '`' and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in ('"', "'"):
+            quote = char
+        elif char in '\r\n':
+            char = ';'
+        normalized.append(char)
+    command = ''.join(normalized)
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|')
+    lexer.whitespace_split, lexer.commenters, lexer.escape = True, '', ''
+    try:
+        words = list(lexer)
+    except ValueError:
+        return False
+    segments, segment = [], []
+    for word in words:
+        if word and all(char in ';&|' for char in word):
+            if segment:
+                segments.append(segment)
+                segment = []
+        else:
+            segment.append(word)
+    if segment:
+        segments.append(segment)
+    actual = False
+    for words in segments:
+        executable = words[0].replace('\\', '/').rsplit('/', 1)[-1].lower()
+        if executable in ('echo', 'printf', 'write-output', 'write-host') and any(RECEIPT.strip() in w for w in words[1:]):
+            return False
+        if not re.fullmatch(r'(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?', executable):
+            continue
+        args = words[1:]
+        while args and re.fullmatch(r'-(?:B|u|3(?:\.\d+)?)', args[0]):
+            args = args[1:]
+        actual |= bool(args and args[0].replace('\\', '/').rsplit('/', 1)[-1] == 'team.py')
+    return actual
+
+
+def command_result(value):
+    """Decode one bounded native exec envelope, preserving the patch parser's raw text."""
+    raw = result_text(value)
+    if len(raw) > MAX_ROLLOUT_BYTES:
+        return None
+    blocks = [row.get('text', '') for row in value if isinstance(row, dict)] if isinstance(value, list) else [raw]
+    envelopes = []
+    for block in blocks:
+        current = block.strip()
+        for _ in range(3):
+            if not isinstance(current, str):
+                break
+            try:
+                current = strict_io.loads(current)
+            except ValueError:
+                break
+        if isinstance(current, dict) and isinstance(current.get('output'), str):
+            if (isinstance(current.get('chunk_id'), str)
+                    and type(current.get('wall_time_seconds')) in (int, float)
+                    and ('session_id' in current or 'exit_code' in current)):
+                envelopes.append(current)
+    if envelopes:
+        if len(envelopes) != 1:
+            return None
+        row = envelopes[0]
+        sid = row.get('session_id')
+        if sid is not None and (type(sid) is not int or sid <= 0):
+            return None
+        return {'output': row['output'], 'session_id': sid,
+                'complete': type(row.get('exit_code')) is int}
+    # Legacy native text output remains supported, but not arbitrary JSON objects.
+    if any(block.lstrip().startswith(('{', '[', '"')) for block in blocks):
+        return None
+    running = re.search(r'Process running with session ID (\d+)', raw)
+    complete = bool(re.search(r'Process exited with code -?\d+', raw))
+    return {'output': raw, 'session_id': int(running[1]) if running else None,
+            'complete': complete or not running}
+
+
 def patch_paths(project, call, output):
     tool = call.get('name')
     source = call.get('input')
@@ -599,7 +777,7 @@ def patch_paths(project, call, output):
 
 def read_trace(project, meta, path, since):
     require(path.stat().st_size <= MAX_ROLLOUT_BYTES, 'Native rollout exceeds the supported size')
-    writes, markers, calls = [], {}, {}
+    writes, markers, calls, running_commands, running_cells = [], {}, {}, {}, {}
     finished, context = None, {}
     turn_starts = []
     intervals, active = [], None
@@ -637,9 +815,52 @@ def read_trace(project, meta, path, since):
                 output = result_text(payload.get('output'))
                 call = calls.pop(payload.get('call_id'), {})
                 writes.extend((when, rel) for rel in patch_paths(project, call, output))
-                if 'team.py' in (call.get('input') or call.get('arguments') or ''):
-                    for digest in re.findall(r'^' + RECEIPT + r'([0-9a-f]{64})\s*$', output, re.M):
+                operation, args = command_call(call)
+                waited_cell = None
+                if call.get('name', '').rsplit('.', 1)[-1] == 'wait':
+                    try:
+                        waiting = strict_io.loads(call.get('arguments', '{}'))
+                    except (ValueError, TypeError):
+                        waiting = {}
+                    cell = waiting.get('cell_id')
+                    if cell not in running_cells or waiting.get('terminate'):
+                        continue
+                    waited_cell = cell
+                    operation, args = running_cells[cell]
+                    if output.startswith('Script completed'):
+                        running_cells.pop(cell)
+                yielded = re.match(r'\AScript running with cell ID ([A-Za-z0-9:_-]+)(?:\s|$)', output)
+                if yielded:
+                    if waited_cell is not None and yielded[1] != waited_cell:
+                        continue
+                    if operation and (operation == 'write_stdin' or team_command(args.get('cmd'))):
+                        running_cells[yielded[1]] = (operation, args)
+                    continue
+                result = command_result(payload.get('output')) if operation else None
+                if result is None:
+                    continue
+                sid = result['session_id']
+                if operation == 'exec_command':
+                    if sid is not None:
+                        running_commands.pop(sid, None)
+                    if not team_command(args.get('cmd')):
+                        continue
+                    pending = set()
+                else:
+                    requested = args.get('session_id')
+                    if (type(requested) is not int or requested not in running_commands
+                            or args.get('chars', '') != '' or sid not in (None, requested)):
+                        continue
+                    pending = running_commands[requested]
+                    sid = requested
+                pending.update(re.findall(r'^' + RECEIPT + r'([0-9a-f]{64})\s*$', result['output'], re.M))
+                if result['complete']:
+                    for digest in pending:
                         markers[digest] = when
+                    if sid is not None:
+                        running_commands.pop(sid, None)
+                elif sid is not None:
+                    running_commands[sid] = pending
     return {'id': meta['id'], 'start': instant(meta['timestamp']), 'end': finished,
             'writes': writes, 'markers': markers, 'turn_starts': turn_starts,
             'intervals': intervals, 'active': active, 'model': context.get('model'),

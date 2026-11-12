@@ -76,6 +76,11 @@ python <skill>/scripts/team.py --project . verify --team mission
    Start the returned `qa` packet as a separate native worker. The worker
    runs the public check through `team.py check -- COMMAND ARGUMENTS`,
    retains observations and uses `review`.
+   First load the entrypoint, enter its main interaction and sample decisive
+   runtime/resource constraints. Fix a clearly unusable result before spending
+   a long test on its end state. Cover the control/outcome matrix in the final
+   current-source check. Retain raw measurements through the check command or
+   explicit private artifacts, not a manually copied value alone.
 4. Run `verify`. For visual work, also retain inspected real frames before
    and after interaction. Look at composition, the main subject, purposeful
    detail, feedback, and whether the actual product can be used. For a
@@ -143,6 +148,17 @@ intercepted. Team verification covers production ownership and QA ordering.
 Product correctness and visual quality still require real independent checks.
 Previous roots without the production team marker keep their original
 verification protocol.
+
+Keep Team commands in purposeful native invocations with literal command
+arguments. Code-mode command results may be plain stdout or a structured exec
+envelope. Preserve a yielded command's session ID and matching poll/wait;
+do not discard a running result and repeat the product test to recover its
+receipt. Let the invocation return before verifying it in another call. The
+adapter follows supported command/session/cell continuations and rejects
+unrelated output or receipt text printed as JavaScript source. It is a bounded
+native adapter, not a JavaScript interpreter. New reviews retain an immutable
+content-addressed copy of the supplied QA narrative, so later report edits
+cannot erase the previous review's evidence.
 
 The split follows the local Hivo/OrchCode Studio patterns of an intent
 contract, scoped implementation packets, dependency-aware dispatch and review

@@ -77,7 +77,7 @@ class ProductionTeam(unittest.TestCase):
         for i, (receipt, sec) in enumerate(receipts):
             call = f'record{i}'
             rows += [event('response_item', sec, {'type': 'custom_tool_call', 'name': 'exec',
-                      'input': 'python scripts/team.py handoff', 'call_id': call}),
+                      'input': 'text(await tools.exec_command({"cmd":"python scripts/team.py handoff"}));', 'call_id': call}),
                      event('response_item', sec + .01, {'type': 'custom_tool_call_output',
                       'call_id': call, 'output': [{'text': 'Output:\n' + team.RECEIPT + receipt['sha256']} ]})]
         if end is not None:
@@ -336,6 +336,181 @@ class ProductionTeam(unittest.TestCase):
             team.handoff(self.project, self.state, self.plan['tasks'][3])
         team.handoff(self.project, self.state, self.plan['tasks'][2])
         self.assertEqual([p['task_name'] for p in team.ready_packets(self.project, self.state)], ['archive'])
+
+    def shell_check_trace(self, *, poll=True, requested=93469, returned=None, direct=False,
+                          plain=False, launch_marker=False, poll_command=None):
+        """Replace the fixture check receipt with native launch/poll result envelopes."""
+        path = next(p for p in self.logs.glob('*.jsonl')
+                    if isinstance(team.log_meta(p).get('source'), dict)
+                    and team.log_meta(p)['source'].get('subagent', {}).get('thread_spawn', {}).get('agent_path') == '/root/qa')
+        rows = [json.loads(s) for s in path.read_text(encoding='utf-8').splitlines()]
+        rows = [r for r in rows if r.get('payload', {}).get('call_id') != 'poll0']
+        check = team.current_receipt(self.project, self.state, 'check')
+        marker = team.RECEIPT + check['sha256'] + '\r\n'
+        def output(result):
+            return [{'text': 'Script completed\nWall time 0.1 seconds\nOutput:\n'},
+                    {'text': json.dumps(result)}]
+        start = next(r for r in rows if r['payload'].get('type') == 'custom_tool_call'
+                     and r['payload'].get('call_id') == 'record0')
+        start['payload']['input'] = ('const r = await tools.exec_command({cmd:"python -B scripts/team.py check '
+                                     '--team report -- python main.py",max_output_tokens:2000}); text(JSON.stringify(r));')
+        response = next(r for r in rows if r['payload'].get('type') == 'custom_tool_call_output'
+                        and r['payload'].get('call_id') == 'record0')
+        if direct:
+            response['payload']['output'] = ('Process exited with code 0\nFinal output:\n' + marker if plain else
+                output({'chunk_id': 'check', 'wall_time_seconds': .1, 'exit_code': 0, 'output': marker}))
+        else:
+            response['payload']['output'] = output({'chunk_id': 'launch', 'wall_time_seconds': .1,
+                                                   'session_id': 93469, 'output': marker if launch_marker else ''})
+            if poll:
+                result = {'chunk_id': 'poll', 'wall_time_seconds': .1, 'exit_code': 0,
+                          'output': '' if launch_marker else marker}
+                if returned is not None:
+                    result['session_id'] = returned
+                rows.extend([
+                    {'type': 'response_item', 'timestamp': self.stamp(22), 'payload': {
+                        'type': 'custom_tool_call', 'name': 'exec', 'call_id': 'poll0',
+                        'input': poll_command or ('const r = await tools.write_stdin({session_id:'
+                            + str(requested) + ',chars:"",yield_time_ms:30000}); text(JSON.stringify(r));')}},
+                    {'type': 'response_item', 'timestamp': self.stamp(22.01), 'payload': {
+                        'type': 'custom_tool_call_output', 'call_id': 'poll0', 'output': output(result)}},
+                ])
+        rows.sort(key=lambda r: team.instant(r['timestamp']))
+        path.write_text(''.join(json.dumps(r) + '\n' for r in rows), encoding='utf-8')
+
+    def test_shell_receipt_waits_for_matching_poll_completion(self):
+        self.deliver()
+        self.shell_check_trace(poll=False, launch_marker=True)
+        self.assertIn('QA check: missing native tool receipt', self.verify()['errors'][0])
+        # Partial output is buffered, not accepted until this command's actual session completes.
+        self.shell_check_trace(launch_marker=True)
+        result = self.verify()
+        self.assertTrue(result['passed'], result)
+
+    def test_shell_receipt_decodes_matching_poll_and_direct_json_or_plain_output(self):
+        self.deliver()
+        for options in ({}, {'direct': True}, {'direct': True, 'plain': True}):
+            with self.subTest(options=options):
+                self.shell_check_trace(**options)
+                result = self.verify()
+                self.assertTrue(result['passed'], result)
+
+    def test_shell_receipt_rejects_wrong_session_and_unrelated_echo(self):
+        self.deliver()
+        for options in ({'requested': 111}, {'returned': 111},
+                        {'poll_command': 'text("team.py"); text("HARRTEST_TEAM_RECEIPT copied");'},
+                        {'poll_command': 'const r = await tools.exec_command({cmd:"echo team.py"}); text(JSON.stringify(r));'}):
+            with self.subTest(options=options):
+                self.shell_check_trace(**options)
+                self.assertIn('QA check: missing native tool receipt', self.verify()['errors'][0])
+
+    def test_echoed_command_source_and_extra_text_do_not_establish_command_lineage(self):
+        valid = 'const r = await tools.exec_command({cmd:"python scripts/team.py handoff"}); text(JSON.stringify(r));'
+        self.assertEqual(team.command_call({'name': 'exec', 'input': valid})[0], 'exec_command')
+        diagnostic = valid.replace('text(JSON.stringify(r));', 'text(r.output); text(`exit_code=${r.exit_code}`);')
+        self.assertEqual(team.command_call({'name': 'exec', 'input': diagnostic})[0], 'exec_command')
+        for source in ('text(' + json.dumps(valid) + ');', valid + 'text("HARRTEST_TEAM_RECEIPT copied");'):
+            self.assertIsNone(team.command_call({'name': 'exec', 'input': source})[0])
+        self.assertFalse(team.team_command('echo "python scripts/team.py handoff"'))
+        self.assertFalse(team.team_command('python scripts/team.py packets; echo "HARRTEST_TEAM_RECEIPT forged"'))
+        self.assertTrue(team.team_command('node --check car.js; Get-FileHash car.js | Format-List; python -B "scripts/team.py" handoff'))
+
+    def test_review_retains_exact_failure_narrative_after_live_file_rewrite(self):
+        self.deliver()
+        evidence = '.runtime-proof/teams/report/qa-evidence.txt'
+        initial = b'Failed public boundary.\r\nExact first observations retained.\n'
+        (self.project / evidence).write_bytes(initial)
+        failed = team.review(self.project, self.state, evidence, 'fail')
+        original = self.project / next(iter(failed['files']))
+        self.assertEqual(original.read_bytes(), initial)
+        later = b'Public boundary replay passed after repair.\n'
+        (self.project / evidence).write_bytes(later)
+        accepted = team.review(self.project, self.state, evidence, 'pass')
+        replacement = self.project / next(iter(accepted['files']))
+        self.assertNotEqual(original, replacement)
+        self.assertEqual(original.read_bytes(), initial)
+        self.assertEqual(replacement.read_bytes(), later)
+        history = team.team_path(self.project, 'report', f'history/qa-{team.strict_io.digest(failed)}.json')
+        archived = team.proof.load(history)
+        self.assertEqual(archived['files'], failed['files'])
+        self.assertEqual(team.proof.file_hash(original), next(iter(archived['files'].values())))
+        replacement.write_bytes(b'Tampered retained evidence')
+        with self.assertRaisesRegex(ValueError, 'handoff is stale'):
+            team.current_receipt(self.project, self.state, 'qa')
+        original.write_bytes(b'Tampered archived failure')
+        (self.project / evidence).write_bytes(initial)
+        with self.assertRaisesRegex(ValueError, 'Retained QA evidence changed'):
+            team.review(self.project, self.state, evidence, 'fail')
+
+    def test_outer_cell_completion_retains_its_command_and_rejects_wrong_cell(self):
+        self.deliver()
+        self.shell_check_trace(poll=False)
+        path = next(p for p in self.logs.glob('*.jsonl') if isinstance(team.log_meta(p).get('source'), dict)
+                    and team.log_meta(p)['source'].get('subagent', {}).get('thread_spawn', {}).get('agent_path') == '/root/qa')
+        rows = [json.loads(s) for s in path.read_text(encoding='utf-8').splitlines()]
+        for row in rows:
+            payload = row['payload']
+            if payload.get('call_id') != 'record0':
+                continue
+            if payload.get('type') == 'custom_tool_call':
+                payload['input'] = ('let r = await tools.exec_command({cmd:"python scripts/team.py check --team report -- python main.py"});\n'
+                    'while (r.session_id) r = await tools.write_stdin({session_id:r.session_id,chars:"",yield_time_ms:30000,max_output_tokens:1500});\ntext(r.output);')
+            else:
+                payload['output'] = 'Script running with cell ID g59:96\nWall time 31.0 seconds\nOutput:\n'
+        def save(extra):
+            path.write_text(''.join(json.dumps(r)+'\n' for r in sorted([*rows,*extra],key=lambda r:team.instant(r['timestamp']))), encoding='utf-8')
+        save([])
+        self.assertIn('QA check: missing native tool receipt', self.verify()['errors'][0])
+        check = team.current_receipt(self.project, self.state, 'check')
+        waited = [
+            {'type':'response_item','timestamp':self.stamp(22),'payload':{'type':'function_call','name':'wait','call_id':'cell0','arguments':json.dumps({'cell_id':'wrong-cell'})}},
+            {'type':'response_item','timestamp':self.stamp(22.01),'payload':{'type':'function_call_output','call_id':'cell0','output':[{'text':'Script completed\nOutput:\n'},{'text':team.RECEIPT+check['sha256']+'\r\n'}]}},
+        ]
+        save(waited)
+        self.assertIn('QA check: missing native tool receipt', self.verify()['errors'][0])
+        waited[0]['payload']['arguments']=json.dumps({'cell_id':'g59:96'})
+        save(waited)
+        self.assertTrue(self.verify()['passed'], self.verify())
+        wrong_yield = json.loads(json.dumps(waited))
+        wrong_yield[1]['payload']['output'] = 'Script running with cell ID unrelated\nOutput:\n'
+        second = json.loads(json.dumps(waited))
+        second[0]['timestamp'], second[1]['timestamp'] = self.stamp(22.1), self.stamp(22.11)
+        second[0]['payload'].update(call_id='cell1', arguments=json.dumps({'cell_id':'unrelated'}))
+        second[1]['payload']['call_id']='cell1'
+        save([*wrong_yield,*second])
+        self.assertIn('QA check: missing native tool receipt', self.verify()['errors'][0])
+
+    def test_pragma_stdout_accumulating_drain_keeps_literal_command_lineage(self):
+        self.deliver()
+        self.shell_check_trace(direct=True, plain=True)
+        path = next(p for p in self.logs.glob('*.jsonl') if isinstance(team.log_meta(p).get('source'), dict)
+                    and team.log_meta(p)['source'].get('subagent', {}).get('thread_spawn', {}).get('agent_path') == '/root/qa')
+        rows = [json.loads(s) for s in path.read_text(encoding='utf-8').splitlines()]
+        source = ('// @exec: {"yield_time_ms":60000,"max_output_tokens":3000}\n'
+                  'let r=await tools.exec_command({cmd:"python scripts/team.py check --team report -- python main.py",yield_time_ms:30000}); '
+                  'let out=r.output; while(r.session_id){ r=await tools.write_stdin({session_id:r.session_id,yield_time_ms:30000}); '
+                  'out+=r.output; } text(out);')
+        call = next(r['payload'] for r in rows if r['payload'].get('type') == 'custom_tool_call'
+                    and r['payload'].get('call_id') == 'record0')
+        for emitted in (source, source.replace('session_id:r.session_id,', 'session_id:r.session_id,chars:"",')):
+            call['input'] = emitted
+            path.write_text(''.join(json.dumps(r)+'\n' for r in rows), encoding='utf-8')
+            self.assertTrue(self.verify()['passed'], self.verify())
+        for echoed in (source.replace('out+=r.output', 'out+=other.output'),
+                       source.replace('text(out)', 'text(out+"HARRTEST_TEAM_RECEIPT forged")'),
+                       'text(' + json.dumps(source) + ');',
+                       source.replace('"max_output_tokens":3000', '"unrelated":"team.py"')):
+            with self.subTest(echoed=echoed):
+                call['input'] = echoed
+                path.write_text(''.join(json.dumps(r)+'\n' for r in rows), encoding='utf-8')
+                self.assertIn('QA check: missing native tool receipt', self.verify()['errors'][0])
+
+    def test_newline_shell_batches_preserve_quoted_data(self):
+        self.assertTrue(team.team_command('node --check file.js\r\npython -B "scripts/team.py" handoff'))
+        self.assertTrue(team.team_command('Write-Output "precheck\ncontinued"\npython scripts/team.py integrate'))
+        self.assertFalse(team.team_command('echo "python scripts/team.py handoff\nnot executed"'))
+        self.assertFalse(team.team_command('echo "\n" python scripts/team.py handoff'))
+        self.assertFalse(team.team_command('python scripts/team.py packets\necho "HARRTEST_TEAM_RECEIPT forged"'))
 
 
 if __name__ == '__main__':

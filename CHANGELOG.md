@@ -10,6 +10,9 @@
   evidence, fresh handoffs, reintegration and a new runtime check.
 - Measure a representative executable checkpoint before costly expansion and
   continue authorized skill improvement after a timeboxed attempt fails.
+- Recognize native exec envelopes, shell-session polls and supported yielded
+  cell continuations without accepting unrelated receipt output. Preserve
+  immutable QA narratives across replays.
 
 - Route independent production scopes to native implementation workers before
   the coordinator writes integration glue. Keep review as a separate role.

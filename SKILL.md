@@ -78,6 +78,9 @@ assembly file.
    packet. QA executes the public entrypoint, records its output and checks
    the original user journey. Give QA exclusive runtime/browser resources
    during that check; the coordinator can inspect its retained frames.
+   After loading and starting the main interaction, measure the cheap decisive
+   runtime constraints before a long journey. Keep a control/outcome matrix so
+   missing checks are discovered before repeatedly replaying the whole path.
    Return failures to their owners and reassemble
    after repair. Run `team.py verify` on current files before completion.
    On every QA attempt, including repair replays, pass the full returned QA
@@ -90,6 +93,9 @@ assembly file.
    the retained failure evidence and concrete observation; dispatch its complete
    owner packet, then collect a fresh handoff, reintegrate and rerun independent
    QA. A stale handoff is unfinished work, not a reason to omit that owner.
+   Let a native Team command finish before verifying its receipt. Preserve
+   actual command results and matching continuation/session IDs when it yields;
+   an enclosing tool call cannot observe its own not-yet-returned output.
 
 Use the host's actual parallel capacity. With fewer slots, run ready workers
 in waves. Keep one owner for shared configuration and exclusive resources.
