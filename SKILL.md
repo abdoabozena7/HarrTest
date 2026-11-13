@@ -60,6 +60,12 @@ A narrow change has one implementation owner and an independent tester.
 Do not invent parallel work or extra files to satisfy a worker count. Split a
 complex scope further only when its deliverables can be independently checked.
 Reuse the active model and effort unless the user selected otherwise.
+Pass those values explicitly to every native worker call when the host exposes
+them, including built-in testing/review agents: a built-in agent can have a
+different default model from the main session. Check actual configured/invoked
+worker metadata, not only a dispatch request or first-dispatched-model label.
+If the host cannot honor a required pin, retain the result with that limitation;
+do not report it as a same-model comparison.
 
 Keep one writer per file at a time, including configuration. Route fixes to the
 existing owner, refresh dependent handoffs and reintegrate. Support real deletions

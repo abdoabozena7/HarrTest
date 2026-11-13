@@ -80,6 +80,16 @@ It predates later controller repairs and is diagnostic, not final acceptance.
 Functional success, workflow compliance and independently reviewed full quality
 are separate outcomes; none is silently substituted for another.
 
+A fresh narrow-routing probe observed the requested implementation worker and
+a separate native tester, successful external behavior and reviewed applicability
+verdicts. It still lacks formal Team receipts and is **invalid for same-model
+comparison**: the built-in tester selected gpt-5.6-luna while the session and
+implementer used gpt-6-luna. The SDK's session allowedModels setting did not prevent
+that built-in default. Actual configured/native model metadata controls this
+classification, rather than the dispatch label. Its result and cost are retained
+without upgrading it to a valid final attempt. Per-agent pinning must be observed
+for every arm before the held comparison begins.
+
 The initial synthetic cases share related language-specific codebases. Final
 comparison is therefore an unseen-task/outcome comparison on related families,
 not unseen-family generalization. Two acceptance tasks are being expanded into
