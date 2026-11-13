@@ -150,6 +150,10 @@ the integrated review; functional completion does not close unfinished work.
 Use the focused native `finish_review` in the quality-intent guide to inspect
 actual draft frames independently of runtime QA. Return each failed component
 to its owner and repeat on current captures before visual acceptance.
+On review replays, read the current quality-intent guide. An unexplained visible
+artifact on a major delivered component needs owner diagnosis or evidence that
+it is intentional. Calling it minor or outside the interaction path does not
+close its finishing criterion; keep that finding open until resolved.
 An indistinct primary subject, unreadable content or an obstructed view of
 the interaction is a visual acceptance failure, rather than a caveat under
 a functional PASS. Check detail at the final scale and lighting in real frames.

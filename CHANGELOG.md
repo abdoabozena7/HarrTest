@@ -24,6 +24,8 @@
   a real preview; close major finishing gaps separately from runtime QA.
 - Inspect native-resolution detail regions across states so coherent styling
   cannot hide persistent surface, join, clipping or depth artifacts.
+- Keep unexplained visual findings open until owner diagnosis, repair or evidence
+  of intentional behavior; severity labels alone do not close a criterion.
 - Check decisive runtime constraints before terminal replays; distinguish missing
   instrumentation from a measured product failure.
 - Distinguish a still-finishing native worker from a completed handoff; allow

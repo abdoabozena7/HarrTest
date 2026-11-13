@@ -139,6 +139,22 @@ not an assertion that every primitive fits the style. If the broad review misses
 a defect, narrow the next review to the component and its observable surfaces;
 keep production repairs with that component's existing owner.
 
+Every adverse visible observation needs an evidence-backed disposition. Record
+the observation, actual frame/detail region, relevant criterion, classification
+and closure evidence. Classify it as confirmed intentional behavior, confirmed
+defect, or unverified. A label such as minor, cosmetic, off the interaction path
+or consistent with the palette does not explain its cause or close a finishing
+requirement. Intentional facets, linework or ordinary aliasing need supporting
+source/preview evidence when they could be confused with a defect.
+
+If an unexplained rendering anomaly appears on a delivered major component,
+request a focused diagnostic from its owner before accepting it. The owner
+inspects the relevant geometry/material/layout or an isolated real preview,
+records why the observation occurs, and either proves the intended behavior or
+repairs the defect and repeats the actual view. Do not edit a correct product
+on an unverified assumption; do not waive an unexplained defect either. A
+required finishing finding remains open until that disposition is established.
+
 Independent QA maps the accepted criteria to observed evidence and gives
 functional, workmanship and responsiveness verdicts. A recognizable but
 unfinished main artifact remains a quality failure. Inspect the actual output
