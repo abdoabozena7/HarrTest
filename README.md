@@ -1,14 +1,6 @@
 <img src="visual/banner.svg" alt="HarrTest 4.1 Gold. Independent implementers build components, then integration and QA verify the result." width="100%" />
 
-# HarrTest 4.1 Gold candidate
-
-**Unreleased; validation continues.** Luna-only development delivered a working
-public play/restart journey at 27.16 sampled FPS. A stricter independent image
-review scored it 21/24 against 20/24 for the retained fresh control; both lacked
-demonstrated crafted detail. A new Luna trial tests a general finishing-intent
-review before production. This candidate has not been published or installed
-globally.
-[4.1 validation and retained failures](references/v4.1-validation.md)
+# HarrTest 4.1 Gold
 
 HarrTest is a skill and local workflow coordinator for coding agents. Gold
 preserves what the user asked for, ties consequential decisions to evidence,
@@ -17,7 +9,44 @@ Version 4.1 routes a new product through native implementation workers before
 the coordinator assembles it. Each worker owns product files, a component
 contract and its checks.
 
-[Install](#install) · [Start a task](#start-a-task) · [Gold runbook](references/v4-gold.md) · [4.0 results](references/v4-validation.md) · [4.1 candidate validation](references/v4.1-validation.md)
+[Install](#install) · [Start a task](#start-a-task) · [Gold runbook](references/v4-gold.md) · [4.1 results](references/v4.1-validation.md)
+
+## Observed Luna-low result
+
+The same short request produced two playable Three.js games. Independent
+image review preferred the HarrTest result and accepted its component finishing.
+Three native implementation owners built the car, track and gameplay modules;
+the coordinator assembled them, with separate intent, finishing and QA roles.
+All seven observed generation roles used **Luna, low reasoning**. The observer
+changed the general harness and evaluated outputs, with zero custom game edits
+or game-specific repair guidance.
+
+| Final observation | Without HarrTest | With HarrTest |
+| --- | ---: | ---: |
+| Independent evidence score | 20/24 | **23/24** |
+| Mandatory runtime outcomes | 5/5 | 5/5 |
+| Sampled FPS: acceleration | 19.47 | **22.06** |
+| Sampled FPS: steering | 20.28 | **22.11** |
+| Sampled FPS: brake | 19.67 | **21.98** |
+| Public clock / wall time | 0.954x | 0.997x |
+
+**Without HarrTest** — actual browser capture after the acceleration action:
+
+![Luna without HarrTest: dark city racing game](visual/comparison/without-harrtest.png)
+
+**With HarrTest** — the same capture stage and rendering profile:
+
+![Luna with HarrTest: curved coastal circuit and sports car](visual/comparison/with-harrtest.png)
+
+This is one **adaptive development comparison**, with earlier failures, source
+reuse and a service interruption retained. Generation cost was not matched;
+the final package has no successful cold replication here. Both use Edge,
+1440×900/DPR 1 and actual SwiftShader. Short callback samples do not establish
+smooth motion: the temporal item remains unverified for both. The candidate
+also has one blocked optional font request. These observations do not establish
+general model uplift or enterprise readiness.
+[Protocol, limits and retained failures](references/v4.1-validation.md) ·
+[Measured results and source/image identities](references/v4.1-results.json)
 
 ## Production workers in 4.1
 

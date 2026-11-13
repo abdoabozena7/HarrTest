@@ -1,0 +1,790 @@
+{
+  "schema": 1,
+  "release": "4.1.0",
+  "tested_harness_commit": "a4e085d8e920c1c8aa8f50313a6eb3d818762f26",
+  "comparison_kind": "Adaptive Luna-low development comparison, unchanged no-skill control reused; not cold, held-out or equal-generation-cost",
+  "original_task": "اعمل لعبة سباق عربيات 3D صغيرة بـ Three.js تشتغل في المتصفح. خليها قابلة للعب بالكيبورد، واختار أنت شكل العربية والطريق والألوان وقواعد السباق.",
+  "common_vendor": "Local Three.js0.180.0, identical seeded scaffold/vendor dependencies",
+  "runtime": {
+    "browser": "157.0.4341.46",
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "scale": 1
+    },
+    "control_canvases": [
+      {
+        "width": 1440,
+        "height": 900,
+        "visibleWidth": 1440,
+        "visibleHeight": 900
+      }
+    ],
+    "candidate_canvases": [
+      {
+        "width": 1440,
+        "height": 900,
+        "visibleWidth": 1440,
+        "visibleHeight": 900
+      }
+    ],
+    "network": "local origin only; known optional external-font request blocked"
+  },
+  "metrics": {
+    "without_harrtest": {
+      "accelerate": {
+        "frames": 51,
+        "milliseconds": 2620,
+        "fps": 19.46564885496183
+      },
+      "steer-right": {
+        "frames": 16,
+        "milliseconds": 789,
+        "fps": 20.278833967046896
+      },
+      "brake": {
+        "frames": 18,
+        "milliseconds": 915,
+        "fps": 19.672131147540984
+      }
+    },
+    "with_harrtest": {
+      "accelerate": {
+        "frames": 58,
+        "milliseconds": 2629,
+        "fps": 22.06162038798022
+      },
+      "steer-right": {
+        "frames": 17,
+        "milliseconds": 769,
+        "fps": 22.106631989596877
+      },
+      "brake": {
+        "frames": 20,
+        "milliseconds": 910,
+        "fps": 21.978021978021978
+      }
+    }
+  },
+  "clock": {
+    "without_harrtest": {
+      "ratio": 0.9541984732824427,
+      "delta_public_seconds": 2.5,
+      "page_wall_seconds": 2.62,
+      "public_readout_resolution_seconds": 0.1,
+      "rounding_interval": [
+        0.916030534351145,
+        0.9923664122137404
+      ]
+    },
+    "with_harrtest": {
+      "ratio": 0.9974554707379136,
+      "public_lap_seconds": 9.8,
+      "page_wall_seconds": 9.825,
+      "origin": "Fresh page/reset countdown followed by first observed public DRIVE state; elapsed race clock starts at zero. End at first observed public FINISH, not after an extra wait."
+    },
+    "native_report_caveat": "Native QA reported1.0776 using later keydown wall origin; retain it but use external0.997455 as the same-origin clock estimate."
+  },
+  "quality": {
+    "status": "Accepted scoped adaptive result",
+    "rubric_sha256": "53239c7ecc48dfe72437d7c1164c34e32415dbeba75533d4ac99d608fffa77df",
+    "without_harrtest": {
+      "rendering": 3,
+      "driving_controls": 4,
+      "car_track_environment": 4,
+      "interface": 3,
+      "variety_detail": 2,
+      "integrated_journey": 4,
+      "total": 20
+    },
+    "with_harrtest": {
+      "rendering": 3,
+      "driving_controls": 4,
+      "car_track_environment": 4,
+      "interface": 4,
+      "variety_detail": 4,
+      "integrated_journey": 4,
+      "total": 23
+    },
+    "delta": 3,
+    "mandatory_outcomes": [
+      {
+        "outcome": "real_3D",
+        "U": "PASS",
+        "W": "PASS",
+        "evidence": "Volumetric shared images and public WebGL2/SwiftShader records"
+      },
+      {
+        "outcome": "observable_acceleration",
+        "U": "PASS",
+        "W": "PASS",
+        "evidence": "Current public ArrowUp samples increase speed and road/traffic displacement is visible"
+      },
+      {
+        "outcome": "observable_steering",
+        "U": "PASS",
+        "W": "PASS",
+        "evidence": "Current ArrowRight actions and shared drive-to-steer lateral/heading response"
+      },
+      {
+        "outcome": "playable_start",
+        "U": "PASS",
+        "W": "PASS",
+        "evidence": "U public countdown-to-DRIVE; W Start CTA/countdown-to-play, followed by actual movement"
+      },
+      {
+        "outcome": "no_fatal_runtime_break",
+        "U": "PASS",
+        "W": "PASS",
+        "evidence": "No uncaught errors reported; continued play, completion and re-entry observed. U optional external font blocking has no fatal impact."
+      }
+    ],
+    "finishing": {
+      "U": {
+        "visual_disposition": "ACCEPT at original small stylized game scope",
+        "components": [
+          {
+            "component": "Primary car",
+            "disposition": "PASS",
+            "evidence": "Shared start/restart and native A clips show a consistent low canopy, integrated rear fascia/wing, tire placement and narrow side framing. Exposed open-wheel structure reads consistently; no torn/unfinished join established.",
+            "caveat": "Dark upper body and tire faces hide some structure; no photoreal surface treatment expected."
+          },
+          {
+            "component": "Road, shoulder and guardrail joins",
+            "disposition": "PASS",
+            "evidence": "Native B motion/finish clips show uninterrupted cream edge/shoulder and continuous orange tubular rails meeting repeated posts. Shared brake has a locally sharp inside bend but no open hole or disconnected surface.",
+            "caveat": "Faceted corner transitions remain visible at close range."
+          },
+          {
+            "component": "Environment surfaces and composition",
+            "disposition": "PASS, simple",
+            "evidence": "Flat layered sea/beach/ground and shaded faceted cliff masses are consistent across all seven full frames.",
+            "caveat": "Large generic cliff volumes and low secondary structure make the landscape sparse; this is a style/detail limitation, not an established major finishing defect under the tiny prompt."
+          },
+          {
+            "component": "HUD, status and player controls",
+            "disposition": "PASS",
+            "evidence": "Shared frames and native C finish/restart clips show readable number groups, contained progress bar, aligned status and complete footer mappings.",
+            "caveat": "Small secondary finish text and large persistent title are proportionate presentation limitations, not clipping."
+          },
+          {
+            "component": "State transitions/presentation",
+            "disposition": "PASS on sampled states",
+            "evidence": "Countdown, drive progress, finish, reset and resume are distinct and visually consistent.",
+            "caveat": "Temporal continuity unverified."
+          }
+        ],
+        "revise_findings": []
+      },
+      "W": {
+        "visual_disposition": "ACCEPT as a basic coherent toy-style small game, with detail limitations; player-facing controls require revision",
+        "components": [
+          {
+            "component": "Primary player and rival cars",
+            "disposition": "BASIC/PASS for small-game finish; V2 unearned",
+            "evidence": "All states retain consistent complete toy-car forms with cabin/body/wheels/taillights. Flat slabs remain visually generic and do not establish authored refinement beyond basic stand-ins.",
+            "caveat": "Drive and steer collision frames overlap cars substantially, reducing separation. Without temporal evidence, persistent broken collision presentation is not established; do not infer duration."
+          },
+          {
+            "component": "Track surfaces and joins",
+            "disposition": "PASS, limited variation",
+            "evidence": "Shared frames show continuous flat road, dashed lane marks and alternating curb strips with no visible surface tears.",
+            "caveat": "Repeated straight corridor does not earn V1."
+          },
+          {
+            "component": "Environment",
+            "disposition": "PASS, basic",
+            "evidence": "Plain towers with neon strips/glows and coarse palm-like forms maintain consistent night-city styling.",
+            "caveat": "Broad dark unarticulated surfaces and repeated primitive forms limit finishing distinction, contributing to V2=0; coherent stylization itself is not a defect."
+          },
+          {
+            "component": "HUD and start/result controls",
+            "disposition": "PASS",
+            "evidence": "Start button/Enter cue, separated HUD groups, collision notice and result/replay modal are legible without visible clipping.",
+            "caveat": "Secondary labels are small; scene darkness hides some geometry."
+          },
+          {
+            "component": "Driving control legend",
+            "disposition": "REVISE",
+            "evidence": "W/start.png, drive.png, steer.png, brake.png, complete.png, restart.png and resume.png all show accelerate/left/right/nitro but omit the tested ArrowDown brake.",
+            "finding_id": "W-I2-controls",
+            "caveat": "A working but undiscoverable brake is a player-facing instruction gap, not a fatal runtime failure."
+          },
+          {
+            "component": "State transitions/presentation",
+            "disposition": "PASS on supplied states",
+            "evidence": "Start, play feedback and retained finish/countdown/resume distinguish states and preserve best time.",
+            "caveat": "Terminal evidence is retained, and motion cadence unverified."
+          }
+        ],
+        "revise_findings": [
+          {
+            "id": "W-I2-controls",
+            "severity": "Player-facing control completeness",
+            "scope": "Driving control legend across all seven W full-frame states",
+            "finding": "The tested ArrowDown braking action has no visible instruction. This fails strict I2 and leaves one primary driving action undiscoverable.",
+            "evidence": [
+              "W/start.png",
+              "W/drive.png",
+              "W/steer.png",
+              "W/brake.png",
+              "W/complete.png",
+              "W/restart.png",
+              "W/resume.png",
+              "W/observations.json actions[name=brake]"
+            ],
+            "implementation_advice": "None; evaluator-only finding."
+          }
+        ]
+      }
+    },
+    "visual_preference": {
+      "preferred_arm": "U",
+      "reason": "Warm coastal color separation, readable changing road geometry, orange rail/cream edge rhythm and more considered low sports-car form make U more visually resolved at delivery size. W has a pleasing dark/neon Arabic race presentation and richer visible traffic challenge, but flatter generic geometry and darker surfaces.",
+      "independent_of_numeric_lead": true
+    },
+    "material_caveats": [
+      "No genuine temporal evidence exists; both R4=0/unverified, not observed failure.",
+      "Assessment inspects supplied pixels/public observations, not generator logs/source or independently served builds. Served source digests/server timestamps are not supplied here; pixel-manifest records screenshot hashes.",
+      "W current start/drive/steer/brake samples and retained earlier unchanged-source complete/restart/resume are separate evidence windows.",
+      "Log HUD readings and PNG HUD readings are not atomic. W steer log134 km/h versus PNG077 is a material snapshot mismatch; use them for directional outcomes, not precise instantaneous speed or a performance comparison.",
+      "U font CSS request is blocked but no required gameplay resource or fatal failure is demonstrated.",
+      "U extra native crops are separate finishing evidence available only for U. Do not award a common score solely from these crops, compare their crop scale to W, or treat them as motion clips.",
+      "Different race lengths/goals mean completion times are not a matched speed benchmark. No general causal claim or generation-method inference follows from this two-artifact comparison.",
+      "No major broken visual finishing component is established for U at the original tiny stylized scope. W's precise REVISE finding is control-instruction completeness; its missing V2 point is a visual-detail limitation rather than proof that simple styling is invalid."
+    ],
+    "item_level_scores": {
+      "without_harrtest": [
+        {
+          "id": "R1",
+          "criterion": "Visible 3D viewport",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W/start.png and W/brake.png show volumetric cars, cylindrical wheels/palms, box towers and a receding roadway.",
+          "uncertainty": "Pixels plus WebGL2 public observations establish 3D rendering."
+        },
+        {
+          "id": "R2",
+          "criterion": "Depth, perspective and parallax",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W/start.png → W/drive.png → W/steer.png show near towers/palms displacing strongly relative to distant road and moon during recorded public movement.",
+          "uncertainty": "This supports parallax under the frozen calibration; not motion cadence."
+        },
+        {
+          "id": "R3",
+          "criterion": "Useful car/camera framing during movement",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W drive/steer/brake/restart/resume keep the complete player car and a long road view; steer places the car near the right edge but fully on-screen.",
+          "uncertainty": "Rival/player overlap in collision samples reduces separation, yet framing itself remains useful."
+        },
+        {
+          "id": "R4",
+          "criterion": "Visually continuous sampled movement",
+          "score": 0,
+          "status": "unverified",
+          "evidence": "Only isolated stage PNGs, frame totals and public samples are supplied.",
+          "uncertainty": "UNVERIFIED: no genuine temporal sequence; no motion-continuity point."
+        },
+        {
+          "id": "D1",
+          "criterion": "Observable acceleration",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current W accelerate action: 020→086 km/h under ArrowUp; W/drive.png displays093 and visibly advanced road/traffic.",
+          "uncertainty": "Some automatic rolling is already present; acceleration still changes telemetry. Pixels and log are non-atomic samples."
+        },
+        {
+          "id": "D2",
+          "criterion": "Observable steering",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W/drive.png player near center versus W/steer.png near right roadway, following the current 750 ms ArrowRight action.",
+          "uncertainty": "Screenshot77 km/h differs from nearby log134; no exact instantaneous speed claim is made."
+        },
+        {
+          "id": "D3",
+          "criterion": "Braking/other motion reduction",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current ArrowDown brake action reports093→028 km/h in915 ms; W/brake.png shows030 versus077 in steer.png.",
+          "uncertainty": "Brake works despite missing legend; collision feedback also exists so no isolated braking-force estimate is claimed."
+        },
+        {
+          "id": "D4",
+          "criterion": "Restart/recover and resume",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W/complete.png public New Race button, retained action #againBtn, W/restart.png countdown/zero distance and W/resume.png109 km/h demonstrate reset and re-entry.",
+          "uncertainty": "Completion/re-entry is retained earlier unchanged-source evidence, not rerun in current short window."
+        },
+        {
+          "id": "E1",
+          "criterion": "Recognizable car silhouette and details",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W start/brake/resume show a boxy toy-car silhouette with stepped body/cabin, dark glass block, round tires and paired taillights; rivals share it in other colors.",
+          "uncertainty": "Recognizability earns this item despite basic form refinement."
+        },
+        {
+          "id": "E2",
+          "criterion": "Readable path ahead",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W shared play frames show lane dashes and high-contrast curb/edge strips continuing far ahead, with visible traffic and orange barriers.",
+          "uncertainty": "Long straight is readable; does not establish route variety."
+        },
+        {
+          "id": "E3",
+          "criterion": "Purposeful and varied environment geometry",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Towers of differing dimensions, pink/cyan facade bars/glows, palm-like roadside structures and orange road barriers support the city setting.",
+          "uncertainty": "Purposeful categories and scale variation; much of their placement repeats."
+        },
+        {
+          "id": "E4",
+          "criterion": "Coherent lighting, color and geometry",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Dark blue/green night world, vivid lime player/UI and pink/cyan accents form a consistent coarse low-poly style.",
+          "uncertainty": "Darkness suppresses some surface distinction but does not invalidate the coherent style."
+        },
+        {
+          "id": "I1",
+          "criterion": "Discoverable beginning",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W/start.png has a prominent Arabic Start Race button and Enter alternative; current public #startBtn and countdown are recorded.",
+          "uncertainty": "Playable beginning confirmed, not inferred from button existence alone."
+        },
+        {
+          "id": "I2",
+          "criterion": "All primary tested controls discoverable",
+          "score": 0,
+          "status": "observed_gap",
+          "evidence": "All W shared full frames list accelerate, left/right and Space nitro; none displays the tested ArrowDown brake mapping.",
+          "uncertainty": "OBSERVED GAP: partial instructions fail strict I2; no hidden/source-only mapping is credited."
+        },
+        {
+          "id": "I3",
+          "criterion": "Readable HUD/player feedback",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W displays readable speed, distance/lap/position and elapsed time; drive/steer/brake show an Arabic collision message and completion has a large result modal.",
+          "uncertainty": "Secondary tiny labels are less legible than main values, but main player feedback reads."
+        },
+        {
+          "id": "I4",
+          "criterion": "Clear hierarchy without overlap/clipping",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W start CTA, top/side HUD, in-play notification and finish modal have ordered hierarchy with no visible clipping/overlapping UI text.",
+          "uncertainty": "Scene car overlap is a separate presentation caveat, not UI layout clipping."
+        },
+        {
+          "id": "V1",
+          "criterion": "Meaningful spatial variation",
+          "score": 0,
+          "status": "not_established",
+          "evidence": "Across W shared start/play/finish/resume, route remains a straight repeated lane corridor; moving towers/traffic/palms do not reveal a distinct bend, elevation change or spatial section.",
+          "uncertainty": "NOT ESTABLISHED in supplied views; no inference about unseen course portions."
+        },
+        {
+          "id": "V2",
+          "criterion": "Crafted detail beyond basic stand-ins",
+          "score": 0,
+          "status": "observed_gap",
+          "evidence": "W player/rival cars remain flat rectangular body and glass/cabin blocks with wheels/lights; towers are plain boxes with sparse colored bars and palms coarse crossed rods.",
+          "uncertainty": "OBSERVED BASIC DETAIL: coherent low-poly styling and recognizability earn E1/E4, but no visible refined useful form/surface or distinctive set piece clears separate V2."
+        },
+        {
+          "id": "V3",
+          "criterion": "Visible challenge/hazard/goal",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "W/start.png instructs overtaking and avoiding barriers; play frames show rivals, orange obstacles, collisions and position; retained completion shows3/3 laps.",
+          "uncertainty": "Visible meaningful race challenge; different length/rules are not penalized."
+        },
+        {
+          "id": "V4",
+          "criterion": "Purposeful effects, feedback or scene progression",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current speed/position/timer, collision message and retained countdown/result/best-time changes purposefully communicate progression.",
+          "uncertainty": "Retained terminal transitions are identified and not treated as current timing data."
+        },
+        {
+          "id": "J1",
+          "criterion": "Fresh page intended experience",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current W/start.png opens to its intended Arabic racing introduction with 3D world/HUD.",
+          "uncertainty": "Fresh-page provenance relies on supplied current batch labels."
+        },
+        {
+          "id": "J2",
+          "criterion": "Start and continue driving",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current Start, countdown and acceleration/steering/brake actions plus rendered play states establish continued driving.",
+          "uncertainty": "No R4 smoothness inference."
+        },
+        {
+          "id": "J3",
+          "criterion": "Meaningful drive and public re-entry",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Retained earlier public-three-lap-finish action has finishVisible=true; W/complete.png shows3.6 km,3/3 laps and03:35.7; #againBtn→countdown→moving resume are visible.",
+          "uncertainty": "Explicitly retained unchanged-source/runtime-profile session; not a matched current-session completion benchmark."
+        },
+        {
+          "id": "J4",
+          "criterion": "No uncaught error/failed required resource",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current and retained W logs each have errors=[],console=[],httpFailures=[],requestFailures=[],externalRequests=[]; captures show successful gameplay and re-entry.",
+          "uncertainty": "Limited to the supplied observed journeys, not a universal error-free claim."
+        }
+      ],
+      "with_harrtest": [
+        {
+          "id": "R1",
+          "criterion": "Visible 3D viewport",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U/start.png and U/restart.png show a shaded volumetric car, tires, cylindrical rails and receding road.",
+          "uncertainty": "Pixels establish rendering; no source inspected."
+        },
+        {
+          "id": "R2",
+          "criterion": "Depth, perspective and parallax",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U/start.png → U/drive.png → U/steer.png: foreground rail and lane marks displace strongly relative to the horizon and cliff masses during recorded ArrowUp/ArrowRight actions.",
+          "uncertainty": "Paired recorded actions support spatial displacement/parallax, not temporal cadence."
+        },
+        {
+          "id": "R3",
+          "criterion": "Useful car/camera framing during movement",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "All six U post-interaction states retain the complete car and useful road ahead; the car becomes smaller at speed but remains identifiable.",
+          "uncertainty": "No claim about unseen frames."
+        },
+        {
+          "id": "R4",
+          "criterion": "Visually continuous sampled movement",
+          "score": 0,
+          "status": "unverified",
+          "evidence": "Only isolated stage PNGs, callback totals and non-temporal native crops are supplied.",
+          "uncertainty": "UNVERIFIED: no genuine temporal sequence; 0 is not an observed discontinuity."
+        },
+        {
+          "id": "D1",
+          "criterion": "Observable acceleration",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current U/observations.json accelerate action: 000→114 km/h and 000→042 m after ArrowUp; U/drive.png shows 117 km/h and 043 m.",
+          "uncertainty": "Screenshot and log are separate nearby samples; exact values differ slightly."
+        },
+        {
+          "id": "D2",
+          "criterion": "Observable steering",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U/drive.png versus U/steer.png shows changed car/road alignment and camera relation during the recorded 750 ms ArrowRight action.",
+          "uncertainty": "No direct game-state manipulation; attribution supported by public action and displacement."
+        },
+        {
+          "id": "D3",
+          "criterion": "Braking/other motion reduction",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current brake action reports 155→058 km/h after 900 ms ArrowDown; U/steer.png shows 155 and U/brake.png 057.",
+          "uncertainty": "Stills do not measure the full deceleration curve."
+        },
+        {
+          "id": "D4",
+          "criterion": "Restart/recover and resume",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U/complete.png shows FINISH and R instruction; recorded r restart yields U/restart.png at 000/000 and countdown; U/resume.png returns to DRIVE at 045 km/h and 008 m.",
+          "uncertainty": "Current-batch public re-entry; logs sample 046 km/h and 007 m nearby."
+        },
+        {
+          "id": "E1",
+          "criterion": "Recognizable car silhouette and details",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U/start.png and U/restart.png show a low sports/open-wheel silhouette, dark canopy, tires, rear wing/bumper and orange rear lights.",
+          "uncertainty": "Simple stylized form; no realism requirement."
+        },
+        {
+          "id": "E2",
+          "criterion": "Readable path ahead",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U/drive.png, U/steer.png and U/brake.png expose the approaching curve, center dashes, cream edges and continuous orange boundary.",
+          "uncertainty": "Not all of the full lap is visible."
+        },
+        {
+          "id": "E3",
+          "criterion": "Purposeful and varied environment geometry",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U shared frames place faceted cliff masses of different sizes beside layered sea, beach and land, with repeated functional guardrails.",
+          "uncertainty": "Sparse scenery, but purposeful coastal arrangement and varied forms rather than asset count."
+        },
+        {
+          "id": "E4",
+          "criterion": "Coherent lighting, color and geometry",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Orange sky/rails, teal sea/car accents, cream markings and muted olive cliffs sustain a coherent warm coastal style across states.",
+          "uncertainty": "Large cliff surfaces are deliberately simple and somewhat generic."
+        },
+        {
+          "id": "I1",
+          "criterion": "Discoverable beginning",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U/start.png opens directly into GET READY/countdown with acceleration instruction; subsequent current public DRIVE state is recorded.",
+          "uncertainty": "No separate Start button needed for a direct-start experience."
+        },
+        {
+          "id": "I2",
+          "criterion": "All primary tested controls discoverable",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Every U full frame shows W/up accelerate, A/D steer, S/down brake and R restart.",
+          "uncertainty": "The tested ArrowRight maps to the displayed steering action; instructions are compact but legible."
+        },
+        {
+          "id": "I3",
+          "criterion": "Readable HUD/player feedback",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U drive/steer/brake display large speed/distance numerals plus DRIVE; complete shows FINISH and restart instruction.",
+          "uncertainty": "Small secondary copy is less prominent than the main telemetry."
+        },
+        {
+          "id": "I4",
+          "criterion": "Clear hierarchy without overlap/clipping",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U start and all play layouts keep branding upper-left, telemetry/status upper-right and controls along bottom with no visible text clipping or UI collisions.",
+          "uncertainty": "Branding occupies substantial sky area; still leaves road visible."
+        },
+        {
+          "id": "V1",
+          "criterion": "Meaningful spatial variation",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U drive/steer/brake reveal changing curve sweep and a tighter inside section; route direction/road geometry changes the available view.",
+          "uncertainty": "Modest route variation, not merely repeated props translating."
+        },
+        {
+          "id": "V2",
+          "criterion": "Crafted detail beyond basic stand-ins",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "At shared start/restart scale, U car has an integrated low canopy, narrow side framework/accents, rear wing, layered rear fascia and shaped wheel placement; rail profiles also read as designed surfaces.",
+          "uncertainty": "Awarded from shared full frames; native crops only corroborate finishing and do not substitute for common scoring."
+        },
+        {
+          "id": "V3",
+          "criterion": "Visible challenge/hazard/goal",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Shared frames state a 260 m one-lap goal and progressively show 043,085,123 then260 m, with bounded curved road to negotiate.",
+          "uncertainty": "A short solo distance goal qualifies; no rivals or complex race rules required."
+        },
+        {
+          "id": "V4",
+          "criterion": "Purposeful effects, feedback or scene progression",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Shared start/restart countdown, speed/distance progress, DRIVE and FINISH transitions purposefully communicate state changes.",
+          "uncertainty": "No point is inferred from hidden DOM warning text or unseen visual effects."
+        },
+        {
+          "id": "J1",
+          "criterion": "Fresh page intended experience",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U/start.png shows intended GET READY game, supported by current sample and WebGL2 renderer record.",
+          "uncertainty": "Evaluator did not independently restart a live server; assesses supplied public capture."
+        },
+        {
+          "id": "J2",
+          "criterion": "Start and continue driving",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current public DRIVE, acceleration/steering/braking samples and full-frame play images show continued play.",
+          "uncertainty": "Temporal smoothness remains separate R4."
+        },
+        {
+          "id": "J3",
+          "criterion": "Meaningful drive and public re-entry",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "Current completion is 260/260 m FINISH; r reset and resumed 045 km/h/008 m are visibly supplied.",
+          "uncertainty": "9.8 s public lap and 9.825 s measured active wall window are specific to U, not a cross-arm race-time benchmark."
+        },
+        {
+          "id": "J4",
+          "criterion": "No uncaught error/failed required resource",
+          "score": 1,
+          "status": "observed_pass",
+          "evidence": "U errors=[] and HTTP failures=[]; local Three.js modules rendered throughout. One external Google Fonts stylesheet was blocked, but fallback text remains readable and the full journey completes.",
+          "uncertainty": "Optional font request failure is disclosed; observed impact does not make it a failed required resource or fatal runtime break."
+        }
+      ]
+    },
+    "assessment_sha256": "242647b467fb77220dced3905855651b0e4c2f4b0049b183733a2b74392ef867",
+    "assessment_evidence_base": "Local retained output/v41-live/next-revision/final-artifact-pair12; U=with HarrTest, W=without; detailed evidence not bundled",
+    "image_inspection_before_observation_logs": true,
+    "shared_full_frames_inspected": 14,
+    "additional_native_detail_regions_inspected": 6
+  },
+  "runtime_outcome": {
+    "both_sources_unchanged": true,
+    "fatal_page_errors": {
+      "without_harrtest": 0,
+      "with_harrtest": 0
+    },
+    "candidate_public_finish_restart_resume": true,
+    "control_terminal_evidence_origin": "Retained actual public three-lap/restart/resume journey on same unchanged frozen source, separate earlier session; not a matched completion-time benchmark",
+    "candidate_resource_exception": {
+      "count": 1,
+      "type": "Blocked optional Google Fonts stylesheet; fallback typography renders and public path succeeds",
+      "url": "https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800;900&family=DM+Sans:wght@400;500;600;700&display=swap"
+    }
+  },
+  "attribution": {
+    "model": "gpt-6-luna",
+    "effort": "low",
+    "observed_roles": [
+      "car",
+      "finish_review",
+      "game",
+      "integration",
+      "intent_review",
+      "qa",
+      "track"
+    ],
+    "all_observed_contexts_match": true,
+    "native_implementation_owners": [
+      "track",
+      "car",
+      "game"
+    ],
+    "coordinator_owns": "index.html/main.js integration glue",
+    "native_production_gate": true,
+    "full_native_team_and_independent_qa": true,
+    "pinned_files": 66,
+    "pin_drift": [],
+    "observer_custom_product_edits": 0,
+    "observer_product_specific_repair_guidance": 0,
+    "assurance": "Native local trace/source checks plus operator isolation statement; not a hostile-writer sandbox or absolute cryptographic guarantee.",
+    "tested_pin_files_match_release_tree": true
+  },
+  "source_manifests": {
+    "without_harrtest": {
+      "index.html": "725e5bf37f753fc167d5590f744ece3c0eb4f41024b2660b5aec12bfa098a519",
+      "style.css": "cda60fbd23ab56a146699532436cd1f1e37dca43b05b06fc4a1ffe2ad6710578",
+      "game.js": "ece1dc80fa290c313bba4b30fb276147c84c94bf69dfb7b26ebe0fb52d09d992",
+      "vendor/three.module.js": "c8211c69345d2e9949dc7a8ac969380497aa0600a5a8ac6a459c8cd02dd9cb8a",
+      "vendor/three.core.js": "eb077d2417f61d3e6d9264c317cabc4ea35769ed6b0ab533067292a550784c20",
+      "vendor/LICENSE": "bfe119ea4fd413f5f7ca3fcd63adb0c4a073ed39daa2fe7d3e6b769e21272601"
+    },
+    "with_harrtest": {
+      "car.js": "4a27f5c44c259d27da50a2b64e931e5b32efaf81823963a46df5e74c116b7614",
+      "track.js": "f0149fc601dd97419a82cb706bdd6a80e851578df59728df98a3a5393c347cc3",
+      "game.js": "5bfd83a03b213f621f54fe4110fc7d1ed2e796adb8da24a0f9f3189eac8d1f4c",
+      "style.css": "55152d040b0192493a7e843594b3dc2e43e53a6ece76c26f3740fc416dffb9f4",
+      "main.js": "1ee4d5f1660a7b563f9cc2c0fa34001a66196cb743d8cfd82d5f695cd2d8e7c5",
+      "index.html": "047090c6651134f13fb8290a67e8295d2af6006da266fa83514bb5047d8c0c4a",
+      "vendor/three.module.js": "c8211c69345d2e9949dc7a8ac969380497aa0600a5a8ac6a459c8cd02dd9cb8a",
+      "vendor/three.core.js": "eb077d2417f61d3e6d9264c317cabc4ea35769ed6b0ab533067292a550784c20",
+      "vendor/LICENSE": "bfe119ea4fd413f5f7ca3fcd63adb0c4a073ed39daa2fe7d3e6b769e21272601"
+    }
+  },
+  "images": {
+    "visual/comparison/without-harrtest.png": {
+      "origin": "output/v41-live/evaluator/final-control-r12/drive.png",
+      "stage": "drive, after the predeclared2.6-second acceleration action",
+      "unedited": true,
+      "sha256": "e6a7cd9b35c3719dd686286f4238576a120d9f4c55527445e9f08ea5df59f4ad"
+    },
+    "visual/comparison/with-harrtest.png": {
+      "origin": "output/v41-live/evaluator/final-harrtest-r12/drive.png",
+      "stage": "drive, after the predeclared2.6-second acceleration action",
+      "unedited": true,
+      "sha256": "7979cc8fb025f538de85b5d7c42c4f261c19266d41c2326c2de15c2a2f5b657e"
+    }
+  },
+  "retained_previous_final_batch": {
+    "phase": 10,
+    "without_harrtest_fps": [
+      19.48051948,
+      19.76284585,
+      18.47826087
+    ],
+    "with_harrtest_fps": [
+      18.34161253,
+      27.20207254,
+      20.67464635
+    ],
+    "action_order": [
+      "accelerate",
+      "steer-right",
+      "brake"
+    ],
+    "quality": [
+      20,
+      23
+    ],
+    "major_finishing": "Candidate REVISE due terrain surface defects; numeric lead did not qualify release."
+  },
+  "cost_and_limits": {
+    "control_generation_seconds": 1125.616584,
+    "candidate_generation": "Multiple retained adaptive trials, source/actor reuse, original-prompt resumptions and service-quota interruption. No equal-generation-cost comparison.",
+    "final_source_lineage_began_utc": "2026-11-13T10:44:55.827032+00:00",
+    "final_native_qa_utc": "2026-11-13T18:42:33.520044+00:00",
+    "final_phase_service_resume_utc": "2026-11-13T18:26:55.205902+00:00",
+    "billable_token_cost": "Not independently measured; no cost-efficiency claim.",
+    "scope": "One small game, software rendering, short FPS windows. R4 temporal continuity needs independent evidence. No statistical/general causal, all-model or enterprise-readiness guarantee."
+  },
+  "local_evidence_root": "output/v41-live/",
+  "narrative": "v4.1-validation.md",
+  "release_acceptance": {
+    "qualified_at": "2026-11-13T18:56:10.157993+00:00",
+    "minimum_score": 22,
+    "observed_score": 23,
+    "minimum_delta": 2,
+    "observed_delta": 3,
+    "major_finishing": "ACCEPT",
+    "native_team_and_qa": "PASS",
+    "external_public_journey": "PASS",
+    "minimum_sampled_fps": 15,
+    "minimum_clock_ratio": 0.8,
+    "scope": "Adaptive continuation after recorded interruption, not original uninterrupted budget success"
+  },
+  "verification": {
+    "tests_run": 316,
+    "skipped": 4,
+    "failures": 0,
+    "seconds": 81.767,
+    "python": "3.13.7",
+    "platform": "win32",
+    "skill_layout": "valid",
+    "source_and_raw_image_identities": "checked",
+    "markdown_linked_files": "checked",
+    "banner_xml": "valid",
+    "git_diff_check": "passed"
+  }
+}

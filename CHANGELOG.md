@@ -1,9 +1,17 @@
 # Changelog
 
-## 4.1.0 — Gold candidate (unreleased)
+## 4.1.0 — Gold (2026-11-13)
 
-- Frozen Luna-low live testing failed performance and delivery acceptance.
-  Keep the candidate local; see `references/v4.1-validation.md` for evidence.
+- Retain failed frozen trials and continue general harness refinement with
+  Luna-low product owners. Final adaptive comparison: independent 23/24 versus
+  20/24, accepted component finishing, five mandatory outcomes in both arms,
+  and 22.06 versus 19.47 sampled acceleration FPS. All seven observed generation
+  roles used Luna low; the observer made no custom game edits or game-specific
+  repair suggestions. Generation costs were unequal; no cold replication or
+  general effectiveness claim. See `references/v4.1-validation.md`.
+- Publish original paired browser captures, measured source/image identities
+  and a rebuilt Gold banner. Keep temporal uncertainty and the blocked optional
+  font request visible in the results.
 - Bind supplied validation inputs into every producer, tester and repair packet;
   reopen stale outputs and dependencies instead of hiding them behind old receipts.
 - Route failed independent QA back to named implementation owners with retained
