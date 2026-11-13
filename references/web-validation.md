@@ -30,6 +30,14 @@ Use a bounded `run-code` journey for interactions that need held keys or
 telemetry. Keep startup, actual behavior and visual inspection distinct.
 Retain failures and report a missing runtime if neither adapter works.
 
+For a Team acceptance receipt, put the finite public journey in a private
+driver/wrapper and run that command through `team.py check`. The wrapper starts
+or connects to the owned current instance, invokes the real browser adapter,
+retains observations and asserts the requested outcomes before exiting. A
+separate HTTP-200 smoke after manual browser actions does not bind those actions
+to the checked command. Keep exploratory/manual evidence, but do not substitute
+that smoke receipt for the claimed end-to-end behavior check.
+
 For an existing Playwright-compatible page, the pinned
 `assets/probes/browser-timing.js` is a finite, read-only 3-second observation:
 

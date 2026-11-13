@@ -38,6 +38,9 @@ assembly file.
    write a compact outcome/finishing brief and have a separate native
    `intent_review` worker challenge it before production. Resolve material
    findings and include the accepted brief and review in `validation_context`.
+   For each major component, distinguish a plausible minimum draft from the
+   chosen finished result. The reviewer must try that counterexample against
+   the criteria; a parts inventory or an overall ACCEPT cannot close this check.
    A review role does not replace the implementation owners below.
 2. Define a small production DAG with explicit outputs, interfaces, dependency
    order and a check for each component. Choose enough owners to give each
@@ -79,7 +82,9 @@ assembly file.
    action, not an indefinite wait for another completion notification.
 5. Run `team.py verify --production-only` on completed worker handoffs.
    The coordinator connects the delivered modules through the declared
-   entrypoint/glue. Run `team.py integrate` and dispatch its independent QA
+   entrypoint/glue. Finish that assembly against the actual returned modules
+   after the initial handoffs; a scaffold written from the contract alone is
+   not final integration. Run `team.py integrate` and dispatch its independent QA
    packet. QA executes the public entrypoint, records its output and checks
    the original user journey. Give QA exclusive runtime/browser resources
    during that check; the coordinator can inspect its retained frames.
@@ -130,6 +135,9 @@ Recognition and workmanship are separate checks. Verify the accepted finishing
 criteria for the primary artifact; a generic proxy does not become finished
 because its surrounding interface is polished. Retain temporal evidence when
 judging motion, rather than inferring continuity from stills or callback totals.
+After the first runnable checkpoint, compare each major component with its
+declared minimum draft. Refine failed distinctions with its owner and repeat
+the integrated review; functional completion does not close unfinished work.
 An indistinct primary subject, unreadable content or an obstructed view of
 the interaction is a visual acceptance failure, rather than a caveat under
 a functional PASS. Check detail at the final scale and lighting in real frames.

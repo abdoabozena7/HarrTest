@@ -15,6 +15,8 @@
   immutable QA narratives across replays.
 - Challenge a concrete finishing brief before production, bind it to worker
   packets, and separate recognition, workmanship and temporal evidence in QA.
+- Challenge each major component against a plausible crude counterexample;
+  refine the first runnable draft rather than accepting a parts inventory.
 - Distinguish a still-finishing native worker from a completed handoff; allow
   bounded receipt-log grace without treating timeout as task acceptance.
 - Retain both timing endpoint states and reject mixed lifecycle phases as

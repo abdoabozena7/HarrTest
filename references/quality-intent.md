@@ -22,6 +22,21 @@ criteria. Name what an independent observer will see or exercise, and what
 would disprove completion. Do not expand a small request with unasked features
 to make the checklist look substantial.
 
+Use one row per consequential production component:
+
+| Component and owner | Minimum functional/recognizable draft | Chosen finished result | Observable distinction at delivery scale | Evidence and rejection condition |
+| --- | --- | --- | --- | --- |
+| Name the bounded output | Describe a plausible crude implementation | Choose the actual form, structure, surfaces, layout or boundary behavior | State what the draft lacks that the delivered result must visibly or behaviorally demonstrate | Name the real view/action and what would fail |
+
+A parts inventory is not a finishing contract. Listing a subject's main parts,
+surroundings, labels or happy-path states can all describe a rough draft. Choose
+specific relationships, transitions and useful secondary detail that make the
+requested artifact intentional at its actual delivered scale. A blanket adjective
+or an extra decorative shell cannot fill the finished-result column. Apply this
+to each major requested artifact; one strong component cannot hide an unfinished
+neighbor. A small stylized result can meet these criteria without photorealism,
+more features, a larger asset count or excessive rendering cost.
+
 For visible assets, distinguish **recognizable** from **finished**. Define the
 intended form, structural/secondary parts, material or surface cues and how
 they must read at the actual interaction scale. Construction primitives are
@@ -39,6 +54,13 @@ interfaces and criteria that could pass while the requested result remains
 unfinished. It records specific observations in
 `.runtime-proof/quality-review.md` with accept/revise and reasons. This review
 does not implement product files or replace implementation workers.
+
+Require a counterexample challenge for every row: describe a plausible crude
+implementation that satisfies the words of the brief, then identify the exact
+criterion that would reject it. If that counterexample is still an unfinished
+answer and no criterion rejects it, return REVISE. A reviewer that only checks
+controls, interfaces or feature presence has not reviewed finishing intent.
+Retain the row-level challenge and resolution, not just an overall ACCEPT.
 
 Resolve its material findings, repeating that same review when needed. Do not
 ask the user to decide reversible design choices they already delegated. Once
@@ -58,12 +80,26 @@ checks explicitly and close them at the first integrated checkpoint. Split a
 complex component into bounded subassemblies when that creates independently
 checkable deliverables; keep one owner per output and agreed interfaces.
 
+Treat the first runnable handoffs as a draft checkpoint. After checking basic
+usability and resource cost, inspect the integrated output against the chosen
+finish for each major component. The owner refines concrete failed distinctions
+and hands off again; do not spend the rest of the mission merely rechecking a
+recognizable draft. Compare the real current output with the retained draft and
+name what changed. Extra tiny parts, repeated geometry or a prettier status panel
+do not establish refinement of the requested primary artifact.
+
 Independent QA maps the accepted criteria to observed evidence and gives
 functional, workmanship and responsiveness verdicts. A recognizable but
 unfinished main artifact remains a quality failure. Inspect the actual output
 at its delivered scale, including interaction and end/recovery states. When
 motion matters, retain a short real motion recording or equivalent temporal
 evidence; still images and callback totals alone do not prove continuity.
+
+QA reports each row's recognition/function verdict separately from its finishing
+verdict, cites the actual output and explains how it differs from the minimum
+counterexample. Merely naming the parts seen in a frame cannot establish finished
+workmanship. Missing or failed finishing evidence for a major component returns
+to that component's owner, even when the full user path works.
 
 After an optimization, compare the named finishing criteria before and after.
 Preserve those qualities while reducing measured cost. Retain all failed and
