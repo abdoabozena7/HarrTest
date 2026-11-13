@@ -80,6 +80,14 @@ checks explicitly and close them at the first integrated checkpoint. Split a
 complex component into bounded subassemblies when that creates independently
 checkable deliverables; keep one owner per output and agreed interfaces.
 
+For a consequential visible component that can run in isolation, its owner
+renders a private preview and actually opens the captured image before handoff.
+Inspect both the component's form and how it reads at the intended scale. Bounds,
+mesh counts, imports and syntax establish structure only. Keep preview scaffolds
+under private evidence, separate from the delivered product. If the component
+genuinely needs its consumer to be visible, mark that visual check pending and
+close it on the first integrated capture rather than claiming it passed.
+
 Treat the first runnable handoffs as a draft checkpoint. After checking basic
 usability and resource cost, inspect the integrated output against the chosen
 finish for each major component. The owner refines concrete failed distinctions
@@ -87,6 +95,31 @@ and hands off again; do not spend the rest of the mission merely rechecking a
 recognizable draft. Compare the real current output with the retained draft and
 name what changed. Extra tiny parts, repeated geometry or a prettier status panel
 do not establish refinement of the requested primary artifact.
+
+## Focused review of the actual draft
+
+Before visual acceptance, use a separate native `finish_review` worker with the
+current model/effort. Give it the accepted brief, actual draft captures and
+delivery scale. It opens the images before reading implementation descriptions;
+filenames and a producer's description are not visual evidence. Keep this task
+focused on workmanship while independent QA handles runtime and behavior.
+It may inspect already captured frames concurrently with other work, without
+launching a second browser during another worker's measurements.
+
+For every major component, it records recognition/function separately from
+finishing in `.runtime-proof/finishing-review.md`: the actual visible distinction
+from the minimum draft, evidence of the chosen finish, concrete defects and
+accept/revise. Inspect spatial and structural relationships, intentional form
+and surface cues, scale, joins/intersections, clipping, hierarchy and whether
+the primary result reads as an assembled placeholder. Do not infer finishing
+from the number of named parts or from an adjacent finished component.
+
+Record the inspected image paths and current component/integration fingerprints.
+The coordinator routes failed rows to their existing owners with the retained
+evidence, collects fresh handoffs, reintegrates and repeats this focused review
+on current captures. Give independent QA the current finishing review alongside
+its complete packet; it cannot replace runtime or user-path verification. A
+missing/failed row for a major component leaves visual acceptance open.
 
 Independent QA maps the accepted criteria to observed evidence and gives
 functional, workmanship and responsiveness verdicts. A recognizable but

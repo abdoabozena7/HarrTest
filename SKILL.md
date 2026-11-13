@@ -91,6 +91,9 @@ assembly file.
    After loading and starting the main interaction, measure the cheap decisive
    runtime constraints before a long journey. Keep a control/outcome matrix so
    missing checks are discovered before repeatedly replaying the whole path.
+   An incomplete measurement goes back to the tester; an actually measured
+   product failure goes to its implementer. Do not change product behavior to
+   compensate for an invalid measurement.
    Return failures to their owners and reassemble
    after repair. Run `team.py verify` on current files before completion.
    On every QA attempt, including repair replays, pass the full returned QA
@@ -111,6 +114,12 @@ Use the host's actual parallel capacity. With fewer slots, run ready workers
 in waves. Keep one owner for shared configuration and exclusive resources.
 If native delegation is unavailable, record that observed capability gap,
 continue authorized work and leave team acceptance unverified.
+
+Keep the coordinator's mission open through ordinary review and repair.
+Dispatching a worker, receiving REVISE or reaching an incomplete checkpoint is
+not completion. Apply the finding, resume/wait for the actual owners and verify
+the integrated result. Use commentary for progress; do not end with a partial
+delivery merely because a required child is still running.
 
 For a small new product the team plan, component handoffs and independent
 integrated QA form the working path. Start building after those boundaries
@@ -138,6 +147,9 @@ judging motion, rather than inferring continuity from stills or callback totals.
 After the first runnable checkpoint, compare each major component with its
 declared minimum draft. Refine failed distinctions with its owner and repeat
 the integrated review; functional completion does not close unfinished work.
+Use the focused native `finish_review` in the quality-intent guide to inspect
+actual draft frames independently of runtime QA. Return each failed component
+to its owner and repeat on current captures before visual acceptance.
 An indistinct primary subject, unreadable content or an obstructed view of
 the interaction is a visual acceptance failure, rather than a caveat under
 a functional PASS. Check detail at the final scale and lighting in real frames.

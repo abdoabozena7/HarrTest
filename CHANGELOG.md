@@ -17,6 +17,10 @@
   packets, and separate recognition, workmanship and temporal evidence in QA.
 - Challenge each major component against a plausible crude counterexample;
   refine the first runnable draft rather than accepting a parts inventory.
+- Give draft workmanship a focused native reviewer and visible component owners
+  a real preview; close major finishing gaps separately from runtime QA.
+- Check decisive runtime constraints before terminal replays; distinguish missing
+  instrumentation from a measured product failure.
 - Distinguish a still-finishing native worker from a completed handoff; allow
   bounded receipt-log grace without treating timeout as task acceptance.
 - Retain both timing endpoint states and reject mixed lifecycle phases as
