@@ -34,27 +34,32 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          from fnmatch import fnmatchcase
+          import os
+          import sys
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           root = Path('.')
-          excluded = ('.git', '__pycache__', '*.pyc', '.pytest_cache', 'skill.zip',
-                      '.venv', 'venv', '.runtime-proof', '.agent_evidence', 'runs',
-                      'output', '.harrtest', '.harrtest-state', '.env', '.env.*',
-                      '*.mp4', '*.webm', '*.trace.zip', '*.backup-*')
+          sys.path.insert(0, str(root / 'scripts'))
+          from install import package_ignores
           with ZipFile('skill.zip', 'w', ZIP_DEFLATED) as archive:
-              for file in sorted(root.rglob('*')):
-                  if any(fnmatchcase(part, pattern) for part in file.parts for pattern in excluded):
-                      continue
-                  if file.is_symlink():
-                      raise RuntimeError('Refuse symlink in published skill: ' + str(file))
-                  if file.is_file():
+              for directory, children, files in os.walk(root, followlinks=False):
+                  ignored = package_ignores(directory, children + files)
+                  for name in set(children + files) - ignored:
+                      file = Path(directory) / name
+                      if file.is_symlink():
+                          raise RuntimeError('Refuse symlink in published skill: ' + str(file))
+                  children[:] = sorted(set(children) - ignored)
+                  for name in sorted(set(files) - ignored):
+                      file = Path(directory) / name
                       archive.write(file, 'harrtest/' + file.as_posix())
           with ZipFile('skill.zip') as archive:
               assert archive.testzip() is None
               names = set(archive.namelist())
-              for required in ('SKILL.md', 'scripts/proof.py', 'scripts/root_gate.py', 'scripts/workflow.py', 'scripts/runtime_store.py', 'scripts/coverage.py', 'scripts/builder.py', 'references/project-builder.md', 'references/v3.2.2-validation.md', 'tests/test_evidence_ordering.py', '.github/workflows/verify.yml', 'agents/openai.yaml', 'scripts/golden.py', 'scripts/golden_benchmark.py', 'references/v4-gold.md', 'references/v4-validation.md', 'visual/banner.svg', 'scripts/team.py', 'references/production-teams.md', 'tests/test_team.py', 'tests/test_team_integration.py'):
+              for required in ('SKILL.md', 'scripts/proof.py', 'scripts/root_gate.py', 'scripts/workflow.py', 'scripts/runtime_store.py', 'scripts/coverage.py', 'scripts/builder.py', 'references/project-builder.md', 'references/v3.2.2-validation.md', 'tests/test_evidence_ordering.py', '.github/workflows/verify.yml', 'agents/openai.yaml', 'scripts/golden.py', 'scripts/golden_benchmark.py', 'references/v4-gold.md', 'references/v4-validation.md', 'visual/banner.svg', 'scripts/team.py', 'references/production-teams.md', 'tests/test_team.py', 'tests/test_team_integration.py', 'scripts/corporate.py', 'scripts/team_v2.py', 'assets/templates/root-contract-v4.json', 'references/corporate-workflow.md'):
                   assert 'harrtest/' + required in names, required
+              assert 'harrtest/scripts/corporate_benchmark.py' not in names
+              assert 'harrtest/tests/test_corporate_benchmark.py' not in names
+              assert not any(name.startswith('harrtest/assets/corporate/') for name in names)
           PY
       - name: Upload complete skill ZIP
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'

@@ -85,6 +85,9 @@ def ancestors(tasks):
 
 
 def validate_plan(project, plan):
+    if isinstance(plan, dict) and plan.get('schema') == 2:
+        import team_v2
+        return team_v2.validate_plan(project, plan)
     require(isinstance(plan, dict) and type(plan.get('schema')) is int and plan['schema'] == 1,
             'Expected a schema-1 production team plan')
     proof.identifier(plan.get('id'), 'production team ID')
@@ -180,6 +183,9 @@ def snapshot(project, paths):
 
 
 def init(project, plan):
+    if isinstance(plan, dict) and plan.get('schema') == 2:
+        import team_v2
+        return team_v2.init(project, plan)
     tasks, owned = validate_plan(project, plan)
     baseline = snapshot(project, owned)
     if plan['kind'] == 'greenfield':
@@ -194,6 +200,9 @@ def init(project, plan):
 
 def load_state(project, team_id):
     state = proof.load(team_path(project, team_id))
+    if state.get('plan', {}).get('schema') == 2:
+        import team_v2
+        return team_v2.load_state(project, team_id)
     plan = state['plan']
     _, owned = validate_plan(project, plan)
     require(plan['id'] == team_id and strict_io.digest(plan) == state['plan_sha256'],
@@ -205,6 +214,9 @@ def load_state(project, team_id):
 
 def binding(project, team_id, request_sha256):
     state = load_state(project, team_id)
+    if state['plan'].get('schema') == 2:
+        import team_v2
+        return team_v2.binding(project, team_id, request_sha256)
     plan = state['plan']
     # Root request snapshots may use native Windows line endings.
     request = plan['request'].replace('\r\n', '\n')
@@ -222,6 +234,9 @@ def worker_command(project, team_id, command):
 
 
 def packet(project, state, task):
+    if state['plan'].get('schema') == 2:
+        import team_v2
+        return team_v2.packet(project, state, task)
     plan = state['plan']
     tid = task['id']
     outcomes = '\n'.join(f'- {rid}: {plan["outcomes"][rid]}' for rid in task['outcomes'])
@@ -292,6 +307,9 @@ def record(project, state, tid, files, **extra):
 
 
 def handoff(project, state, task):
+    if state['plan'].get('schema') == 2:
+        import team_v2
+        return team_v2.handoff(project, state, task)
     validation_message(project, state)
     inputs = {dep: usable_handoff(project, state, dep)['sha256'] for dep in task['depends_on']}
     files = snapshot(project, task['outputs'])
@@ -327,6 +345,9 @@ def usable_handoff(project, state, tid):
 
 
 def ready_packets(project, state):
+    if state['plan'].get('schema') == 2:
+        import team_v2
+        return team_v2.ready_packets(project, state)
     ready = []
     for task in state['plan']['tasks']:
         tid = task['id']
@@ -378,6 +399,9 @@ def repair(project, state, tid, evidence, observation):
 
 
 def integrate(project, state):
+    if state['plan'].get('schema') == 2:
+        import team_v2
+        return team_v2.integrate(project, state)
     validation_message(project, state)
     plan = state['plan']
     children = {task['id']: current_receipt(project, state, task['id']) for task in plan['tasks']}
@@ -474,6 +498,9 @@ def integrate(project, state):
 
 
 def runtime_check(project, state, argv):
+    if state['plan'].get('schema') == 2:
+        import team_v2
+        return team_v2.runtime_check(project, state, argv)
     validation_message(project, state)
     integrated = current_receipt(project, state, 'integration')
     require(argv and all(isinstance(arg, str) for arg in argv), 'Supply actual test argv after --')
@@ -1080,6 +1107,10 @@ def _verify_once(project, team_id, *, require_qa=True, parent=None, sessions=Non
     try:
         project = Path(project).resolve()
         state = load_state(project, team_id)
+        if state['plan'].get('schema') == 2:
+            import team_v2
+            return team_v2.verify_registered(project, team_id, require_qa=require_qa,
+                                             parent=parent, sessions=sessions)
         if parent is None:
             location = team_path(project, team_id, 'host.json', must_exist=False)
             parent = proof.load(location)['parent'] if location.is_file() else os.environ.get('CODEX_THREAD_ID')
@@ -1130,6 +1161,7 @@ def main(argv=None):
             command.add_argument('argv', nargs=argparse.REMAINDER)
         if action == 'verify':
             command.add_argument('--parent')
+            command.add_argument('--sessions', type=Path)
             command.add_argument('--production-only', action='store_true')
             command.add_argument('--wait-seconds', type=float, default=5)
     args = parser.parse_args(argv)
@@ -1139,11 +1171,14 @@ def main(argv=None):
             result = init(project, proof.load(strict_io.scoped_path(project, args.plan)))
         elif args.command == 'verify':
             result = verify_registered(project, args.team, require_qa=not args.production_only,
-                                       parent=args.parent, wait_seconds=args.wait_seconds)
+                                       parent=args.parent, sessions=args.sessions, wait_seconds=args.wait_seconds)
             if result['passed'] and args.parent:
                 path = team_path(project, args.team, 'host.json', must_exist=False)
                 if not path.exists():
-                    proof.save(path, {'parent': args.parent}, exclusive=True)
+                    selected = {'parent': args.parent}
+                    if load_state(project, args.team)['plan'].get('schema') == 2 and args.sessions:
+                        selected['sessions'] = str(args.sessions.resolve())
+                    proof.save(path, selected, exclusive=True)
         else:
             state = load_state(project, args.team)
             tasks = {row['id']: row for row in state['plan']['tasks']}

@@ -24,6 +24,19 @@ PACKAGE_IGNORES = shutil.ignore_patterns(
 )
 
 
+def package_ignores(directory, names):
+    """Keep independent benchmark inputs outside installed production skills."""
+    ignored = set(PACKAGE_IGNORES(directory, names))
+    location = Path(directory).resolve()
+    if location == (SOURCE / "scripts").resolve():
+        ignored.add("corporate_benchmark.py")
+    if location == (SOURCE / "assets").resolve():
+        ignored.add("corporate")
+    if location == (SOURCE / "tests").resolve():
+        ignored.add("test_corporate_benchmark.py")
+    return ignored
+
+
 def ps_quote(text):
     return "'" + str(text).replace("'", "''") + "'"
 
@@ -38,29 +51,39 @@ def backup(path):
 
 def instruction_block(skill_path):
     return f'''{START}
-## Runtime evidence before completion
-For implementation, bug-fix, UI, simulation, API, CLI, or agent-workflow tasks,
+## Evidence before accepting a software change
+For implementation, debugging, refactoring or coding-agent workflow tasks,
 load the `harrtest` skill at `{skill_path.as_posix()}/SKILL.md` before changing code.
-Before implementation, create/resume a dependency-aware plan and durable TODO
-list. Choose serial steps or real subagents according to available tools, write
-ownership and dependencies. Never invent delegation. Require an integration task;
-IMPLEMENTED is not VERIFIED. Use the bundled step tracker and current evidence
-before closing each item. Create/activate the task in `.runtime-proof/`; use actual
-browser/terminal/native tools, not text claims. Keep the contract proportional
-to the task, cover every requested behavior, and use meaningful unit tests as
-supporting evidence rather than a substitute for runtime acceptance.
+Read the existing architecture, contracts, callers, dependencies and tests. Retain
+the exact request and a source-qualified baseline before editing. Preserve the
+project's conventions, existing behavior and user changes. Cite consequential
+decisions and resolve material unknowns that project evidence cannot answer.
+Create/resume a dependency-aware plan with explicit file owners and acceptance
+checks. Use actual native workers for independent implementation scopes, parallel
+when ready and supported; a narrow change can have one owner. Never invent
+delegation or add token glue edits. Require integration and independent testing:
+IMPLEMENTED is not VERIFIED. Create/activate the task in `.runtime-proof/` and use
+actual tools appropriate to the behavior, with current-source results. Load visual,
+browser or simulation instructions only when those criteria apply.
+Assess functionality, preservation, architecture, security, performance and
+resilience according to the change's actual impact and project policy. Required
+checks must pass; unavailable evidence remains UNVERIFIED. NOT_APPLICABLE needs
+cited impact reasoning and independent review. Do not let an aggregate score waive
+a failed layer. Replay preserved behavior and retain measured before/after results.
 For multi-step/shared-resource work, use `scripts/workflow.py` to register the
 sealed original root and child plan, claim scoped tasks, hand off artifacts,
 and verify fresh child evidence. It coordinates actual host workers; it never
 creates another model client. Use `proof.py init --detached` for child setup
 without taking another session's active ownership.
-For substantial new release work, follow the Gold protocol in
-`references/v4-gold.md`: evidence-backed intake, independent native testing,
-and a predeclared comparison before root completion.
+For substantive existing-code work, follow `references/corporate-workflow.md`:
+schema-4 `corporate-v1` roots bind baseline, context, decisions and quality evidence;
+schema-2 Team plans support narrow changes, dependencies and validation-only
+integration. Preserve the original meaning of active schema-2/3 roots and schema-1
+teams. Legacy Gold work continues under `references/v4-gold.md`.
 Run `scripts/proof.py verify --task <task-directory>` for child acceptance and
 `scripts/root_gate.py verify --goal <original-goal-directory>` for root acceptance
-before claiming completion. New root contracts use schema 3 full-text coverage
-and a separate reviewer; legacy schema 2 evidence is labelled as legacy. Inspect the captured evidence. Report VERIFIED only
+before claiming completion. Corporate roots retain full-text request coverage
+and separate review. Inspect the captured evidence. Report VERIFIED only
 within the checked scope; otherwise report PARTIAL, BLOCKED_UNVERIFIED, or FAILED.
 Do not alter the harness, receipts, acceptance thresholds or scope merely to pass.
 Do not deactivate the task/hook to avoid a failed gate. Preserve all user safety,
@@ -151,7 +174,7 @@ def install(agent, scope, project, home, with_hook=False, instructions=False, up
             shutil.make_archive(str(base), "zip", root_dir=dest.parent, base_dir=dest.name)
             shutil.rmtree(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(SOURCE, dest, ignore=PACKAGE_IGNORES)
+        shutil.copytree(SOURCE, dest, ignore=package_ignores)
     backups = []
     for path, content in files.items():
         path.parent.mkdir(parents=True, exist_ok=True)

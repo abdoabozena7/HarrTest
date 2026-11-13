@@ -105,8 +105,8 @@ def assess(contract: dict, events_doc: dict, evidence_root: Path, root_contract:
                     raise ValueError(f"duplicate journey {rid}/{jid}")
                 specs[key] = {"target": target, "mode": req["mode"], "steps": steps}
         if contract["scope"] == "root":
-            if not isinstance(root_contract, dict) or root_contract.get("schema") not in {2, 3}:
-                raise ValueError("root scope requires a schema 2 or 3 root contract; seal validation is delegated to root_gate.py")
+            if not isinstance(root_contract, dict) or root_contract.get("schema") not in {2, 3, 4}:
+                raise ValueError("root scope requires a schema 2, 3 or 4 root contract; seal validation is delegated to root_gate.py")
             if _sha(root_contract.get("request_sha256"), "root request hash") != _sha(contract.get("root_request_sha256"), "root_request_sha256"):
                 raise ValueError("original root request hash mismatch")
             original_ids = [r.get("id") for r in root_contract.get("requirements", [])]

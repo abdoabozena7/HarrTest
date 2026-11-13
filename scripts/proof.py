@@ -166,13 +166,34 @@ def engine_hash(contract=None) -> str:
     return digest(files)
 
 
+def absent_source_paths(contract: dict) -> set:
+    """Validate an explicit opt-in for roots that a change creates or removes."""
+    names = contract.get('absent_source_paths', [])
+    if (not isinstance(names, list) or any(not isinstance(name, str) for name in names)
+            or len(names) != len(set(names))):
+        raise ProofError('absent_source_paths must be a unique list of declared source paths')
+    for name in names:
+        try:
+            strict_io.scope_key(name)
+        except ValueError as exc:
+            raise ProofError('Invalid absent source scope: ' + str(exc)) from exc
+        if (name == '.' or name.endswith('/') or '\x00' in name or name.split('/')[0] in {'.git', STATE}
+                or name not in contract['source_paths']):
+            raise ProofError('absent_source_paths must be explicit source roots outside evidence and Git metadata')
+    return set(names)
+
+
 def snapshot(project: Path, contract: dict) -> dict:
     """Hash explicit source roots, including untracked files. Never scan weights by default."""
     files = {}
+    allowed_absent = absent_source_paths(contract)
     for name in contract["source_paths"]:
-        root = relative_file(project, name)
+        root = relative_file(project, name, must_exist=name not in allowed_absent)
         if name == "." or STATE in Path(name).parts:
             raise ProofError("Choose explicit source paths; do not include '.' or evidence output")
+        if not root.exists():
+            files[name] = None
+            continue
         items = [root] if root.is_file() else root.rglob("*")
         for path in items:
             rel = path.relative_to(project)
@@ -182,7 +203,7 @@ def snapshot(project: Path, contract: dict) -> dict:
                 raise ProofError(f"Source symlink needs explicit real-file scope: {rel}")
             if path.is_file():
                 files[rel.as_posix()] = file_hash(path)
-    if not files:
+    if not any(value is not None for value in files.values()):
         raise ProofError("Source scope contains no files")
     return {"digest": digest(files), "files": files}
 
@@ -196,6 +217,7 @@ def validate_contract(c: dict):
         raise ProofError(f"kind must be one of {sorted(KINDS)}")
     if not isinstance(c.get("source_paths"), list) or not c["source_paths"]:
         raise ProofError("source_paths must list the implementation, config and verification sources")
+    absent_source_paths(c)
     meaningful(c.get("scope_rationale"), "scope_rationale")
     meaningful(c.get("authorization"), "authorization")
     dependencies = c.get("harness_dependencies", [])

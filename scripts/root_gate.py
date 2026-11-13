@@ -19,16 +19,24 @@ def root_dir(project: Path, goal_id: str) -> Path:
 
 
 def validate(project: Path, goal: Path, contract: dict) -> None:
-    if not isinstance(contract, dict) or contract.get("schema") not in {2, 3}:
-        raise proof.ProofError("Root contract must have schema 2 or 3")
-    if "protocol" in contract and (contract["schema"] != 3 or contract["protocol"] != "golden-v1"):
+    if not isinstance(contract, dict) or contract.get("schema") not in {2, 3, 4}:
+        raise proof.ProofError("Root contract must have schema 2, 3 or 4")
+    schema = contract['schema']
+    if schema == 4:
+        if contract.get('protocol') != 'corporate-v1':
+            raise proof.ProofError('Schema-4 roots require corporate-v1')
+        if 'production_team' not in contract:
+            raise proof.ProofError('Corporate root completion requires a bound schema-2 production team')
+    elif "protocol" in contract and (schema != 3 or contract["protocol"] != "golden-v1"):
         raise proof.ProofError("Root protocol must be golden-v1 on a schema-3 root")
+    if schema != 4 and 'corporate' in contract:
+        raise proof.ProofError('Corporate binding requires a schema-4 root')
     if contract.get("goal_id") != goal.name:
         raise proof.ProofError("Root ID mismatch")
     if "production_team" in contract:
         proof.identifier(contract["production_team"], "production team ID")
-        if contract["schema"] != 3 or contract["production_team"] != contract["goal_id"]:
-            raise proof.ProofError("Production team must match the goal ID on a schema-3 root")
+        if schema not in {3, 4} or contract["production_team"] != contract["goal_id"]:
+            raise proof.ProofError("Production team must match the goal ID on a schema-3/4 root")
     original_file = goal / "original-request.txt"
     if not original_file.is_file():
         raise proof.ProofError("Original user request snapshot missing")
@@ -100,9 +108,12 @@ def validate(project: Path, goal: Path, contract: dict) -> None:
     if (task_id, req_id) not in all_links:
         raise proof.ProofError("Final integration is not linked to a root requirement")
 
-    if contract["schema"] == 3:
+    if schema >= 3:
         import coverage
         coverage.validate(original, contract, goal)
+    if schema == 4:
+        import corporate
+        corporate.validate(project, goal, contract)
 
 
 def mode_satisfies(required: str, actual: str) -> bool:
@@ -130,6 +141,22 @@ def check_production_team(project, contract):
 
     team_id = contract["production_team"]
     binding = team.binding(project, team_id, contract["request_sha256"])
+    if contract['schema'] == 4:
+        state = team.load_state(project, team_id)
+        if state['plan'].get('schema') != 2:
+            raise proof.ProofError('Corporate roots require Team schema 2')
+        plan = proof.load(proof.relative_file(project, contract['corporate']['plan']))
+        expected = {row['id']: (sorted(row['outputs']), sorted(row['depends_on']))
+                    for row in plan['tasks']}
+        actual = {row['id']: (sorted(row['outputs']), sorted(row['depends_on']))
+                  for row in state['plan']['tasks']}
+        if actual != expected:
+            raise proof.ProofError('Corporate implementation ownership/dependencies differ from the bound Team')
+        roots = [proof.relative_file(project, rel, must_exist=False) for rel in plan['source_paths']]
+        for output in team_outputs(binding):
+            path = proof.relative_file(project, output, must_exist=False)
+            if not any(path.is_relative_to(root) for root in roots):
+                raise proof.ProofError('Corporate verification scope omits Team output: ' + output)
     child_id = contract["integration"]["task_id"]
     path = proof.relative_file(project / proof.STATE, child_id)
     child = proof.load(path / "contract.json")
@@ -142,6 +169,7 @@ def check_root(goal: Path) -> dict:
     project = goal.parents[2]
     errors = []
     details = []
+    contract = None
     try:
         contract = proof.load(goal / "root-contract.json")
         validate(project, goal, contract)
@@ -200,20 +228,32 @@ def check_root(goal: Path) -> dict:
                 gold = check_gold(project, goal)
             except (proof.ProofError, KeyError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
                 errors.append("Gold gate: " + str(exc))
+        corporate_result = None
+        if contract['schema'] == 4:
+            try:
+                import corporate
+                corporate_result = corporate.check(project, goal, contract)
+                if corporate_result.get('passed') is not True:
+                    errors.extend('Corporate gate: ' + e for e in
+                                  (corporate_result.get('errors') or ['Required quality layers are unverified']))
+            except (proof.ProofError, KeyError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+                errors.append('Corporate gate: ' + str(exc))
         return {"schema": contract["schema"], "goal_id": contract["goal_id"],
                 "root_status": "ROOT_GOAL_VERIFIED" if not errors else "ROOT_GOAL_UNVERIFIED",
                 "root_goal_achieved": not errors,
                 "request_sha256": contract["request_sha256"],
                 "contract_hash": proof.digest(contract),
-                "coverage_assurance": "FULL_TEXT_MAPPED_REVIEW_DECLARED" if contract["schema"] == 3 else "LEGACY_DECLARED_COVERAGE",
+                "coverage_assurance": "FULL_TEXT_MAPPED_REVIEW_DECLARED" if contract["schema"] >= 3 else "LEGACY_DECLARED_COVERAGE",
                 "requirements": details,
                 "verified_children": [k for k, v in children.items() if v[1]["passed"]],
                 **({"golden": gold} if contract.get("protocol") == "golden-v1" else {}),
+                **({"corporate": corporate_result} if contract['schema'] == 4 else {}),
                 **({"production_team": production_team} if "production_team" in contract else {}),
                 "errors": errors,
                 "limitation": "Mechanical coverage of a sealed scope does not prove the completeness or validity of self-authored natural-language oracles."}
     except (proof.ProofError, KeyError, OSError, TypeError, ValueError) as exc:
-        return {"schema": 2, "goal_id": goal.name, "root_status": "ROOT_GOAL_UNVERIFIED",
+        return {"schema": contract.get('schema', 2) if isinstance(contract, dict) else 2,
+                "goal_id": goal.name, "root_status": "ROOT_GOAL_UNVERIFIED",
                 "root_goal_achieved": False, "requirements": details, "errors": [str(exc)]}
 
 
@@ -266,9 +306,12 @@ def main() -> int:
         if args.action == "seal":
             c = proof.load(goal / "root-contract.json")
             validate(goal.parents[2], goal, c)
-            proof.save(goal / "root-seal.json",
-                       {"root_hash": proof.digest(c), "request_sha256": c["request_sha256"],
-                        "sealed_at": proof.now()}, exclusive=True)
+            sealed = {"root_hash": proof.digest(c), "request_sha256": c["request_sha256"],
+                      "sealed_at": proof.now()}
+            if c['schema'] == 4:
+                import corporate
+                sealed['corporate'] = corporate.seal_binding(goal.parents[2], goal, c)
+            proof.save(goal / "root-seal.json", sealed, exclusive=True)
             print("Root goal sealed. Child tests cannot redefine original requirements.")
             return 0
         result = check_root(goal)

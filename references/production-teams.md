@@ -1,4 +1,33 @@
-# Production teams in HarrTest 4.1 Gold
+# Production teams
+
+## V5: existing-code Team schema2
+
+New Corporate work uses `schema:2`; the existing team.py commands dispatch to the
+new schema implementation. Existing schema1 plans retain their original meaning.
+Keep original id, kind, request, contract, outcomes, tasks and integration check.
+Schema2 permits one owner, sequential dependencies and empty integration.outputs
+for validation-only assembly. Optional task deletions/renames bind removed paths
+and before/after names. Current manifests retain absence evidence.
+
+Declare actual max_parallel_workers. A serial schedule of independent scopes
+needs execution_rationale; do not invent an extra worker or glue edit. Scope and
+receipt checks remain distinct from host identity/provenance.
+
+host.kind declares codex, copilot or unverified. Unsupported/unobserved native
+formats remain UNVERIFIED and cannot pass full native-Team acceptance. Installation
+alone does not prove an adapter works. Inspect actual host-assurance output.
+Optional model/reasoning_effort pins are checked against observed worker context.
+For Copilot pass `--parent` with the actual Copilot session UUID, not a surrounding
+Codex conversation ID. `--sessions` can explicitly identify the Copilot
+session-state root; otherwise the adapter uses COPILOT_HOME/session-state or the
+user's .copilot/session-state. It reads only the selected session's native events
+and keeps actual subprocess output and source hashes separate from host metadata.
+See [Corporate workflow](corporate-workflow.md) for the root quality contract.
+
+## Legacy schema1 (4.1)
+
+The remaining instructions describe schema1, including its minimum-worker and
+changed-glue rules; do not apply those constraints to schema2 changes.
 
 Use this path when at least two independently implementable parts contribute
 to the requested product. Give each part a concrete output, one owner, a

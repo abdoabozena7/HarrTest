@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.0.0 — Corporate candidate (unreleased)
+
+- Reorganize the skill around evidence-backed changes to existing code,
+  architecture and compatibility preservation, proportional implementation
+  scopes and six independently assessed quality layers.
+- Introduce schema-4 `corporate-v1` roots with sealed baseline/context/decision
+  evidence and current-source acceptance; retain schema-2/3 meaning.
+- Introduce schema-2 teams for narrow or sequential work, deletion/rename
+  manifests and validation-only integration, with host evidence separated.
+- Prepare eight development and eight separate acceptance cases across existing
+  C#, TypeScript, Python and C++ projects. Live Copilot comparisons and release
+  qualification are pending; no V5 quality uplift is claimed yet.
+
+
 ## 4.1.0 — Gold (2026-11-13)
 
 - Retain failed frozen trials and continue general harness refinement with

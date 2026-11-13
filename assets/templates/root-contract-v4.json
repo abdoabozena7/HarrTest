@@ -1,0 +1,38 @@
+{
+  "schema": 4,
+  "protocol": "corporate-v1",
+  "goal_id": "mission",
+  "production_team": "mission",
+  "request_sha256": "REPLACE_ME exact original request digest",
+  "scope_statement": "REPLACE_ME observable existing-code change and preserved contracts",
+  "coverage_review": {
+    "method": "fresh-context-agent",
+    "rationale": "REPLACE_ME independent original-request coverage observation",
+    "unmapped_segments": []
+  },
+  "request_segments": [],
+  "coverage_challenge": {
+    "file": "coverage-review.json",
+    "sha256": "REPLACE_ME actual reviewed coverage artifact digest"
+  },
+  "requirements": [
+    {
+      "id": "R01",
+      "claim": "REPLACE_ME requested behavior and preservation requirement",
+      "oracle": "REPLACE_ME independent real entrypoint assertion",
+      "source": "user_request",
+      "source_excerpt": "REPLACE_ME exact original request excerpt",
+      "evidence_mode": "live",
+      "satisfiers": [{"task_id": "integration", "requirement_id": "R01"}]
+    }
+  ],
+  "integration": {
+    "task_id": "integration",
+    "requirement_id": "R01",
+    "scope": "REPLACE_ME full current-source changed and preserved behavior"
+  },
+  "corporate": {
+    "plan": ".runtime-proof/corporate-plan.json",
+    "report": ".runtime-proof/corporate-report.json"
+  }
+}

@@ -1,245 +1,143 @@
 ---
 name: harrtest
-description: Build and repair software with evidence, native implementation teams and independent acceptance. New products use scoped subagents to implement components before the coordinator integrates them. Use for coding, UI, APIs, CLI, simulation and agent pipelines. Preserve the original request, resolve material uncertainty, test the real entrypoint and inspect current results. Does not apply to conversation-only requests or work that excludes execution.
+description: Change software with evidence-based planning, scoped implementation workers and independent quality checks. Understand existing architecture and contracts, preserve behavior, and verify correctness, security, performance and resilience as relevant to the change. Use for implementation, debugging, refactoring and complex coding tasks. Does not apply to conversation-only requests or work that excludes execution.
 ---
 
-# HarrTest 4.1 Gold
+# HarrTest V5 Corporate
 
-## Choose the execution path before editing
+## Start from the project
 
-Use the installed local version. Read VERSION and pin it for this mission.
-Run `version_guard.py` only for an explicit request to check upstream/latest.
+Read VERSION and pin the local package for the task. Check upstream only when
+the user requests it. Use the current host, approved tools and authentication;
+this skill does not grant permission or replace organization policy.
 
-**A new product starts with implementation workers.** This includes a small
-game, page, app, service or tool built from scratch. The length of the prompt
-and the number of existing files do not make a new product a single-file fix.
-Create its component boundaries and use the native team path below before
-writing application files. Use a direct path for a narrow change in an
-existing component when splitting it would leave no independent deliverable.
+Preserve the exact request. Inspect repository instructions, actual entrypoints,
+architecture decisions, public contracts, dependencies, callers and tests.
+Distinguish documented intention from observed behavior. Reuse the project's
+design and conventions. A new abstraction, dependency or architecture needs a
+task-linked reason; do not redesign unrelated code to satisfy a generic style.
 
-The coordinator defines interfaces and owns assembly. Give actual production
-work to native subagents. Planning, scouting and review do not satisfy an
-implementation assignment. Keep the same model and reasoning effort as the
-active host unless the user chose otherwise.
+Before editing retain a source-qualified baseline: reproduce relevant behavior,
+run existing checks, record known failures and measure affected resource limits.
+Preserve user changes. A baseline failure is not a new regression, but cannot
+silently waive a relevant security or correctness requirement.
 
-Application behavior and presentation are production work too. Assign their
-owners before dispatch. Integration imports and connects the delivered
-components. Keep core business/game rules, input handling and designed UI in
-worker-owned modules rather than collecting them inside the coordinator's
-assembly file.
+Map every requirement to affected contracts/components, risks, owners and
+observable acceptance checks. Cite repository paths and exact source identity,
+user decisions, real observations or version-matched official sources for
+consequential choices. Ask only about unresolved material meaning or external
+effects; continue independent discovery while awaiting an answer.
 
-## Native team path
+Use measured test duration, dependency impact and observed workload in planning.
+Label estimates and assumptions; revise them after the first measured result.
+Never fabricate precision or treat an agent's confidence as evidence.
 
-1. Preserve the exact user task. Read only the source and contracts needed to
-   understand it. Translate its intended outcome into observable acceptance.
-   Ask about material unknowns that change behavior or external effects.
-   When the user delegates design choices, choose a coherent design and proceed.
-   For a new product, follow [quality intent](references/quality-intent.md):
-   write a compact outcome/finishing brief and have a separate native
-   `intent_review` worker challenge it before production. Resolve material
-   findings and include the accepted brief and review in `validation_context`.
-   For each major component, distinguish a plausible minimum draft from the
-   chosen finished result. The reviewer must try that counterexample against
-   the criteria; a parts inventory or an overall ACCEPT cannot close this check.
-   A review role does not replace the implementation owners below.
-2. Define a small production DAG with explicit outputs, interfaces, dependency
-   order and a check for each component. Choose enough owners to give each
-   distinct part focused attention. For a new visual product, consider the
-   primary subject, environment/layout, interaction/state, and interface.
-   A single page/scene container is not a useful visual split when its main
-   subject and surrounding structure can be delivered independently. Give
-   those distinct visible components separate implementation owners.
-   Put the shared visual direction, proportions and meaningful subject detail
-   in the contract that every worker receives. Keep the chosen style coherent.
-   Specify shared representations, units, lifecycle and boundary invariants
-   where components exchange state. Test a producer/consumer example against
-   that agreement; matching export names alone does not establish compatibility.
-   A leaf can split further when a detail has its own meaningful deliverable.
-   Carry supplied runtime, resource and validation constraints into the sealed
-   plan's `validation_context` file paths. Every implementer needs those inputs,
-   not only the eventual tester. Make the first handoffs a small runnable
-   user path with representative work; integrate and measure that checkpoint
-   before expanding costly detail. Keep the full requested quality as acceptance.
-3. Read [production teams](references/production-teams.md). Create
-   `.runtime-proof/team-plan.json` and run `scripts/team.py init` before
-   product edits. On Codex, use its returned `task_name`, `fork_turns` and
-   `message` in actual `spawn_agent` calls. Dispatch independent ready
-   workers before waiting. Reuse the active model and effort for every worker.
-   Pass the complete returned message, including its absolute project path,
-   contract, file ownership and handoff command. Do not replace it with a
-   short role description. If spawning hits the host slot limit, wait for a
-   running worker to finish, then dispatch the remaining ready packet. Keep
-   the sealed owners; a full slot queue does not transfer their work to you.
-4. Each implementer writes and checks only its product files, then executes
-   the packet's handoff command. Follow actual handoff evidence. Resolve a
-   missing or faulty component with its owner. Ownership continues through
-   repairs: even a one-line fix in a worker file goes back to that worker,
-   followed by a fresh handoff. The coordinator edits only its declared glue.
-   Retain genuine worker IDs and raw traces.
-   Wait only for required workers that are still running. If an unchanged
-   wait repeats, inspect native agent status, final results and current
-   receipts before waiting again. Completed or failed workers need a next
-   action, not an indefinite wait for another completion notification.
-5. Run `team.py verify --production-only` on completed worker handoffs.
-   The coordinator connects the delivered modules through the declared
-   entrypoint/glue. Finish that assembly against the actual returned modules
-   after the initial handoffs; a scaffold written from the contract alone is
-   not final integration. Run `team.py integrate` and dispatch its independent QA
-   packet. QA executes the public entrypoint, records its output and checks
-   the original user journey. Give QA exclusive runtime/browser resources
-   during that check; the coordinator can inspect its retained frames.
-   After loading and starting the main interaction, measure the cheap decisive
-   runtime constraints before a long journey. Keep a control/outcome matrix so
-   missing checks are discovered before repeatedly replaying the whole path.
-   An incomplete measurement goes back to the tester; an actually measured
-   product failure goes to its implementer. Do not change product behavior to
-   compensate for an invalid measurement.
-   Return failures to their owners and reassemble
-   after repair. Run `team.py verify` on current files before completion.
-   On every QA attempt, including repair replays, pass the full returned QA
-   packet again. On Codex, resume an existing named worker with `followup_task`
-   rather than inventing a retry suffix and discarding its capability context.
-   Include supplied verification-target paths and environment constraints in
-   each affected worker/QA handoff; do not leave later clarifications only
-   in the coordinator's context.
-   A failed review returns work to its named owners. Use `team.py repair` with
-   the retained failure evidence and concrete observation; dispatch its complete
-   owner packet, then collect a fresh handoff, reintegrate and rerun independent
-   QA. A stale handoff is unfinished work, not a reason to omit that owner.
-   Let a native Team command finish before verifying its receipt. Preserve
-   actual command results and matching continuation/session IDs when it yields;
-   an enclosing tool call cannot observe its own not-yet-returned output.
+## Choose scopes and execute
 
-Use the host's actual parallel capacity. With fewer slots, run ready workers
-in waves. Keep one owner for shared configuration and exclusive resources.
-If native delegation is unavailable, record that observed capability gap,
-continue authorized work and leave team acceptance unverified.
+For substantial changes follow [the Corporate workflow](references/corporate-workflow.md).
+Use a schema-4 root with `protocol: corporate-v1` and a schema-2 Team plan.
+Keep the original verification meaning of existing schema-2/3 roots and schema-1
+teams; do not migrate active contracts silently.
 
-Keep the coordinator's mission open through ordinary review and repair.
-Dispatching a worker, receiving REVISE or reaching an incomplete checkpoint is
-not completion. Apply the finding, resume/wait for the actual owners and verify
-the integrated result. Use commentary for progress; do not end with a partial
-delivery merely because a required child is still running.
+Split along existing component/interface boundaries. Give each worker the
+original goal, necessary context, read/write scope, lifecycle invariants, baseline,
+risks and expected checks. A review or planning role is not an implementation owner.
 
-For a small new product the team plan, component handoffs and independent
-integrated QA form the working path. Start building after those boundaries
-are defined. Read the larger workflows only when their conditions below apply.
+Use native workers for independently deliverable implementation scopes. Dispatch
+ready independent tasks together; dependent tasks wait for current handoffs.
+A narrow change can have one implementation owner and an independent tester.
+Do not invent parallel work or extra files to satisfy a worker count. Split a
+complex scope further only when its deliverables can be independently checked.
+Reuse the active model and effort unless the user selected otherwise.
 
-## Quality belongs in the component brief
+Keep one writer per file at a time, including configuration. Route fixes to the
+existing owner, refresh dependent handoffs and reintegrate. Support real deletions
+and renames; integration can be validation-only. Inspect native status and receipts
+before repeating waits. Completed workers need a next action, not indefinite waits.
 
-Give every implementer a specific output and quality criteria, shared with
-the integrator. For a visible component, name its purpose, form/material,
-useful detail and connection to the rest of the product. Agree on the visual
-style and proportions across workers. A separate worker can implement a
-complex asset or behavior when it has a stable interface.
+The coordinator resolves interfaces and integrates returned work. Independent QA
+exercises actual behavior on current source and does not edit the product.
+Independent review checks the diff, evidence relevance and project constraints.
+These roles are distinct from the implementer. Record actual worker identities
+and capability limits; do not label unsupported host provenance verified.
+[Team contracts and host evidence](references/production-teams.md)
 
-Inspect the real integrated output. For UI and games, capture and inspect a
-start state, an interaction state, and a recovery/end state. Check composition,
-the main subject, scene/layout variety, intentional detail, readable controls
-and feedback. If the result is mostly placeholders or omits a requested
-interaction, return a concrete observation to the owning worker and repeat
-the actual check. A screenshot path alone does not establish visual quality.
-Give functionality, visual quality and responsiveness separate verdicts.
-Recognition and workmanship are separate checks. Verify the accepted finishing
-criteria for the primary artifact; a generic proxy does not become finished
-because its surrounding interface is polished. Retain temporal evidence when
-judging motion, rather than inferring continuity from stills or callback totals.
-After the first runnable checkpoint, compare each major component with its
-declared minimum draft. Refine failed distinctions with its owner and repeat
-the integrated review; functional completion does not close unfinished work.
-Use the focused native `finish_review` in the quality-intent guide to inspect
-actual draft frames independently of runtime QA. Return each failed component
-to its owner and repeat on current captures before visual acceptance.
-On review replays, read the current quality-intent guide. An unexplained visible
-artifact on a major delivered component needs owner diagnosis or evidence that
-it is intentional. Calling it minor or outside the interaction path does not
-close its finishing criterion; keep that finding open until resolved.
-An indistinct primary subject, unreadable content or an obstructed view of
-the interaction is a visual acceptance failure, rather than a caveat under
-a functional PASS. Check detail at the final scale and lighting in real frames.
-Check responsiveness as well as detail. When timing affects the task, compare
-wall time with observable product progress and retain both. Repair added detail
-that makes the requested interaction unusable before accepting the result.
-Profile the expensive work before optimizing, keep the quality criteria, and
-send measured regressions to the owning implementer. Compare the repaired
-result on the same runtime, viewport and inputs.
-Check the representative executable path early, while changing its structure
-is still cheap. Pass the target workload, timing and resource limits to every
-affected owner. Separate the cost of loading, rendering, computation and
-interaction using measurements from that runtime. A high idle callback rate
-does not establish useful rendered work. Preserve requested detail and behavior
-when reducing measured cost; reducing simulation progress or verification
-resolution does not repair responsiveness.
-When a project supplies a validation target or browser configuration, use it
-for verification rather than substituting a default runtime. Preserve the
-declared resolution and quality requirements while repairing performance.
+## Assess all quality layers
 
-Use [web validation](references/web-validation.md) for real browser actions,
-[CLI/agents](references/cli-agent-validation.md) for generated programs,
-and [simulation](references/simulation-validation.md) for engine experiments.
+Assess each layer for every change. Choose checks from actual impact and project
+policy, rather than programming language alone:
 
-## Evidence and preservation
+| Layer | Reasoning and evidence |
+| --- | --- |
+| Functionality | Requirement-derived outputs, boundaries and negative cases with independent expected results. |
+| Preservation | Existing callers, contracts, old inputs/outputs and relevant before/after regression checks. |
+| Architecture | Project conventions, responsibility boundaries, dependency direction, diff review, types and static checks. |
+| Security | Changed trust boundaries, input handling, authorization, secrets and dependency risks; misuse tests and analysis. |
+| Performance | Relevant latency, throughput, allocation or resources; repeated same-workload measurement with noise and limits. |
+| Resilience | Relevant persistence, migration, retries, cancellation, recovery, concurrency and resource lifetime. |
 
-Keep the original request and the reason and source behind consequential
-scope, interface, implementation and verification choices. Cite authoritative
-answers already available. Distinguish user requirements from reversible
-design assumptions. Keep dependent work within the agreed interfaces.
+Use project security requirements first. Apply risk-based design review and
+security testing, drawing on [Microsoft SDL](https://www.microsoft.com/en-us/securityengineering/sdl/practices)
+where supporting guidance is needed. A scanner cannot prove absence of vulnerabilities.
+Missing required tooling is an unverified check, not a clean result.
 
-When preserving behavior, run the existing entrypoint before editing and
-replay the same inputs afterward, including a boundary where the new behavior
-differs. Compare the actual output, exit status and persistent state.
+Every required layer must PASS. NOT_APPLICABLE requires impact reasoning, cited
+evidence and separate review. Missing checks remain UNVERIFIED. A failed major
+criterion cannot be offset by an aggregate score. Do not weaken thresholds,
+delete useful tests, change an oracle to match an answer or substitute a mock for
+the actual integration to pass acceptance.
 
-Use observe, reproduce, explain, repair, rerun. Preserve each meaningful
-failure and failed attempt. Use independent expected outcomes and safe
-negative controls. Keep live, offline, replay and fixture evidence distinct.
-Check that the running source matches the files being delivered.
+Use project performance budgets. If absent, establish workload, method and
+justified tolerance before optimizing and bind them to the plan. Preserve output
+correctness, contracts and resource safety. Separate startup, warm-up and steady
+state. Inconclusive measurements require better measurement, not a product change
+made on an unsupported hypothesis.
 
-When the user requests iterative improvement, a failed attempt is diagnostic
-input, not the end of the assignment. Retain its result, identify the specific
-missing or ineffective mechanism, make the smallest general harness correction,
-then test a new pinned revision. Keep benchmark product edits and task-specific
-implementation coaching outside a harness-only experiment. Record the hypothesis,
-change, full attempts and before/after observations. Do not silently lower
-acceptance, select only a winning retry or claim a general uplift from one case.
-An attempt timebox ends that attempt; it does not end an authorized improvement
-mission. Continue the next justified cycle while respecting actual user resource
-limits, permissions and cancellation. Publication/install still requires the
-user's acceptance condition to be demonstrated on the delivered revision.
+## Evidence before acceptance
 
-Team verification checks local native provenance, changed outputs, ownership,
-active overlap, integration order and independent QA receipts. Runtime and
-visual acceptance must still establish the requested behavior. A passed child
-or an agent finishing its turn does not close the original goal.
+Retain requirement -> decision/source -> action -> observation -> assertion ->
+artifact -> review. Bind evidence to current content, including uncommitted files,
+tests, configuration and dependency locks. Commit identity alone is insufficient.
+Keep commands, tool/environment versions, actual exit results and failed attempts.
+Limit sensitive capture at the source; record redaction and rebind changed evidence.
+Keep private evidence in `.runtime-proof/`, not public project artifacts.
 
-## Larger and continuing missions
+Run checks through the existing `proof.py` collector and verify the root with
+`root_gate.py verify`. Corporate acceptance binds the plan at sealing and requires
+current-source checks and independent review for all six layers. A path/hash
+establishes identity, not whether a citation supports a claim: the reviewer must
+record that judgment. Local records are cooperative evidence, not a hostile-writer
+security boundary. [Limits](references/security-and-limitations.md)
 
-- For cumulative milestones or a resumable multi-stage build, use
-  [Project Builder](references/project-builder.md). Seal a schema-3 root with
-  `production_team` equal to the team ID and fingerprint the integrated product.
-  Direct root verification and the supported active stop callback then require
-  Team evidence. Preserve old root protocols and historical acceptance.
-- For a formally measured Gold comparison, use the
-  [Gold runbook](references/v4-gold.md). Predeclare cases, baseline, conditions
-  and numeric thresholds. Retain blocked, failed and missing attempts in the
-  denominator. Fixture results measure the controller. Measure live product
-  outcomes and visually inspect artifacts before claiming model improvement.
-- For ongoing work, use [project memory](references/project-context-memory.md)
-  to retrieve source-qualified notes and checkpoints. Bootstrap only from the
-  original goal. If external private storage is unavailable, use an authorized
-  project-local private path through `HARRTEST_STATE_HOME`.
-- Use [Hivo patterns](references/hivo-patterns.md) for intent contracts,
-  recursive task boundaries and evidence-directed repair.
+Reproduce, explain, repair with the owner, rerun and inspect. Preserve existing
+tests and add meaningful tests for changed behavior; test counts are not quality.
+Use [acceptance and test quality](references/acceptance-and-test-quality.md) for
+independent oracles and safe negative controls.
 
-Use the current host, authentication, tools and authorized resources.
-Maintain exclusive resource ownership and reconcile interrupted side effects
-before retrying. Preserve user changes and real safety/budget boundaries.
-Record actual limitations when native hooks, browser tools or independent
-review are unavailable. Local records are cooperative evidence and can be
-rewritten by a workspace owner. See [security](references/security-and-limitations.md).
+Load domain instructions only when actual behavior needs them:
+[visible output](references/quality-intent.md), [browser behavior](references/web-validation.md),
+[CLI/agent execution](references/cli-agent-validation.md), or
+[simulation](references/simulation-validation.md). Visual/motion evidence applies
+only to criteria that need it. For new products establish contracts and intended
+quality first; preserve any affected existing behavior explicitly.
 
-## Report the delivered result
+For cumulative work use [Builder](references/project-builder.md); for legacy Gold
+comparisons use [the Gold runbook](references/v4-gold.md). Retrieve source-qualified
+[memory](references/project-context-memory.md) without replacing the request or
+carrying stale facts into a new revision.
 
-Give the version, implemented behavior, actual worker contributions, fresh
-runtime/visual evidence, current root status and unresolved findings. State
-the scope of measurement and retain the raw artifacts. Describe partial
-outcomes accurately and continue authorized repair while useful work remains.
+## Continue until the agreed result is verified
+
+Keep ordinary diagnosis and repair in the active mission. A handoff, failed review
+or attempt timebox is not completion. Respect authorization, actual resource
+limits, cancellation and host limits. Report missing capabilities honestly while
+continuing useful authorized work.
+
+For harness improvement keep product edits and task-specific repair coaching out
+of the experiment. Improve the general mechanism, pin a new version and retain
+all results. A case used to guide improvement becomes development data; use fresh
+acceptance cases. Predeclare comparisons and record cost for every worker.
+
+Report implemented behavior, contributions, current-source layer verdicts,
+before/after measurements and unresolved findings. Claim verified only within the
+checked scope. Corporate is a version name; evidence establishes its assurance.

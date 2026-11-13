@@ -1,6 +1,18 @@
-<img src="visual/banner.svg" alt="HarrTest 4.1 Gold. Independent implementers build components, then integration and QA verify the result." width="100%" />
+# HarrTest V5 Corporate — development candidate
 
-# HarrTest 4.1 Gold
+**Not released or globally installed.** V5 changes the default workflow to
+existing-code work: inspect architecture and contracts, retain a measured
+baseline, scope implementation owners and independently verify functionality,
+preservation, architecture, security, performance and resilience. Quality checks
+follow the change's actual impact. Visual and browser instructions are conditional.
+
+The new Corporate root protocol and Team schema preserve the verification meaning
+of legacy contracts. A required check that did not run remains unverified;
+an aggregate score cannot waive a failed quality layer.
+[Corporate workflow](references/corporate-workflow.md) ·
+[V5 validation status](references/v5-validation.md)
+
+The following results describe the released **4.1** adaptive experiment, not V5.
 
 HarrTest is a skill and local workflow coordinator for coding agents. Gold
 preserves what the user asked for, ties consequential decisions to evidence,
@@ -11,7 +23,7 @@ contract and its checks.
 
 [Install](#install) · [Start a task](#start-a-task) · [Gold runbook](references/v4-gold.md) · [4.1 results](references/v4.1-validation.md)
 
-## Observed Luna-low result
+## Historical 4.1 Luna-low result
 
 The same short request produced two playable Three.js games. Independent
 image review preferred the HarrTest result and accepted its component finishing.
