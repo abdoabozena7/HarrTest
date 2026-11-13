@@ -171,6 +171,14 @@ native adapter, not a JavaScript interpreter. New reviews retain an immutable
 content-addressed copy of the supplied QA narrative, so later report edits
 cannot erase the previous review's evidence.
 
+Prefer one Team command per invocation; a long preceding report can push the
+receipt out of a small display budget. The adapter also reads supported native
+`CommandExecution` completion records: actual three-element shell argv, scoped
+workspace and full retained stdout. Literal PowerShell evidence here-strings
+are data, not executable command mentions; expandable bodies remain unsupported.
+An unchanged receipt keeps its first genuine completion proof. Reprinting it
+does not turn unchanged source into a new integration or invalidate earlier QA.
+
 The split follows the local Hivo/OrchCode Studio patterns of an intent
 contract, scoped implementation packets, dependency-aware dispatch and review
 of actual execution after the workers return. The [Hivo notes](hivo-patterns.md)

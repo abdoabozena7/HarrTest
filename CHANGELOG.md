@@ -13,6 +13,9 @@
 - Recognize native exec envelopes, shell-session polls and supported yielded
   cell continuations without accepting unrelated receipt output. Preserve
   immutable QA narratives across replays.
+- Read completed native command stdout when display truncation hides a receipt;
+  preserve its first proof across idempotent replay. Validate the command argv,
+  workspace and literal evidence bodies, including Windows CRLF delimiters.
 - Challenge a concrete finishing brief before production, bind it to worker
   packets, and separate recognition, workmanship and temporal evidence in QA.
 - Challenge each major component against a plausible crude counterexample;

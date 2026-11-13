@@ -231,6 +231,62 @@ class ProductionTeam(unittest.TestCase):
         self.deliver(early_assembly=True)
         self.assertIn('Integration glue must be written', self.verify()['errors'][0])
 
+    def native_integration_trace(self, **overrides):
+        path = next(p for p in self.logs.glob('*.jsonl') if team.log_meta(p)['source'] == 'exec')
+        rows = [json.loads(s) for s in path.read_text(encoding='utf-8').splitlines()]
+        rows = [r for r in rows if r['payload'].get('type') != 'item_completed']
+        for row in rows:
+            if row['payload'].get('call_id') == 'record0' and row['payload']['type'] == 'custom_tool_call_output':
+                row['payload']['output'] = [{'text': 'Script completed\nOutput:\n'},
+                    {'text': 'Warning: truncated output\nProduction verified...QA packet tail...'}]
+        receipt = team.current_receipt(self.project, self.state, 'integration')
+        item = {'type': 'CommandExecution', 'id': 'exec-' + str(uuid4()), 'process_id': '48874',
+                'command': ['pwsh.exe', '-Command', 'python -B scripts/team.py integrate --team report'],
+                'cwd': self.project.as_uri(), 'source': 'unified_exec_startup', 'status': 'completed',
+                'aggregated_output': team.RECEIPT + receipt['sha256'] + '\n', 'exit_code': 0}
+        item.update(overrides)
+        rows.append({'type': 'event_msg', 'timestamp': self.stamp(18.005),
+                     'payload': {'type': 'item_completed', 'item': item}})
+        path.write_text(''.join(json.dumps(r) + '\n' for r in sorted(rows,key=lambda r:r['timestamp'])), encoding='utf-8')
+
+    def test_native_command_completion_recovers_truncated_display_receipt(self):
+        self.deliver()
+        self.native_integration_trace()
+        self.assertTrue(self.verify()['passed'], self.verify())
+
+    def test_native_argv_cannot_put_a_team_mention_after_file_mode(self):
+        self.deliver()
+        self.native_integration_trace(command=['pwsh.exe', '-File', 'print-receipt.ps1',
+                                               '-Command', 'python scripts/team.py integrate --team report'])
+        self.assertIn('integration: missing native tool receipt', self.verify()['errors'][0])
+
+    def test_native_completion_rejects_unrelated_unfinished_or_foreign_commands(self):
+        self.deliver()
+        for overrides in ({'status': 'in_progress'}, {'exit_code': None}, {'exit_code': True},
+                          {'source': 'untrusted'}, {'id': 'invented'},
+                          {'cwd': self.project.parent.as_uri()},
+                          {'command': ['pwsh.exe','-Command','echo "HARRTEST_TEAM_RECEIPT copied"']},
+                          {'command': ['pwsh.exe','-Command','python scripts/team.py packets; echo "HARRTEST_TEAM_RECEIPT copied"']}):
+            with self.subTest(overrides=overrides):
+                self.native_integration_trace(**overrides)
+                self.assertIn('integration: missing native tool receipt', self.verify()['errors'][0])
+
+    def test_idempotent_receipt_replay_keeps_first_completed_proof_time(self):
+        self.deliver()
+        path = next(p for p in self.logs.glob('*.jsonl') if team.log_meta(p)['source'] == 'exec')
+        rows = [json.loads(s) for s in path.read_text(encoding='utf-8').splitlines()]
+        receipt = team.current_receipt(self.project, self.state, 'integration')
+        rows.extend([
+            {'type':'response_item','timestamp':self.stamp(28),'payload':{
+                'type':'custom_tool_call','name':'exec','call_id':'again',
+                'input':'text(await tools.exec_command({"cmd":"python scripts/team.py integrate --team report"}));'}},
+            {'type':'response_item','timestamp':self.stamp(28.01),'payload':{
+                'type':'custom_tool_call_output','call_id':'again',
+                'output':[{'text':'Script completed\nOutput:\n'+team.RECEIPT+receipt['sha256']+'\n'}]}}
+        ])
+        path.write_text(''.join(json.dumps(r)+'\n' for r in rows),encoding='utf-8')
+        self.assertTrue(self.verify()['passed'], self.verify())
+
     def test_plan_rejects_scope_overlap_and_review_roles(self):
         self.plan['tasks'][1]['outputs'] = ['PARSE.PY']
         with self.assertRaisesRegex(ValueError, 'scopes overlap'):
@@ -495,6 +551,19 @@ class ProductionTeam(unittest.TestCase):
             with self.subTest(block=block):
                 self.assertIsNone(team.command_result([
                     {'text': 'Script completed\nOutput:\n'}, {'text': block}]))
+
+    def test_literal_evidence_here_string_does_not_hide_a_later_command(self):
+        command = ("@'\nCoordinator's report. `python scripts/team.py check` is an example.\n"
+                   "'@ | Set-Content evidence.txt; python -B scripts/team.py review --team report")
+        self.assertTrue(team.team_command(command))
+        self.assertFalse(team.team_command("@'\npython scripts/team.py review\n'@ | Set-Content evidence.txt"))
+        self.assertFalse(team.team_command("@'\nHARRTEST_TEAM_RECEIPT copied\n'@; python scripts/team.py packets"))
+        self.assertFalse(team.team_command('@"\n$(python scripts/team.py review)\n"@'))
+        self.assertFalse(team.team_command("@'\nunclosed; python scripts/team.py review"))
+
+    def test_literal_evidence_here_string_accepts_standalone_crlf_closer(self):
+        command = "@'\r\nCoordinator's evidence.\r\n'@\r\npython -B scripts/team.py review --team report"
+        self.assertTrue(team.team_command(command))
 
     def test_echoed_command_source_and_extra_text_do_not_establish_command_lineage(self):
         valid = 'const r = await tools.exec_command({cmd:"python scripts/team.py handoff"}); text(JSON.stringify(r));'

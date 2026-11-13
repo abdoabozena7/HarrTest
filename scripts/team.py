@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
 
 import proof
@@ -659,8 +660,22 @@ def team_command(command):
     if not isinstance(command, str):
         return False
     # Preserve literal quoted newlines; only shell line boundaries delimit commands.
-    normalized, quote, escaped = [], None, False
-    for char in command:
+    normalized, quote, escaped, index = [], None, False, 0
+    while index < len(command):
+        char = command[index]
+        if quote is None and not escaped and command.startswith(("@'\n", "@'\r\n", '@"\n', '@"\r\n'), index):
+            # A literal PowerShell evidence body is data, including apostrophes
+            # and command examples. Never scan it for executable Team commands.
+            if command[index + 1] != "'":
+                return False  # Expandable here-strings require a shell interpreter.
+            begin = command.index('\n', index) + 1
+            end = re.search(r"(?m)^'@(?=$|[ \t\r\n;|)])", command[begin:])
+            if not end or RECEIPT.strip() in command[begin:begin + end.start()]:
+                return False
+            normalized.append("'harrtest-literal'")
+            index = begin + end.end()
+            continue
+        index += 1
         if escaped:
             normalized.append(char)
             escaped = False
@@ -807,6 +822,38 @@ def patch_paths(project, call, output):
     return paths
 
 
+def native_completed_command(project, payload):
+    """Read host command completion, including stdout omitted by display budgets."""
+    item = payload.get('item', {})
+    if (payload.get('type') != 'item_completed' or not isinstance(item, dict)
+            or item.get('type') != 'CommandExecution' or item.get('status') != 'completed'
+            or item.get('source') not in {'unified_exec_startup', 'unified_exec_interaction'}
+            or type(item.get('exit_code')) is not int or not isinstance(item.get('aggregated_output'), str)):
+        return None
+    try:
+        require(str(UUID(item['id'][5:])) == item['id'][5:] and item['id'].startswith('exec-'),
+                'Not a native command identity')
+        command = item['command']
+        require(isinstance(command, list) and len(command) == 3
+                and all(isinstance(part, str) for part in command), 'Missing actual command')
+        executable = command[0].replace('\\', '/').rsplit('/', 1)[-1].lower().removesuffix('.exe')
+        require(executable in {'powershell', 'pwsh', 'sh', 'bash', 'zsh'}
+                and command[-2].lower() in {'-command', '-c', '-lc'}
+                and team_command(command[-1]), 'Not a literal native Team command')
+        uri = urlsplit(item['cwd'])
+        require(uri.scheme == 'file' and uri.netloc in {'', 'localhost'}
+                and not uri.query and not uri.fragment, 'Unsupported command workspace')
+        local = unquote(uri.path)
+        if re.match(r'^/[A-Za-z]:/', local):
+            local = local[1:]
+        cwd = Path(local).resolve()
+        require(cwd == project or cwd.is_relative_to(project), 'Command used a different project')
+        require(len(item['aggregated_output']) <= MAX_ROLLOUT_BYTES, 'Native stdout too large')
+        return item['aggregated_output']
+    except (ValueError, TypeError, KeyError, AttributeError, OSError):
+        return None
+
+
 def read_trace(project, meta, path, since):
     require(path.stat().st_size <= MAX_ROLLOUT_BYTES, 'Native rollout exceeds the supported size')
     writes, markers, calls, running_commands, running_cells = [], {}, {}, {}, {}
@@ -825,6 +872,11 @@ def read_trace(project, meta, path, since):
                 context = payload
             if when < since:
                 continue
+            if event['type'] == 'event_msg':
+                actual = native_completed_command(project, payload)
+                if actual is not None:
+                    for digest in re.findall(r'^' + RECEIPT + r'([0-9a-f]{64})\s*$', actual, re.M):
+                        markers.setdefault(digest, when)
             if event['type'] == 'event_msg' and kind == 'task_started':
                 turn_starts.append(when)
                 active = when
@@ -888,7 +940,7 @@ def read_trace(project, meta, path, since):
                 pending.update(re.findall(r'^' + RECEIPT + r'([0-9a-f]{64})\s*$', result['output'], re.M))
                 if result['complete']:
                     for digest in pending:
-                        markers[digest] = when
+                        markers.setdefault(digest, when)
                     if sid is not None:
                         running_commands.pop(sid, None)
                 elif sid is not None:
