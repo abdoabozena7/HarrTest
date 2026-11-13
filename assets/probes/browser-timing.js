@@ -4,6 +4,10 @@ async (page) => {
   const driverStart = Date.now();
   const sample = await page.evaluate(() => new Promise(resolve => {
     const start = performance.now();
+    const publicBefore = {
+      pageElapsedMs: start,
+      publicText: document.body?.innerText?.slice(0, 8000),
+    };
     let last = start;
     let callbacks = 0;
     let maximumGap = 0;
@@ -24,6 +28,7 @@ async (page) => {
         callbackFps: callbacks * 1000 / (end - start),
         maximumFrameGapMs: Math.max(maximumGap, end - last),
         callbacksAreNotProofOfRenderedWork: true,
+        publicBefore,
         page: {
           url: location.href,
           title: document.title,

@@ -2,11 +2,12 @@
 
 # HarrTest 4.1 Gold candidate
 
-**Unreleased; validation continues.** After an earlier failed comparison,
-Luna-only development reached 23/24 with a working public play/restart journey
-and 27.16 sampled FPS in the observer's software-renderer profile. A fresh
-comparison on the corrected frozen harness is in progress. This candidate has
-not been published or installed globally.
+**Unreleased; validation continues.** Luna-only development delivered a working
+public play/restart journey at 27.16 sampled FPS. A stricter independent image
+review scored it 21/24 against 20/24 for the retained fresh control; both lacked
+demonstrated crafted detail. A new Luna trial tests a general finishing-intent
+review before production. This candidate has not been published or installed
+globally.
 [4.1 validation and retained failures](references/v4.1-validation.md)
 
 HarrTest is a skill and local workflow coordinator for coding agents. Gold

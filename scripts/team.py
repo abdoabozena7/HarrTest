@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from uuid import UUID, uuid4
 
 import proof
@@ -717,9 +718,18 @@ def command_result(value):
             return None
         return {'output': row['output'], 'session_id': sid,
                 'complete': type(row.get('exit_code')) is int}
-    # Legacy native text output remains supported, but not arbitrary JSON objects.
-    if any(block.lstrip().startswith(('{', '[', '"')) for block in blocks):
-        return None
+    # Stdout may contain a JSON diagnostic before a literal receipt line. Do
+    # not mistake that mixed text for a transport envelope, or search inside
+    # arbitrary JSON values for an embedded/escaped receipt.
+    for block in blocks:
+        candidate = block.lstrip()
+        if candidate.startswith(('{', '[', '"')):
+            try:
+                _, end = json.JSONDecoder().raw_decode(candidate)
+            except ValueError:
+                return None
+            if not re.search(r'^' + RECEIPT + r'[0-9a-f]{64}\s*$', candidate[end:], re.M):
+                return None
     running = re.search(r'Process running with session ID (\d+)', raw)
     complete = bool(re.search(r'Process exited with code -?\d+', raw))
     return {'output': raw, 'session_id': int(running[1]) if running else None,
@@ -889,6 +899,19 @@ def completed_receipt(row, at):
     return any(start <= at <= end for start, end in row['intervals'])
 
 
+class NativeTurnPending(ValueError):
+    def __init__(self, worker):
+        self.worker = worker
+        super().__init__(f'{worker}: handoff exists but its native turn has no completed end record yet')
+
+
+def require_receipt_turn_finished(row, receipts, worker):
+    active = row['active']
+    if active is not None and any(row['markers'].get(r['sha256']) is None
+                                  or row['markers'][r['sha256']] >= active for r in receipts):
+        raise NativeTurnPending(worker)
+
+
 def verify_native(project, state, parent, sessions, require_qa):
     plan = state['plan']
     tasks = {row['id']: row for row in plan['tasks']}
@@ -907,7 +930,10 @@ def verify_native(project, state, parent, sessions, require_qa):
         require(set(receipt['files']) == set(task['outputs']), f'{tid}: handoff scope changed')
         require(tid in logs, f'{tid}: missing direct native implementation worker')
         row = read_trace(project, *logs[tid], created)
-        require(row['id'] != parent and row['start'] >= created and row['end'],
+        require(row['id'] != parent and row['start'] >= created,
+                f'{tid}: invalid native implementation identity or start')
+        require_receipt_turn_finished(row, [receipt], tid)
+        require(row['end'],
                 f'{tid}: missing completed worker after the plan was sealed')
         at = receipt_event(row, receipt, tid)
         require(completed_receipt(row, at), f'{tid}: handoff is from a turn that has not completed')
@@ -953,6 +979,9 @@ def verify_native(project, state, parent, sessions, require_qa):
                 and check['exit_code'] == 0, 'Independent runtime check is incomplete or stale')
         require('qa' in logs, 'No native independent QA session')
         reviewer = read_trace(project, *logs['qa'], created)
+        require(reviewer['id'] not in {parent, *(v['id'] for v in builds.values())},
+                'QA must be a distinct worker')
+        require_receipt_turn_finished(reviewer, [qa, check], 'qa')
         qa_at = receipt_event(reviewer, qa, 'QA')
         check_at = receipt_event(reviewer, check, 'QA check')
         require(reviewer['id'] not in {parent, *(v['id'] for v in builds.values())}
@@ -969,7 +998,7 @@ def codex_sessions():
     return Path(os.environ.get('CODEX_HOME') or (Path.home() / '.codex')) / 'sessions'
 
 
-def verify_registered(project, team_id, *, require_qa=True, parent=None, sessions=None):
+def _verify_once(project, team_id, *, require_qa=True, parent=None, sessions=None):
     try:
         project = Path(project).resolve()
         state = load_state(project, team_id)
@@ -977,8 +1006,27 @@ def verify_registered(project, team_id, *, require_qa=True, parent=None, session
             location = team_path(project, team_id, 'host.json', must_exist=False)
             parent = proof.load(location)['parent'] if location.is_file() else os.environ.get('CODEX_THREAD_ID')
         return verify_native(project, state, parent, Path(sessions or codex_sessions()), require_qa)
+    except NativeTurnPending as exc:
+        return {'passed': False, 'errors': [str(exc)], 'team': team_id,
+                'status': 'pending-native-turn', 'retryable': True,
+                'pending_workers': [exc.worker], 'mission_complete': False,
+                'next': 'Check the native worker status. Wait for a running turn to finish, then verify again; '
+                        'resume the same owner if it ended or errored without completing its handoff. '
+                        'Pending evidence does not finish the original task.'}
     except (ValueError, TypeError, KeyError, AttributeError, OSError, proof.ProofError) as exc:
         return {'passed': False, 'errors': [str(exc)], 'team': team_id}
+
+
+def verify_registered(project, team_id, *, require_qa=True, parent=None, sessions=None, wait_seconds=0):
+    if type(wait_seconds) not in (int, float) or not 0 <= wait_seconds <= 30:
+        return {'passed': False, 'errors': ['Native-turn grace must be between 0 and 30 seconds'], 'team': team_id}
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        result = _verify_once(project, team_id, require_qa=require_qa, parent=parent, sessions=sessions)
+        remaining = deadline - time.monotonic()
+        if not result.get('retryable') or remaining <= 0:
+            return result
+        time.sleep(min(0.2, remaining))
 
 
 def main(argv=None):
@@ -1005,13 +1053,15 @@ def main(argv=None):
         if action == 'verify':
             command.add_argument('--parent')
             command.add_argument('--production-only', action='store_true')
+            command.add_argument('--wait-seconds', type=float, default=5)
     args = parser.parse_args(argv)
     project = args.project.resolve()
     try:
         if args.command == 'init':
             result = init(project, proof.load(strict_io.scoped_path(project, args.plan)))
         elif args.command == 'verify':
-            result = verify_registered(project, args.team, require_qa=not args.production_only, parent=args.parent)
+            result = verify_registered(project, args.team, require_qa=not args.production_only,
+                                       parent=args.parent, wait_seconds=args.wait_seconds)
             if result['passed'] and args.parent:
                 path = team_path(project, args.team, 'host.json', must_exist=False)
                 if not path.exists():

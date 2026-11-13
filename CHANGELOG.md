@@ -15,6 +15,10 @@
   immutable QA narratives across replays.
 - Challenge a concrete finishing brief before production, bind it to worker
   packets, and separate recognition, workmanship and temporal evidence in QA.
+- Distinguish a still-finishing native worker from a completed handoff; allow
+  bounded receipt-log grace without treating timeout as task acceptance.
+- Retain both timing endpoint states and reject mixed lifecycle phases as
+  evidence of a product clock slowdown.
 
 - Route independent production scopes to native implementation workers before
   the coordinator writes integration glue. Keep review as a separate role.

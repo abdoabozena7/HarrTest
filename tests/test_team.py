@@ -9,6 +9,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from uuid import uuid4
 
@@ -48,6 +50,69 @@ class ProductionTeam(unittest.TestCase):
 
     def stamp(self, sec):
         return (self.clock + timedelta(seconds=sec)).isoformat()
+
+    def hold_native_turn_open(self, role):
+        for path in self.logs.glob('*.jsonl'):
+            rows = [json.loads(s) for s in path.read_text(encoding='utf-8').splitlines()]
+            source = rows[0]['payload']['source']
+            if not isinstance(source, dict) or source['subagent']['thread_spawn']['agent_path'] != '/root/' + role:
+                continue
+            ending = next(r for r in rows if r['type'] == 'event_msg' and r['payload']['type'] == 'task_complete')
+            rows.remove(ending)
+            path.write_text(''.join(json.dumps(r) + '\n' for r in rows), encoding='utf-8')
+            return path, ending
+        self.fail('No native role trace to hold open')
+
+    def test_handoff_does_not_complete_a_still_open_native_turn(self):
+        self.deliver()
+        self.hold_native_turn_open('parser')
+        result = self.verify()
+        self.assertFalse(result['passed'])
+        self.assertTrue(result['retryable'])
+        self.assertFalse(result['mission_complete'])
+        self.assertEqual(result['pending_workers'], ['parser'])
+        expired = team.verify_registered(self.project, 'report', parent=self.parent,
+                                         sessions=self.sessions, wait_seconds=0.05)
+        self.assertFalse(expired['passed'])
+        self.assertEqual(expired['status'], 'pending-native-turn')
+
+    def test_grace_observes_real_worker_completion_before_accepting(self):
+        self.deliver()
+        path, ending = self.hold_native_turn_open('parser')
+        self.assertFalse(self.verify()['passed'])
+        def finish():
+            time.sleep(0.15)
+            with path.open('a', encoding='utf-8') as target:
+                target.write(json.dumps(ending) + '\n')
+        writer = threading.Thread(target=finish)
+        writer.start()
+        try:
+            result = team.verify_registered(self.project, 'report', parent=self.parent,
+                                            sessions=self.sessions, wait_seconds=2)
+        finally:
+            writer.join()
+        self.assertTrue(result['passed'], result)
+
+    def test_pending_qa_never_becomes_acceptance_by_timeout(self):
+        self.deliver()
+        self.hold_native_turn_open('qa')
+        result = team.verify_registered(self.project, 'report', parent=self.parent,
+                                        sessions=self.sessions, wait_seconds=0.05)
+        self.assertFalse(result['passed'])
+        self.assertEqual(result['pending_workers'], ['qa'])
+
+    def test_completed_handoffs_survive_a_later_open_turn_without_changes(self):
+        self.deliver()
+        for path in self.logs.glob('*.jsonl'):
+            source = team.log_meta(path)['source']
+            if not isinstance(source, dict):
+                continue
+            role = source['subagent']['thread_spawn']['agent_path'].rsplit('/', 1)[-1]
+            if role in ('parser', 'qa'):
+                with path.open('a', encoding='utf-8') as target:
+                    target.write(json.dumps({'type': 'event_msg', 'timestamp': self.stamp(27),
+                                             'payload': {'type': 'task_started'}}) + '\n')
+        self.assertTrue(self.verify()['passed'], self.verify())
 
     def source(self, rel, content):
         path = self.project / rel
@@ -403,6 +468,33 @@ class ProductionTeam(unittest.TestCase):
             with self.subTest(options=options):
                 self.shell_check_trace(**options)
                 self.assertIn('QA check: missing native tool receipt', self.verify()['errors'][0])
+
+    def test_json_diagnostic_stdout_preserves_a_separate_native_receipt(self):
+        self.deliver()
+        self.shell_check_trace(direct=True)
+        path = next(p for p in self.logs.glob('*.jsonl')
+                    if team.log_meta(p).get('source', {}) != 'exec'
+                    and team.log_meta(p)['source']['subagent']['thread_spawn']['agent_path'] == '/root/qa')
+        rows = [json.loads(s) for s in path.read_text(encoding='utf-8').splitlines()]
+        check = team.current_receipt(self.project, self.state, 'check')
+        for row in rows:
+            payload = row['payload']
+            if payload.get('call_id') == 'record0':
+                if payload['type'] == 'custom_tool_call':
+                    payload['input'] = payload['input'].replace('text(JSON.stringify(r));', 'text(r.output);')
+                else:
+                    payload['output'] = [{'text': 'Script completed\nWall time 0.1 seconds\nOutput:\n'},
+                        {'text': '{"focused_check":"passed","count":27}\n' + team.RECEIPT + check['sha256'] + '\n{}\n'}]
+        path.write_text(''.join(json.dumps(r) + '\n' for r in rows), encoding='utf-8')
+        self.assertTrue(self.verify()['passed'], self.verify())
+
+    def test_embedded_json_receipt_is_not_literal_stdout_evidence(self):
+        marker = team.RECEIPT + 'a' * 64
+        for block in (json.dumps({'output': marker}), json.dumps(marker),
+                      json.dumps({'output': '\n' + marker + '\n'}), '{bad json}\n' + marker):
+            with self.subTest(block=block):
+                self.assertIsNone(team.command_result([
+                    {'text': 'Script completed\nOutput:\n'}, {'text': block}]))
 
     def test_echoed_command_source_and_extra_text_do_not_establish_command_lineage(self):
         valid = 'const r = await tools.exec_command({cmd:"python scripts/team.py handoff"}); text(JSON.stringify(r));'

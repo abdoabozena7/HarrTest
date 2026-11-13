@@ -40,7 +40,14 @@ npx.cmd --offline --package @playwright/cli playwright-cli run-code --filename <
 Run it after the public main interaction under the declared profile. It reports
 page/driver elapsed time, callback rate, largest frame gap, canvas dimensions
 and public text. Compare visible product progress across the sample and inspect
-real frames separately. It does not test controls, assert quality, discover the
+real frames separately. Retain both endpoint states: a product clock or progress
+ratio needs a coherent active interval. A window crossing loading, countdown,
+pause, reset or completion cannot diagnose slowdown from its total wall time.
+Use a public active-state window, or bound the actual active duration with
+observed transition times. A clock intentionally frozen at completion is not a
+responsiveness defect. Mark a mixed-state sample inconclusive and repeat it;
+neither accept nor repair product behavior from that ratio alone.
+It does not test controls, assert quality, discover the
 effective rendering backend, or prove that callbacks rendered useful content.
 
 ## Inventory and exercise

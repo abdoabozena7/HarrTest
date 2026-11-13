@@ -98,6 +98,12 @@ Keep the exact packet name and its runtime-discovery instructions. A short
 replacement such as "review the fix" loses the project, tools and evidence
 contract. Inspect final native status and current receipts before repeating
 a wait; a completed or failed worker will not produce a new result unaided.
+The CLI allows a five-second grace for the native completion record after a
+handoff. `verify --wait-seconds 0` checks immediately; the maximum grace is
+30 seconds. A still-open receipt turn returns `pending-native-turn` with
+`passed: false` and `mission_complete: false`. Check the actual host status:
+wait for a running owner or resume an interrupted owner with the full packet.
+Elapsed grace never substitutes for the required completed native record.
 
 ## Early measurement and failed acceptance
 
