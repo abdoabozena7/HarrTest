@@ -24,6 +24,15 @@ user's .copilot/session-state. It reads only the selected session's native event
 and keeps actual subprocess output and source hashes separate from host metadata.
 See [Corporate workflow](corporate-workflow.md) for the root quality contract.
 
+For a narrow change, the coordinator retains a compact contract/baseline and
+dispatches its one implementation packet, then collects the handoff, integrates
+without a token glue edit and dispatches the independent QA packet. QA runs the
+real old/new checks and records all six quality layer applicability/verdicts with
+observations in its evidence. Do not skip the native tester because the fix is
+small. Team receipts prove scopes, lifecycle and process results; six-layer
+semantic completeness of this lightweight narrative needs actual review.
+Use corporate-v1 for mechanically structured six-layer root acceptance.
+
 ## Legacy schema1 (4.1)
 
 The remaining instructions describe schema1, including its minimum-worker and

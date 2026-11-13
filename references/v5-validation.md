@@ -46,5 +46,46 @@ with explicit per-session configuration; full policy-preserving discovery and
 three-arm isolation are being tested before any held comparison.
 No personal skill, policy or authentication settings are changed for comparison.
 
+## Independent controller review
+
+An independent reviewer reproduced six concrete defects in development. All six
+were subsequently rerun and closed on the repaired source, within the tested scope:
+
+| Original defect | Closure checked independently |
+| --- | --- |
+| A declared output could sit outside verification roots. | Directional containment rejects uncovered outputs/impact paths before sealing. |
+| Exact rename/delete scopes failed through the old collector. | Explicit absent_source_paths supports real baseline/candidate runs, with stale/resurrection/midrun-change rejection. |
+| A schema4 root could close without native implementation/QA. | Full root requires a matching schema2 Team; missing marker, QA, identity or ownership prevents completion. |
+| A timed-out comparison arm could never receive a failure review. | Reviewed failed attempts stay failed in the fixed denominator; a VERIFIED claim cannot turn them into success. |
+| Frozen experiments did not bind every declared toolchain artifact. | Changes to executable/setup/dependency identities invalidate that experiment. |
+| The package filter removed production validation guides. | Explicit report/corpus exclusions preserve the actual CLI/browser/simulation workflow references. |
+
+Original reproductions and before/after controls remain under
+`output/v5-corporate/independent-review/`. This is controller evidence, not a live
+model quality improvement. Native-format unit fixtures are explicitly synthetic;
+real CLI/SDK parser observations are reported separately from full native acceptance.
+
+## Live development, not final acceptance
+
+Two model accounts have been observed through the actual Copilot runtime:
+gpt-6-luna and gpt-6.1-sol. The SDK isolation probe explicitly enables ordinary
+configuration discovery, skills, file hooks and host Git operations in every arm.
+It observes HarrTest disabled in the plain session and the exact project package
+selected in each skill session, while retaining normal non-HarrTest discovery.
+
+The first bounded development task completed through Copilot/Luna and passed its
+external functional checks. A new eight-case V5/Luna development run is in flight
+under `development-smoke-2`, with its older complete pin and retained evaluator.
+It predates later controller repairs and is diagnostic, not final acceptance.
+Functional success, workflow compliance and independently reviewed full quality
+are separate outcomes; none is silently substituted for another.
+
+The initial synthetic cases share related language-specific codebases. Final
+comparison is therefore an unseen-task/outcome comparison on related families,
+not unseen-family generalization. Two acceptance tasks are being expanded into
+multiple interacting components before any held model outcomes are observed.
+The remaining tasks cover bounded bugs and resource behavior. This mixed corpus
+does not establish enterprise-wide reliability or superiority to all harnesses.
+
 Detailed local artifacts will remain under `output/v5-corporate/`; private raw
 sessions are not automatically published with the skill.

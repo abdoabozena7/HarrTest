@@ -39,13 +39,24 @@ Use a schema-4 root with `protocol: corporate-v1` and a schema-2 Team plan.
 Keep the original verification meaning of existing schema-2/3 roots and schema-1
 teams; do not migrate active contracts silently.
 
+Choose the evidence path before the first product edit. A narrow change still
+uses one native implementation owner and a distinct testing/review worker through
+Team schema2; its integration outputs can be empty. Keep its task brief, preserved
+contract/baseline, actual checks and six layer applicability/verdict observations
+in the retained QA evidence. This lightweight path relies on inspected review
+evidence; corporate-v1 is the structured six-layer root gate for substantive work.
+Small size removes unnecessary implementation splits, not independent testing.
+The coordinator must not implement the narrow change itself and substitute its
+own tests for the independent worker. If delegation is actually unavailable,
+record that capability gap and leave native acceptance UNVERIFIED.
+
 Split along existing component/interface boundaries. Give each worker the
 original goal, necessary context, read/write scope, lifecycle invariants, baseline,
 risks and expected checks. A review or planning role is not an implementation owner.
 
 Use native workers for independently deliverable implementation scopes. Dispatch
 ready independent tasks together; dependent tasks wait for current handoffs.
-A narrow change can have one implementation owner and an independent tester.
+A narrow change has one implementation owner and an independent tester.
 Do not invent parallel work or extra files to satisfy a worker count. Split a
 complex scope further only when its deliverables can be independently checked.
 Reuse the active model and effort unless the user selected otherwise.
