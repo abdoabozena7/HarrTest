@@ -35,6 +35,11 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.experiment = self.root / "experiment"
         self.fake_probe = {"tools": {"python":sys.executable,"node":shutil.which("node"),"copilot":"fixture-only"},
                            "blocked":[], "assurance":"unit-test substitution, not a capability observation"}
+        tools_path=ROOT/'output/v5-corporate/evaluation-tools.json'
+        if tools_path.is_file():
+            tools=bench.load(tools_path)
+            for key in ['tsc','node_types']:
+                if tools.get(key):self.fake_probe['tools'][key]=tools[key]
 
     def freeze(self):
         with patch.object(bench, "preflight", return_value=self.fake_probe):
@@ -197,6 +202,11 @@ class CorporateBenchmarkTests(unittest.TestCase):
         p=self.root/'bad.json';p.write_text('{"a":1,"a":2}')
         with self.assertRaises(ValueError):bench.load(p)
 
+    def test_nested_json_types_cannot_false_accept_boolean_as_integer(self):
+        self.assertFalse(bench.same_value({'enabled':0,'limit':False},{'enabled':False,'limit':0}))
+        self.assertFalse(bench.same_value([{'accepted':1}],[{'accepted':True}]))
+        self.assertTrue(bench.same_value({'enabled':False,'limit':0},{'enabled':False,'limit':0}))
+
     @unittest.skipUnless(shutil.which('node'),'Node required for actual TypeScript runtime')
     def test_typescript_oracle_accepts_positive_control(self):
         p=self.attempt('ts-explicit-limit');core=p/'work/rules.ts'
@@ -284,9 +294,21 @@ class CorporateBenchmarkTests(unittest.TestCase):
         (p/'work/cli.ts').write_text("import fs from 'node:fs';\nimport {evaluate} from './rules.ts';\ntry { const text=process.argv[2]==='--config'?fs.readFileSync(process.argv[3],'utf8'):process.argv[2]; console.log(evaluate(text)); } catch { console.error('Invalid configuration'); process.exitCode=1; }\n")
         good=bench.evaluate_attempt(p)
         self.assertTrue(good['functional_passed'])
-        self.assertTrue(good['automated_artifact_passed'])
-        self.assertTrue(good['documented_contract_and_adapter_preserved'])
+        if self.fake_probe['tools'].get('tsc'):
+            self.assertTrue(good['automated_artifact_passed'])
+            self.assertTrue(good['documented_contract_and_adapter_preserved'])
+        else:self.assertEqual(good['type_correctness'],'UNVERIFIED')
         self.assertFalse(good['complete_quality_passed'])
+
+    @unittest.skipUnless(shutil.which('node'),'Node required')
+    def test_runtime_success_does_not_hide_typescript_type_error(self):
+        if not self.fake_probe['tools'].get('tsc'):self.skipTest('Pinned TypeScript compiler unavailable')
+        p=self.attempt('ts-explicit-limit');core=p/'work/rules.ts'
+        core.write_text(core.read_text().replace(' || ',' ?? ')+'\nconst typeOnlyDefect: number = "wrong type";\n')
+        result=bench.evaluate_attempt(p)
+        self.assertTrue(result['functional_passed'])
+        self.assertEqual(result['type_correctness'],'FAIL')
+        self.assertFalse(result['automated_artifact_passed'])
 
     def test_multicomponent_csharp_api_and_public_adapter_positive_control(self):
         dotnet=ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe'

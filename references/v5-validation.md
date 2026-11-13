@@ -11,6 +11,14 @@ failures in 79.323 seconds on Windows/Python3.13.7 before V5 integration.
 The baseline log is retained in `.runtime-proof/v5-implementation/baseline-tests.log`.
 Its scope is controller compatibility, not proof of generated code quality.
 
+The integrated V5 tree subsequently ran **430 tests, four skipped, zero failures**
+in 185.190s. A later focused31-case evaluator run also passed, including strict
+JSON type equality and an actual TypeScript compiler check. The earlier failed
+integration runs remain retained: one exposed the intentional root-Team requirement
+before fixtures were updated; another imported an evaluator while it was being
+edited. They are not replaced or presented as passed. Final live-model comparison
+and subsequent session-pinning changes require their own validation.
+
 ## Planned live comparison
 
 Eight development cases and eight separate acceptance cases cover existing

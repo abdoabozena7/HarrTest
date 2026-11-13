@@ -132,19 +132,22 @@ def preflight(tools=None):
              for k in ("copilot", "node", "python", "dotnet", "tsc")}
     found["python"] = found["python"] or sys.executable
     found["cxx"] = tools.get("cxx") or ([shutil.which("clang++") or shutil.which("g++")] if shutil.which("clang++") or shutil.which("g++") else None)
-    for key in ("sdk", "runtime", "msvc_env", "identity_files"):
+    for key in ("sdk", "runtime", "msvc_env", "identity_files", "node_types"):
         if tools.get(key):
             found[key] = tools[key]
     versions = {}
     for key in ("copilot", "node", "python", "dotnet", "tsc"):
         if found[key]:
             args = [found[key], "--list-sdks" if key == "dotnet" else "--version"]
+            if key=='tsc' and str(found[key]).endswith('.js'):args=[found['node'],*args]
             versions[key] = command(args, ROOT, 30)
     if found["cxx"]:
         versions["cxx"] = command([*found["cxx"], "--version"], ROOT, 30)
     blocked = [k for k in ("copilot", "node", "python", "cxx") if not found[k]]
     if not found["dotnet"] or not versions["dotnet"]["stdout"].strip():
         blocked.append("dotnet-sdk")
+    if not found['tsc'] or not found.get('node_types'):
+        blocked.append('typescript-compiler-and-node-types')
     if found.get("sdk") and found.get("runtime"):
         versions["runtime"] = command([*found["runtime"], "--version"], ROOT, 30)
     return {"schema": 1, "tools": found, "versions": versions, "blocked": blocked,
@@ -236,6 +239,16 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
         sdk = Path(probe["tools"]["sdk"]).resolve()
         for p in sdk.parent.rglob("*.js"):
             runtime_files[str(p.resolve())] = sha(p)
+    if probe['tools'].get('tsc'):
+        tsc=Path(probe['tools']['tsc']).resolve()
+        # TypeScript's entrypoint delegates to adjacent compiler libraries and
+        # default declaration files; bind those dependencies, not just a shim.
+        if tsc.suffix=='.js':
+            for p in tsc.parent.rglob('*'):
+                if p.is_file():runtime_files[str(p.resolve())]=sha(p)
+    if probe['tools'].get('node_types'):
+        for p in Path(probe['tools']['node_types']).rglob('*'):
+            if p.is_file():runtime_files[str(p.resolve())]=sha(p)
     plan["runtime_files"] = runtime_files
     save(destination / "protocol.json", plan, exclusive=True)
     save(destination / "seal.json", {"protocol_sha256": digest(plan)}, exclusive=True)
@@ -462,7 +475,13 @@ def build_program(workspace, output, lang, tools):
     if lang == "typescript":
         driver = output / "driver.mjs"
         driver.write_text("import {evaluate} from " + json.dumps((workspace / "rules.ts").as_uri()) + ";\ntry {console.log(evaluate(process.argv[2]));} catch {console.log('ERROR');}\n", encoding="utf-8")
-        return [tools["node"], "--experimental-strip-types", str(driver)], []
+        typing={'role':'typecheck','exit_code':None,'stdout':'','stderr':'Pinned TypeScript compiler and Node declaration files unavailable','timed_out':False,'status':'UNVERIFIED'}
+        if tools.get('tsc') and tools.get('node_types'):
+            compiler=[tools['node'],tools['tsc']] if str(tools['tsc']).endswith('.js') else [tools['tsc']]
+            sources=[str(p) for p in workspace.rglob('*.ts') if not any(part in SKIP for part in p.relative_to(workspace).parts)]
+            typing=command([*compiler,'--noEmit','--strict','--skipLibCheck','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','--allowImportingTsExtensions','--typeRoots',tools['node_types'],*sources],workspace,90)
+            typing['role']='typecheck';typing['status']='PASS' if typing['exit_code']==0 else 'FAIL'
+        return [tools["node"], "--experimental-strip-types", str(driver)], [typing]
     if lang == "csharp":
         for src in workspace.rglob('*.cs'):
             if src.name=='Program.cs' or any(part in SKIP for part in src.relative_to(workspace).parts):continue
@@ -537,6 +556,14 @@ def parse_output(stdout):
     except ValueError: return value
 
 
+def same_value(actual, expected):
+    """JSON value equality must not equate false with0 or true with1."""
+    if type(actual) is not type(expected):return False
+    if isinstance(expected,dict):return set(actual)==set(expected) and all(same_value(actual[k],v) for k,v in expected.items())
+    if isinstance(expected,list):return len(actual)==len(expected) and all(same_value(a,b) for a,b in zip(actual,expected))
+    return actual==expected
+
+
 def evaluate_attempt(attempt):
     attempt = Path(attempt).resolve()
     experiment, plan = frozen(attempt.parents[1])
@@ -548,12 +575,13 @@ def evaluate_attempt(attempt):
     invocation, builds = build_program(workspace, evidence / "build", meta["case"]["language"], toolchain(plan))
     checks = []
     performance = {'status':'UNVERIFIED','reason':'Independent applicability review/measurement required for non-benchmark-critical performance.'}
-    build_ok = all(x["exit_code"] == 0 and not x["timed_out"] for x in builds)
+    build_ok = all(x["exit_code"] == 0 and not x["timed_out"] for x in builds if x.get('role')!='typecheck')
+    typecheck=next((x for x in builds if x.get('role')=='typecheck'),None)
     def exercise(label, text, expected):
         raw = command([*invocation,text], evidence, 20)
         observed = raw["stdout"].strip() if isinstance(expected, str) else parse_output(raw["stdout"])
         checks.append({"check":label,"input":text,"expected":expected,"observed":observed,"execution":raw,
-                       "passed":raw["exit_code"]==0 and not raw["timed_out"] and type(observed) is type(expected) and observed==expected})
+                       "passed":raw["exit_code"]==0 and not raw["timed_out"] and same_value(observed,expected)})
     if build_ok:
         case = meta["case"]
         if case["language"] == "python":
@@ -587,10 +615,10 @@ def evaluate_attempt(attempt):
                     input_file=evidence/'public-input.json';input_file.write_text(json.dumps(inp),encoding='utf-8')
                     raw=command([*public,option,str(input_file)],workspace,20)
                     observed=parse_output(raw['stdout'])
-                    checks.append({'check':'public-file-adapter','expected':expected,'observed':observed,'execution':raw,'passed':raw['exit_code']==0 and observed==expected})
+                    checks.append({'check':'public-file-adapter','expected':expected,'observed':observed,'execution':raw,'passed':raw['exit_code']==0 and same_value(observed,expected)})
                     text=ordinary[0][0];raw=command([*public,text],workspace,20)
                     observed=raw['stdout'].strip() if isinstance(ordinary[0][1],str) else parse_output(raw['stdout'])
-                    checks.append({'check':'public-positional-preserved','expected':ordinary[0][1],'observed':observed,'execution':raw,'passed':raw['exit_code']==0 and observed==ordinary[0][1]})
+                    checks.append({'check':'public-positional-preserved','expected':ordinary[0][1],'observed':observed,'execution':raw,'passed':raw['exit_code']==0 and same_value(observed,ordinary[0][1])})
                     sentinel='PRIVATE_INVALID_INPUT_7491';input_file.write_text('{'+sentinel,encoding='utf-8')
                     raw=command([*public,option,str(input_file)],workspace,20)
                     output=raw['stdout']+raw['stderr']
@@ -640,6 +668,8 @@ def evaluate_attempt(attempt):
                                             for n in nodes)
     except (OSError,SyntaxError):tests_have_observable_assertion=False
     architecture=architecture and tests_have_observable_assertion
+    if meta['case']['language']=='typescript':
+        architecture=architecture and typecheck is not None and typecheck.get('status')=='PASS'
     changed=[r for r in sorted(set(before)|set(baseline)) if before.get(r)!=baseline.get(r)]
     functionality=build_ok and bool(checks) and all(x['passed'] for x in checks)
     preservation=[x for x in checks if x['check'].startswith('preservation') or x['check'] in {'ordinary-persistence','public-positional-preserved'}]
@@ -659,6 +689,7 @@ def evaluate_attempt(attempt):
             'builds':builds,'checks':checks,'source_before':before,'source_after':after,'unchanged_by_evaluator':before==after,
             'changed_files':changed,'documented_contract_and_adapter_preserved':architecture,
             'existing_tests_changed':tests_changed,'existing_tests_have_observable_assertion':tests_have_observable_assertion,
+            'type_correctness':typecheck.get('status') if typecheck else 'NOT_APPLICABLE',
             'test_oracle_preservation':'Independent semantic review required for changed tests' if tests_changed else 'Original test source unchanged',
             'functional_passed':functionality,'automated_artifact_layers':layers,
             'automated_artifact_passed':functionality and architecture and before==after and all(row['status'] in {'PASS','NOT_APPLICABLE'} for row in layers.values()),
