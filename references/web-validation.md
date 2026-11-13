@@ -55,6 +55,11 @@ Use a public active-state window, or bound the actual active duration with
 observed transition times. A clock intentionally frozen at completion is not a
 responsiveness defect. Mark a mixed-state sample inconclusive and repeat it;
 neither accept nor repair product behavior from that ratio alone.
+Use the same clock origin for numerator and denominator. Retain the public
+product-clock value at both endpoints; a keyboard action may occur after that
+clock has already started. If elapsed time appears only at completion, anchor
+the wall interval to the observed state that starts the clock, or mark its
+initial offset unverified. Do not silently assume zero at a later input event.
 It does not test controls, assert quality, discover the
 effective rendering backend, or prove that callbacks rendered useful content.
 

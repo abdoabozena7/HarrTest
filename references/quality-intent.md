@@ -121,6 +121,24 @@ on current captures. Give independent QA the current finishing review alongside
 its complete packet; it cannot replace runtime or user-path verification. A
 missing/failed row for a major component leaves visual acceptance open.
 
+Do not review only the overall silhouette or palette. For every major visual
+component, inspect a normal full frame and a focused native-resolution detail
+capture chosen by the reviewer. Use the real browser's element/region capture;
+retain the full-frame pair and region coordinates. Do not upscale, generate or
+retouch evidence. Check surfaces, boundaries and joins in more than one public
+interaction state, including a foreground/detail view when available. A broad
+combined row must not let a finished subpart excuse an unfinished neighboring
+subpart; report their finishing separately when needed.
+
+Persistent stray lines, speckling, broken faces, unstable depth/overlap, clipping
+or discontinuities are rendering defects to investigate, even when objects are
+recognizable and the art direction is coherent. Distinguish intended facets and
+ordinary edge aliasing from those defects by comparing actual views and source
+structure. An ACCEPT needs inspected evidence of clean, stable relationships,
+not an assertion that every primitive fits the style. If the broad review misses
+a defect, narrow the next review to the component and its observable surfaces;
+keep production repairs with that component's existing owner.
+
 Independent QA maps the accepted criteria to observed evidence and gives
 functional, workmanship and responsiveness verdicts. A recognizable but
 unfinished main artifact remains a quality failure. Inspect the actual output

@@ -22,12 +22,15 @@
   refine the first runnable draft rather than accepting a parts inventory.
 - Give draft workmanship a focused native reviewer and visible component owners
   a real preview; close major finishing gaps separately from runtime QA.
+- Inspect native-resolution detail regions across states so coherent styling
+  cannot hide persistent surface, join, clipping or depth artifacts.
 - Check decisive runtime constraints before terminal replays; distinguish missing
   instrumentation from a measured product failure.
 - Distinguish a still-finishing native worker from a completed handoff; allow
   bounded receipt-log grace without treating timeout as task acceptance.
 - Retain both timing endpoint states and reject mixed lifecycle phases as
   evidence of a product clock slowdown.
+- Use the same public clock origin for both progress and wall-time intervals.
 
 - Route independent production scopes to native implementation workers before
   the coordinator writes integration glue. Keep review as a separate role.
