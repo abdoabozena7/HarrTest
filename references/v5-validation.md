@@ -34,6 +34,24 @@ at low reasoning effort, with the same 2,400-second and 120-AI-credit caps for
 each attempt. Independent assessments are recorded as attempts complete.
 The local protocol, journal and partial summary are under `output/v5-corporate/acceptance-v5-1/`.
 
+The first matched block used Luna on the Python batch-atomicity request. All
+three artifacts passed the frozen executable suite. Independent reviewers
+confirmed both control runs and reproduced a V5 case in which a malformed
+optional flag led to writes before rejection. The V5 response claimed that
+invalid input left state unchanged, so the archived assessor recorded one false
+accept. Its separate Team verification failure was disclosed in the response.
+
+| Arm | Independent complete quality | Generation seconds | Copilot AI credits |
+| --- | --- | ---: | ---: |
+| No HarrTest | PASS | 251.580 | 0.601154 |
+| 4.1 | PASS | 344.937 | 0.6370595 |
+| V5 | FAIL | 1625.464 | 6.038285 |
+
+The V5 usage receipt reconciled with the parent and its child actors. This block
+covers one case, one model and one repetition. The original comparison retains
+the measured results. Any further iteration that uses this finding must replace
+the consumed case in the next held corpus before measuring improvement.
+
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
 Record source/current-config identities, raw tool results, model/subagent usage,
