@@ -11,9 +11,8 @@ failures in 79.323 seconds on Windows/Python3.13.7 before V5 integration.
 The baseline log is retained in `.runtime-proof/v5-implementation/baseline-tests.log`.
 Its scope is controller compatibility, not proof of generated code quality.
 
-The integrated V5 tree subsequently ran **430 tests, four skipped, zero failures**
-in 185.190s. A later focused31-case evaluator run also passed, including strict
-JSON type equality and an actual TypeScript compiler check. The earlier failed
+The integrated V5 tree at `3c9174e` ran **462 tests, four skipped, zero failures**
+in 201.012s. The earlier failed
 integration runs remain retained: one exposed the intentional root-Team requirement
 before fixtures were updated; another imported an evaluator while it was being
 edited. They are not replaced or presented as passed. Final live-model comparison
@@ -127,6 +126,20 @@ Native verification reported UNVERIFIED. The frozen runner also marked the
 attempt INVALID when Python generated five import caches. The next runner
 suppresses imports' bytecode writes and distinguishes ordinary caches from
 mutations of source, settings or policies. The historical classification remains.
+
+Development-smoke7 completed in 197.359s, consuming 2.1149445 AI credits. All
+three actors used gpt-6-luna/low, the four external checks passed, and independent
+replay authenticated implementation provenance. Full Team verification failed
+because the reviewer was unable to write the required private receipt.
+
+Development-smoke8 selected a reviewer that could write private evidence. All
+three actors used gpt-6-luna/low. The attempt completed in 348.622s, consuming
+3.8278575 AI credits, with four passing external checks. The QA worker ran the
+targeted checks; the coordinator replayed the existing test. In a resumed QA
+turn the worker inspected that replay and wrote a review receipt. Native Team
+verification failed because the adapter could not read the resumed worker turn.
+The evaluator now supplies workspace-local temporary paths to all three arms
+so standard test scratch APIs can operate within the same project permission scope.
 
 The schema2 log adapter independently passed a long-session compatibility probe
 and replay controls for real model/effort changes. The old 4.1-pinned production

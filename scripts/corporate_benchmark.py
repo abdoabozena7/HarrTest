@@ -194,6 +194,21 @@ def msvc_environment(path):
     return environment
 
 
+def generation_environment(workspace, tools):
+    environment = msvc_environment(tools['msvc_env']) if tools.get('msvc_env') else dict(os.environ)
+    scratch = workspace / '.runtime-proof' / 'scratch'
+    scratch.mkdir(parents=True, exist_ok=False)
+    for name in ('TEMP', 'TMP', 'TMPDIR'):
+        environment[name] = str(scratch)
+    environment['PYTHONDONTWRITEBYTECODE'] = '1'
+    if tools.get('dotnet'):
+        environment['PATH'] = str(Path(tools['dotnet']).parent) + os.pathsep + environment.get('PATH', '')
+        environment['DOTNET_ROOT'] = str(Path(tools['dotnet']).parent)
+        environment['DOTNET_NOLOGO'] = '1'
+        environment['DOTNET_CLI_TELEMETRY_OPTOUT'] = '1'
+    return environment
+
+
 def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400, credits=120, corpus=CORPUS, kind='development', seed=20261114):
     destination = Path(destination).resolve()
     if destination.exists():
@@ -301,6 +316,7 @@ def fixture(case, tools=None):
     common = {"ARCHITECTURE.md": "The core Rules module owns domain behavior. The CLI is only an adapter.\nPreserve the public " + signature + " API. No external packages or services.\nDo not put domain cases into the CLI or change this contract to bypass acceptance.\n",
               ".gitignore": "bin/\nobj/\n__pycache__/\n.runtime-proof/\n.github/copilot/settings.local.json\n"}
     common['RUNTIME.md']='Python3.10+ is available. Node22+ runs TypeScript directly with --experimental-strip-types. C# targets net10.0. C++ targets C++17. The supplied process environment contains the pinned local toolchains. Existing checks: python check_existing.py.\n'
+    common['RUNTIME.md']+='The supplied process sets TEMP, TMP and TMPDIR to .runtime-proof/scratch within the project. Standard temporary-file APIs use this private location for build and test scratch data.\n'
     contracts={
         'csharp': '''Public wire contract (UTF-8 JSON in, one JSON value out):
 refund: {"op":"refund","age":2,"window":30} -> true; age/window are nonnegative integer days.
@@ -936,13 +952,7 @@ def _run_attempt(attempt, *, permit_generation=False):
     for path in (Path.home()/'.copilot/settings.json',):
         if path.is_file(): before_settings[str(path)]=sha(path)
     before_configuration=configuration_inputs(workspace)
-    environment=msvc_environment(tools['msvc_env']) if tools.get('msvc_env') else dict(os.environ)
-    environment['PYTHONDONTWRITEBYTECODE'] = '1'
-    if tools.get('dotnet'):
-        environment['PATH']=str(Path(tools['dotnet']).parent)+os.pathsep+environment.get('PATH','')
-        environment['DOTNET_ROOT']=str(Path(tools['dotnet']).parent)
-        environment['DOTNET_NOLOGO']='1'
-        environment['DOTNET_CLI_TELEMETRY_OPTOUT']='1'
+    environment=generation_environment(workspace,tools)
     raw=command(argv,workspace,budget['seconds']+30,env=environment)
     (attempt/'transport.stdout').write_text(raw.pop('stdout'),encoding='utf-8')
     (attempt/'generation.stderr').write_text(raw.pop('stderr'),encoding='utf-8')

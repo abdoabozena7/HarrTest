@@ -75,6 +75,9 @@ ask it to choose only passing labels. Overall unverified required checks cannot
 be a passing review. Do not restrict what defects the reviewer may report.
 
 Confirm the QA worker type can run checks and write the private evidence file.
+Give it the documented runtime and any approved workspace-local temporary
+paths it needs to rerun the project's existing checks on the integrated source.
+Reviewing an earlier coordinator run does not establish independent execution.
 In Copilot, use an available `general-purpose` worker when the built-in `task`
 worker's instructions prohibit file writes. The QA packet still prohibits
 editing product files. Pass the `--evidence` path exactly as printed in the packet.

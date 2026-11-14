@@ -217,6 +217,26 @@ class CorporateBenchmarkTests(unittest.TestCase):
                     else:
                         target.write_bytes(original)
 
+    def test_existing_check_can_use_private_workspace_scratch_in_every_arm(self):
+        self.freeze()
+        outside = {key: os.environ.get(key) for key in ('TEMP', 'TMP', 'TMPDIR')}
+        for arm in bench.ARMS:
+            with self.subTest(arm=arm):
+                attempt = bench.prepare(self.experiment, 'py-event-idempotency', arm, 'weak-observed', 1)
+                workspace = attempt / 'work'
+                before = bench.tree(workspace)
+                environment = bench.generation_environment(workspace, {})
+                scratch = workspace / '.runtime-proof' / 'scratch'
+                probe = ('from pathlib import Path; import tempfile; '
+                         'tmp = tempfile.TemporaryDirectory(); print(Path(tmp.name).parent)')
+                result = bench.command([sys.executable, '-c', probe], workspace, env=environment)
+                self.assertEqual(result['exit_code'], 0, result['stderr'])
+                self.assertEqual(Path(result['stdout'].strip()).resolve(), scratch.resolve())
+                check = bench.command([sys.executable, 'check_existing.py'], workspace, env=environment)
+                self.assertEqual(check['exit_code'], 0, check['stderr'])
+                self.assertEqual(bench.tree(workspace), before)
+                self.assertEqual({key: os.environ.get(key) for key in outside}, outside)
+
     def test_python_invalid_batch_really_preserves_disk_state_only_after_fix(self):
         p=self.attempt('py-batch-atomicity')
         result=bench.evaluate_attempt(p)
