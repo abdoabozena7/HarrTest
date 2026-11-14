@@ -52,6 +52,13 @@ covers one case, one model and one repetition. The original comparison retains
 the measured results. Any further iteration that uses this finding must replace
 the consumed case in the next held corpus before measuring improvement.
 
+The next candidate adds checks for the full affected input boundary, compares
+state before and after rejection, and asks reviewers to reproduce apparent
+inherited faults on the baseline. The consumed case is a development control
+with probes for malformed, false and true control values. A new existing-code
+case replaces it in the held set. The schedule still has eight development
+cases and 96 held slots, with 32 per arm. The new held slot has not been run.
+
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
 Record source/current-config identities, raw tool results, model/subagent usage,
