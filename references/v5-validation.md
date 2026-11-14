@@ -62,10 +62,12 @@ actor effort after execution. [GitHub SDK hook reference](https://docs.github.co
 
 The next candidate adds checks for the full affected input boundary, compares
 state before and after rejection, and asks reviewers to reproduce apparent
-inherited faults on the baseline. The consumed case is a development control
-with probes for malformed, false and true control values. A new existing-code
-case replaces it in the held set. The schedule still has eight development
-cases and 96 held slots, with 32 per arm. The new held slot has not been run.
+inherited faults on the baseline. The consumed atomicity case is a development
+control with probes for malformed, false and true control values. The credit
+case that informed the transport change also moved to development. Two distinct
+existing-code cases replace them in the held set. The schedule still has eight
+development cases and 96 held slots, with 32 per arm. The replacement cases
+await live results.
 At `ae28793`, the next candidate ran 477 tests in 259.549s with four skipped and
 zero failures. Independent review confirmed the new positive and adverse
 controls, the schedule, and the exclusion of the evaluator and corpus from the
