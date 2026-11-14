@@ -39,6 +39,15 @@ whole site, inventory important pages/controls, states, roles and breakpoints.
 For higher-risk changes, expand coverage deliberately. Do not exhaustively
 click destructive actions on real accounts merely to fill a matrix.
 
+For selective rules, include both intended targets and legitimate near matches;
+removal/rejection alone can hide overbroad loss of valid behavior. For multi-step
+calculations or state changes, check the contract's intermediate invariants and
+failure boundaries as well as final outputs. Distinguish an inherited limitation
+outside the changed contract from a new or requested behavior defect. Performance
+and resilience checks follow actual impact and budgets, not an assumption that
+all persisted collections must have constant space or every refactor must add
+unrequested input modes.
+
 ## Negative controls and anti-theater checks
 
 Use safe negative controls to establish that a meaningful failure is detectable:

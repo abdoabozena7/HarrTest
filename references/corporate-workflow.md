@@ -105,6 +105,11 @@ structure; it cannot authenticate local identities or automate semantic judgment
 Use project-approved risk-specific security analysis and misuse checks, not scan
 counts. Capture commands, runtime/tool versions, real outcomes and limitations.
 Minimize sensitive capture; document redaction and rebind changed evidence.
+For selective rejection/removal/transformation, test both the intended target and
+legitimate near matches. Connect the security outcome to preservation criteria:
+overbroad restrictions or loss of nonsensitive values/structure are defects even
+if a secret/invalid-input detector reports success. Use requirement-derived
+counterexamples rather than producer-selected easy examples alone.
 
 ```text
 python <skill>/scripts/proof.py verify --task .runtime-proof/verify

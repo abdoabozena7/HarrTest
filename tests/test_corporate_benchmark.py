@@ -1,11 +1,13 @@
 """Executable evaluator controls; these are not live-model quality results."""
 import copy
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,9 +43,9 @@ class CorporateBenchmarkTests(unittest.TestCase):
             for key in ['tsc','node_types']:
                 if tools.get(key):self.fake_probe['tools'][key]=tools[key]
 
-    def freeze(self):
+    def freeze(self,kind='development'):
         with patch.object(bench, "preflight", return_value=self.fake_probe):
-            return bench.freeze(self.experiment,self.old,self.new,["weak-observed","normal-observed"])
+            return bench.freeze(self.experiment,self.old,self.new,["weak-observed","normal-observed"],kind=kind)
 
     def attempt(self, case):
         self.freeze()
@@ -179,6 +181,42 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(outcome['status'],'INVALID')
         self.assertIn(str(target),outcome['configuration_drift'])
 
+    def test_python_import_cache_keeps_skill_identity_and_configuration_stable(self):
+        self.freeze()
+        attempt = bench.prepare(self.experiment, 'py-event-idempotency', 'v5', 'weak-observed', 1)
+        work = attempt / 'work'
+        package = work / '.github/skills/harrtest'
+        scripts = package / 'scripts'
+        environment = dict(os.environ)
+        environment.pop('PYTHONDONTWRITEBYTECODE', None)
+        environment.pop('PYTHONPYCACHEPREFIX', None)
+        with patch.object(bench.Path, 'home', return_value=self.root / 'no-user-configuration'):
+            before = bench.configuration_inputs(work)
+            package_before = bench.tree(package, skill=True)
+            run = bench.command([sys.executable, '-c', 'import tool'], scripts, env=environment)
+            self.assertEqual(run['exit_code'], 0, run['stderr'])
+            self.assertEqual(len(list((scripts / '__pycache__').glob('tool.*.pyc'))), 1)
+            self.assertEqual(bench.tree(package, skill=True), package_before)
+            result = bench.validate_generation_inputs(before, bench.configuration_inputs(work), {'status': 'COMPLETED'})
+            self.assertEqual(result['status'], 'COMPLETED')
+
+            for target in [scripts / 'tool.py', scripts / 'tool.cpython-313.pyc',
+                           scripts / '__pycache__/unrelated.py',
+                           scripts / '__pycache__/nosource.cpython-313.pyc',
+                           package / '.other/tool.cpython-313.pyc']:
+                with self.subTest(path=target.relative_to(package)):
+                    original = target.read_bytes() if target.exists() else None
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(b'mutated')
+                    result = bench.validate_generation_inputs(before, bench.configuration_inputs(work), {'status': 'COMPLETED'})
+                    self.assertEqual(result['status'], 'INVALID')
+                    self.assertIn(str(target), result['configuration_drift'])
+                    self.assertNotEqual(bench.tree(package, skill=True), package_before)
+                    if original is None:
+                        target.unlink()
+                    else:
+                        target.write_bytes(original)
+
     def test_python_invalid_batch_really_preserves_disk_state_only_after_fix(self):
         p=self.attempt('py-batch-atomicity')
         result=bench.evaluate_attempt(p)
@@ -206,6 +244,100 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertFalse(bench.same_value({'enabled':0,'limit':False},{'enabled':False,'limit':0}))
         self.assertFalse(bench.same_value([{'accepted':1}],[{'accepted':True}]))
         self.assertTrue(bench.same_value({'enabled':False,'limit':0},{'enabled':False,'limit':0}))
+
+    def test_requested_parent_must_match_actual_header_and_workspace(self):
+        parent=str(uuid.uuid4());header={'sessionId':parent,'context':{'cwd':str(self.root)}}
+        self.assertTrue(bench.parent_identity_matches(parent,{'id':parent},[header],self.root))
+        self.assertFalse(bench.parent_identity_matches(str(uuid.uuid4()),{'id':parent},[header],self.root))
+        self.assertFalse(bench.parent_identity_matches(parent,{'id':parent},[header],self.root/'other'))
+        self.assertFalse(bench.parent_identity_matches(parent,{'id':parent},[],self.root))
+
+    def test_redaction_cannot_destroy_nonsensitive_list_structure(self):
+        p=self.attempt('py-log-redaction');core=p/'work/rules.py';text=core.read_text()
+        text=text.replace("return json.dumps(x['data'], sort_keys=True)",
+                          "return json.dumps({'user': x['data']['user'], 'nested': {'safe': x['data']['nested']['safe']}, 'items': 'CORRUPTED_NONSECRET_STRUCTURE'})")
+        core.write_text(text)
+        result=bench.evaluate_attempt(p)
+        self.assertFalse(next(x for x in result['checks'] if x['check']=='nested-secret')['passed'])
+        self.assertFalse(result['functional_passed'])
+        self.assertFalse(result['automated_artifact_passed'])
+
+    def test_redaction_removal_and_replacement_both_preserve_literal_structure(self):
+        p=self.attempt('py-log-redaction');core=p/'work/rules.py';original=core.read_text()
+        for replacement in [False,True]:
+            helper="""def clean(value):
+    if isinstance(value, list): return [clean(item) for item in value]
+    if isinstance(value, dict):
+        return {key: ('[MASKED]' if key in {'password', 'token', 'api_key'} else clean(item)) for key, item in value.items()} if REPLACE else {key: clean(item) for key, item in value.items() if key not in {'password', 'token', 'api_key'}}
+    return value
+
+""".replace('REPLACE',str(replacement))
+            core.write_text(helper+original.replace("return json.dumps(x['data'], sort_keys=True)","return json.dumps(clean(x['data']), sort_keys=True)"))
+            result=bench.evaluate_attempt(p)
+            self.assertTrue(result['functional_passed'])
+            self.assertTrue(result['automated_artifact_passed'])
+
+    def test_reasoning_pin_uses_actor_state_and_rejects_later_high_transition(self):
+        parent=str(uuid.uuid4())
+        events=[{'type':'session.start','data':{'sessionId':parent,'reasoningEffort':'low'}},
+                {'type':'subagent.started','agentId':'worker','data':{}},
+                {'type':'subagent.configured','agentId':'worker','data':{'reasoningEffort':'low'}},
+                {'type':'model.call_start','agentId':'worker','data':{'reasoningEffort':None}}]
+        self.assertEqual(bench.reasoning_pin_observation(events)['status'],'PASS')
+        events.append({'type':'session.model_change','agentId':'worker','data':{'reasoningEffort':'high'}})
+        self.assertEqual(bench.reasoning_pin_observation(events)['status'],'FAIL')
+        self.assertEqual(bench.reasoning_pin_observation(events)['actors'][parent],'low')
+
+    def test_reasoning_pin_does_not_lend_parent_effort_to_unknown_child(self):
+        events=[{'type':'session.start','data':{'sessionId':'parent','reasoningEffort':'low'}},
+                {'type':'subagent.started','agentId':'worker','data':{}},
+                {'type':'model.call_start','agentId':'worker','data':{'reasoningEffort':None}}]
+        self.assertEqual(bench.reasoning_pin_observation(events)['status'],'UNVERIFIED')
+
+    def test_frozen_execution_order_is_complete_reproducible_and_rotated(self):
+        plan=self.freeze('acceptance');order=plan['execution_order']
+        self.assertEqual(len(order),96)
+        self.assertEqual(order,bench.balanced_execution_order(plan['cases'],plan['models'],plan['execution_seed']))
+        self.assertEqual(len({(x['case'],x['model'],x['repetition'],x['arm']) for x in order}),96)
+        first_counts={arm:sum(x['arm']==arm for x in order[::3]) for arm in bench.ARMS}
+        self.assertLessEqual(max(first_counts.values())-min(first_counts.values()),1)
+        for i in range(0,96,3):self.assertEqual({x['arm'] for x in order[i:i+3]},set(bench.ARMS))
+
+    def test_acceptance_cannot_run_an_out_of_order_arm(self):
+        plan=self.freeze('acceptance');second=plan['execution_order'][1]
+        attempt=bench.prepare(self.experiment,second['case'],second['arm'],second['model'],second['repetition'])
+        with self.assertRaisesRegex(ValueError,'frozen interleaved execution order'):
+            bench.run_attempt(attempt,permit_generation=True)
+
+    def test_acceptance_evaluation_requires_current_retained_generation(self):
+        plan = self.freeze('acceptance')
+        attempts = [bench.prepare(self.experiment, item['case'], item['arm'], item['model'], item['repetition'])
+                    for item in plan['execution_order'][:2]]
+        with patch.object(bench, '_evaluate_attempt', return_value={'passed': False}) as evaluator:
+            for attempt in attempts:
+                with self.assertRaisesRegex(ValueError, 'frozen interleaved execution order'):
+                    bench.evaluate_attempt(attempt)
+            bench.save(attempts[0] / 'generation.json', {'status': 'RUNNING'})
+            with self.assertRaisesRegex(ValueError, 'Retained generation outcome'):
+                bench.evaluate_attempt(attempts[0])
+            bench.save(attempts[0] / 'generation.json', {'status': 'TIMEOUT'})
+            bench.save(attempts[1] / 'generation.json', {'status': 'COMPLETED'})
+            with self.assertRaisesRegex(ValueError, 'frozen interleaved execution order'):
+                bench.evaluate_attempt(attempts[1])
+            evaluator.assert_not_called()
+            self.assertEqual(bench.evaluate_attempt(attempts[0]), {'passed': False})
+            evaluator.assert_called_once_with(attempts[0])
+            bench.save(attempts[0] / 'latest-evaluation.json', {'path': 'fixture-result.json'})
+            with self.assertRaisesRegex(ValueError, 'frozen interleaved execution order'):
+                bench.evaluate_attempt(attempts[0])
+            self.assertEqual(evaluator.call_count, 1)
+
+    def test_runtime_lock_prevents_concurrent_evaluation_and_releases_normally(self):
+        self.freeze()
+        with bench.exclusive_runtime(self.experiment):
+            with self.assertRaisesRegex(ValueError,'owns the experiment runtime'):
+                with bench.exclusive_runtime(self.experiment):pass
+        with bench.exclusive_runtime(self.experiment):pass
 
     @unittest.skipUnless(shutil.which('node'),'Node required for actual TypeScript runtime')
     def test_typescript_oracle_accepts_positive_control(self):

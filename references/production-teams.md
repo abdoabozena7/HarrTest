@@ -42,6 +42,12 @@ required. Include the existing contract/baseline and relevant validation inputs
 in validation_context. Keep the plan under `.runtime-proof/team-plan.json`.
 Do this before any product edit, including a narrow one-file fix.
 
+When running in Copilot with a known session UUID or the host's explicit
+`HARRTEST_PARENT_SESSION_ID`, set `host.kind` to `copilot`. In Codex use `codex`
+when the project has access to its native logs. Use `unverified` only when the
+native evidence path is genuinely unavailable and record the reason. Resolve
+the host before sealing. A successful init does not identify the host for you.
+
 ```text
 python <skill>/scripts/team.py --project . init --plan .runtime-proof/team-plan.json
 ```
@@ -51,6 +57,11 @@ use its returned task_name exactly so the host adapter can correlate identity.
 Pass the actual model/effort explicitly when the native tool supports them.
 The worker executes its packet's handoff command after its component checks.
 Do not substitute a short handcrafted prompt for the returned contract.
+For Copilot's `task` tool, put packet `task_name` in the tool's `name` argument
+and packet `message` in its `prompt` argument. The friendly task description
+can use other wording. Keep the QA tool name `qa` exactly as returned. Use the
+same naming rule for owner repairs. Check both `name` and `prompt` before each
+dispatch so a different tool label does not break the evidence chain.
 
 ```text
 python <skill>/scripts/team.py --project . integrate --team mission
@@ -73,6 +84,10 @@ turns. This command verifies current receipts and provenance; narrative six-laye
 meaning still requires inspecting the recorded QA evidence. Ordinary failures go
 back through `repair` to their owner and fresh integration/QA. A missing receipt
 is unfinished evidence, not permission to skip the worker or invent an ID.
+
+When `HARRTEST_PARENT_SESSION_ID` is available, `verify --team mission` can select
+that session directly. Invoke Python commands with `-B` to avoid writing import
+caches into the pinned skill package.
 
 A host integration may expose `HARRTEST_PARENT_SESSION_ID` in the Copilot process
 environment. Schema2 can use that explicit session selector when no parent flag

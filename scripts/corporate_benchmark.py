@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import argparse
 import ast
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import random
 import re
 import shutil
 import signal
@@ -29,12 +31,13 @@ CORPUS = ROOT / "assets/corporate/cases.json"
 ARMS = ("plain", "v4.1", "v5")
 LANGUAGES = {"csharp", "typescript", "python", "cpp"}
 SKIP = {".git", ".runtime-proof", ".github", ".agents", ".claude", "__pycache__", "bin", "obj", "node_modules"}
-SKILL_EXCLUDES = {".git", "output", ".runtime-proof", ".agent_evidence", ".harrtest", ".harrtest-state", "runs", "tests", "__pycache__", "node_modules"}
+SKILL_EXCLUDES = {".git", "output", ".runtime-proof", ".agent_evidence", ".harrtest", ".harrtest-state", "runs", "tests", "node_modules"}
 EVALUATOR_ONLY = {'scripts/corporate_benchmark.py','assets/corporate',
                   'references/v3-validation.md','references/v3.2-validation.md',
                   'references/v3.2.2-validation.md','references/v4-validation.md',
                   'references/v4.1-validation.md','references/v4.1-results.json','references/v5-validation.md'}
 LAYER_NAMES = ("functionality", "preservation", "architecture", "security", "performance", "resilience")
+GENERATION_OUTCOMES = {"COMPLETED", "FAILED", "TIMEOUT", "BLOCKED_UNVERIFIED", "UNVERIFIED", "INVALID"}
 
 
 def digest(value):
@@ -81,6 +84,17 @@ def cases(path=CORPUS):
     return rows
 
 
+def package_bytecode(path, package):
+    """Identify conventional import caches with a real sibling source file."""
+    if not path.is_relative_to(package) or path.parent.name != '__pycache__' or path.is_symlink():
+        return False
+    match = re.fullmatch(r'(.+)\.(?:cpython|pypy)-[0-9]+(?:\.opt-[0-9]+)?\.pyc', path.name)
+    if match is None:
+        return False
+    source = path.parent.parent / (match[1] + '.py')
+    return source.is_file() and not source.is_symlink()
+
+
 def tree(root, *, skill=False):
     root = Path(root).resolve()
     result = {}
@@ -93,7 +107,9 @@ def tree(root, *, skill=False):
             rel = p.relative_to(root).as_posix()
             if p.is_symlink() or (hasattr(p, "is_junction") and p.is_junction()):
                 raise ValueError("Linked artifact is not accepted: " + rel)
-            if name.startswith(".env") or name.endswith((".pyc", ".webm", ".mp4")):
+            if name.startswith(".env") or name.endswith((".webm", ".mp4")):
+                continue
+            if (skill and package_bytecode(p, root)) or (not skill and name.endswith('.pyc')):
                 continue
             if skill and rel in EVALUATOR_ONLY:
                 continue
@@ -178,11 +194,12 @@ def msvc_environment(path):
     return environment
 
 
-def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400, credits=120, corpus=CORPUS, kind='development'):
+def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400, credits=120, corpus=CORPUS, kind='development', seed=20261114):
     destination = Path(destination).resolve()
     if destination.exists():
         raise ValueError("Use a new immutable experiment directory")
     if kind not in {'development','acceptance'}:raise ValueError('Declare development or acceptance experiment')
+    if type(seed) is not int:raise ValueError('Execution-order seed must be an integer')
     if len(models) != 2 or len(set(models)) != 2 or any(not m or m == "auto" for m in models):
         raise ValueError("Pin two distinct concrete model IDs; Auto is not allowed")
     if not isinstance(seconds, int) or not 60 <= seconds <= 7200 or not isinstance(credits, int) or credits < 30:
@@ -211,6 +228,8 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
         packages[arm] = {"manifest": manifest, "sha256": digest(manifest)}
     plan = {"schema": 1, "kind":kind,"created_unix": time.time(), "corpus_sha256": sha(corpus), "cases": rows,
             "evaluator_sha256": sha(__file__), "models": models, "arms": list(ARMS), "repetitions": 2,
+            "execution_seed":seed,"execution_order":balanced_execution_order(rows,models,seed),
+            "execution_policy":"One generation then its independent evaluation at a time. Follow the frozen rotated arm order inside case/model/repetition blocks; no heavy tests during paired performance measurements.",
             "acceptance_attempts": 96, "budget": {"seconds": seconds, "max_ai_credits": credits},
             "packages": packages, "preflight": probe,
             "limits": ["Same wall/credit caps are not equal realized generation cost.",
@@ -363,11 +382,13 @@ def pin_settings(workspace, arm, model):
 def configuration_inputs(workspace):
     """Hash benchmark controls without retaining configuration contents/secrets."""
     workspace=Path(workspace).resolve();result={}
+    package = workspace / '.github/skills/harrtest'
     for name in ('.github','.agents','.claude'):
         root=workspace/name
         if root.exists():
             for path in root.rglob('*'):
-                if path.is_file():result[str(path)]=sha(path)
+                if path.is_file() and not package_bytecode(path, package):
+                    result[str(path)] = sha(path)
     home=Path.home()
     for root in (home/'.copilot',home/'.agents',home/'.claude'):
         names=['settings.json','copilot-instructions.md','mcp-config.json','permissions-config.json'] if root.name=='.copilot' else ['settings.json']
@@ -394,6 +415,76 @@ def validate_generation_inputs(before, after, outcome):
         outcome['status']='INVALID'
         outcome['reason']='Benchmark policy, instruction or skill inputs changed during generation'
     return outcome
+
+
+def parent_identity_matches(requested, session_record, headers, workspace):
+    try:
+        uuid.UUID(requested)
+        return (bool(headers) and requested==session_record.get('id')==headers[0].get('sessionId')
+                and Path(headers[0]['context']['cwd']).resolve()==Path(workspace).resolve())
+    except (ValueError,TypeError,KeyError):return False
+
+
+def reasoning_pin_observation(events, expected='low'):
+    """Track authoritative effort by actual actor; nullable call metadata is not a reset."""
+    headers=[r['data'] for r in events if r.get('type')=='session.start' and not r.get('agentId')]
+    parent=headers[0].get('sessionId') if headers else 'unknown-parent'
+    states={parent:None};mismatches=[];missing=[]
+    for row in events:
+        kind=row.get('type');data=row.get('data',{});actor=row.get('agentId') or parent
+        if kind=='subagent.started':states.setdefault(actor,None)
+        if kind in {'session.start','subagent.configured','session.model_change'}:
+            effort=data.get('reasoningEffort')
+            states[actor]=effort if isinstance(effort,str) else None
+            if isinstance(effort,str) and effort!=expected:
+                mismatches.append({'actor':actor,'event':kind,'effort':effort})
+        elif kind in {'model.call_start','model.model_call_started'} and states.get(actor) is None:
+            missing.append({'actor':actor,'event':kind,'reason':'No current authoritative effort for this actor'})
+    missing.extend({'actor':actor,'reason':'Final authoritative effort is unknown'} for actor,value in states.items() if value is None)
+    return {'status':'FAIL' if mismatches else 'UNVERIFIED' if missing else 'PASS',
+            'expected':expected,'actors':states,'mismatches':mismatches,'missing':missing}
+
+
+def balanced_execution_order(rows, models, seed):
+    blocks=[{'case':row['id'],'model':model,'repetition':repeat}
+            for row in rows if row['split']=='acceptance' for model in models for repeat in (1,2)]
+    random.Random(seed).shuffle(blocks)
+    order=[]
+    for index,block in enumerate(blocks):
+        arms=list(ARMS[index%len(ARMS):]+ARMS[:index%len(ARMS)])
+        order.extend({**block,'block':index,'arm':arm} for arm in arms)
+    return order
+
+
+@contextmanager
+def exclusive_runtime(experiment):
+    """OS-owned lock released on process exit, with no stale-lock deletion."""
+    path=Path(experiment)/'runtime.lock'
+    with path.open('a+b') as handle:
+        if handle.tell()==0:handle.write(b'0');handle.flush()
+        handle.seek(0)
+        try:
+            if os.name=='nt':
+                import msvcrt
+                msvcrt.locking(handle.fileno(),msvcrt.LK_NBLCK,1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except (OSError,BlockingIOError) as exc:
+            raise ValueError('Another generation/evaluation owns the experiment runtime') from exc
+        try:yield
+        finally:
+            handle.seek(0)
+            if os.name=='nt':msvcrt.locking(handle.fileno(),msvcrt.LK_UNLCK,1)
+            else:fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
+
+
+def next_execution(experiment, plan):
+    for item in plan['execution_order']:
+        attempt=Path(experiment)/'attempts'/f'{item["case"]}--{item["arm"]}--{plan["models"].index(item["model"])}--{item["repetition"]}'
+        if not (attempt/'generation.json').is_file():return {'action':'generate','attempt':str(attempt),**item}
+        if not (attempt/'latest-evaluation.json').is_file():return {'action':'evaluate','attempt':str(attempt),**item}
+    return {'action':'complete','scope':'All96 generation outcomes and executable evaluations retained; independent quality reviews may remain.'}
 
 
 def prepare(experiment, case_id, arm, model, repetition):
@@ -564,7 +655,35 @@ def same_value(actual, expected):
     return actual==expected
 
 
+def nonsensitive_structure(value):
+    """Ignore only permitted credential-value removal/replacement in the output.
+
+    The expected nonsensitive structure is an independent literal oracle, not
+    calculated by calling the implementation or by trusting its returned keys.
+    Lists, empty containers, scalar values and scalar types remain observable.
+    """
+    if isinstance(value,dict):
+        return {key:nonsensitive_structure(item) for key,item in value.items()
+                if key not in {'password','token','api_key'}}
+    if isinstance(value,list):return [nonsensitive_structure(item) for item in value]
+    return value
+
+
 def evaluate_attempt(attempt):
+    attempt = Path(attempt).resolve()
+    experiment, plan = frozen(attempt.parents[1])
+    with exclusive_runtime(experiment):
+        if plan.get('kind') == 'acceptance':
+            expected = next_execution(experiment, plan)
+            if expected['action'] != 'evaluate' or Path(expected['attempt']) != attempt:
+                raise ValueError('Follow the frozen interleaved execution order; next action: ' + json.dumps(expected))
+            generation = load(attempt / 'generation.json')
+            if not isinstance(generation, dict) or generation.get('status') not in GENERATION_OUTCOMES:
+                raise ValueError('Retained generation outcome required before acceptance evaluation')
+        return _evaluate_attempt(attempt)
+
+
+def _evaluate_attempt(attempt):
     attempt = Path(attempt).resolve()
     experiment, plan = frozen(attempt.parents[1])
     meta = load(attempt / "attempt.json")
@@ -590,10 +709,19 @@ def evaluate_attempt(attempt):
             event([{"id":"old","amount":3}],{"balance":3,"seen":["old"]},"ordinary-persistence")
             scenario=case['scenario']
             if scenario=='redact':
-                text=json.dumps({'op':'redact','data':{'user':'Ada','password':'secret-A','nested':{'token':'secret-B','safe':4},'items':[{'api_key':'secret-C'}]}})
+                text=json.dumps({'op':'redact','data':{'user':'Ada','password':'secret-A','nested':{'token':'secret-B','safe':4},
+                    'items':[{'api_key':'secret-C','label':'invoice','active':False,'count':0},
+                             {'safe':[None,{'note':'kept','token':'secret-D'}]}],'empty':[]}})
+                expected={'user':'Ada','nested':{'safe':4},
+                          'items':[{'label':'invoice','active':False,'count':0},{'safe':[None,{'note':'kept'}]}],
+                          'empty':[]}
                 raw=command([*invocation,text],evidence,20);observed=parse_output(raw['stdout'])
-                safe=(isinstance(observed,dict) and observed.get('user')=='Ada' and isinstance(observed.get('nested'),dict) and observed['nested'].get('safe')==4 and all(s not in raw['stdout']+raw['stderr'] for s in ['secret-A','secret-B','secret-C']))
-                checks.append({'check':'nested-secret','execution':raw,'observed':observed,'oracle':'No nested credential value emitted; original non-sensitive user and nested.safe retained. Removal or replacement is allowed.','passed':raw['exit_code']==0 and safe})
+                safe=(same_value(nonsensitive_structure(observed),expected)
+                      and all(s not in raw['stdout']+raw['stderr'] for s in ['secret-A','secret-B','secret-C','secret-D']))
+                checks.append({'check':'nested-secret','execution':raw,'observed':observed,
+                               'expected_nonsensitive_structure':expected,
+                               'oracle':'No nested credential value emitted; every nonsensitive value, scalar type, list position and container shape matches the independent literal. Credential keys may be removed or their values replaced.',
+                               'passed':raw['exit_code']==0 and safe})
             elif scenario=='dedupe': event([{'id':'old','amount':3}],{'balance':3,'seen':['old']},'duplicate-after-process-restart')
             elif scenario=='retry':
                 event([{'id':'new','amount':5,'fail_after':True}],'ERROR','partial-interruption')
@@ -708,13 +836,14 @@ import path from 'node:path';
 const c=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const {CopilotClient,RuntimeConnection}=await import(pathToFileURL(c.sdk).href);
 const client=new CopilotClient({mode:'copilot-cli',workingDirectory:c.workspace,
+ env:{...process.env,HARRTEST_PARENT_SESSION_ID:c.sessionId},
  connection:RuntimeConnection.forStdio({path:c.runtime[0],args:[...c.runtime.slice(1),'--no-auto-update']})});
 const write=(name,value)=>fs.writeFileSync(c.output+'/'+name,JSON.stringify(value,null,2));
 const contained=(value,root)=>{const p=path.resolve(c.workspace,value);const r=path.resolve(root);return p===r||p.startsWith(r+path.sep);};
 const permission=(request,invocation)=>{
  if(request.managedApprovalRequired||invocation.managedSettingsEnabled)return {kind:'no-result'};
  let allowed=false;
- const readable=p=>contained(p,c.workspace)||(c.readRoots||[]).some(r=>contained(p,r));
+ const readable=p=>contained(p,c.workspace)||(c.readRoots||[]).some(r=>contained(p,r))||(c.exactReadFiles||[]).some(f=>path.resolve(c.workspace,p)===path.resolve(f));
  if(request.kind==='read')allowed=!!request.path&&readable(request.path);
  if(request.kind==='write'){
   const files=[request.fileName,...(request.fileEdits||[]).flatMap(x=>[x.before?.path,x.after?.path])].filter(Boolean);
@@ -729,18 +858,32 @@ const permission=(request,invocation)=>{
  fs.appendFileSync(c.output+'/permission-decisions.jsonl',JSON.stringify({kind:request.kind,allowed,toolCallId:request.toolCallId})+'\n');
  return allowed?{kind:'approve-once'}:{kind:'reject',feedback:'Outside this benchmark permission scope; use only the project, selected skill and supplied toolchain.'};
 };
-let session;
+let session;let header;let headerResolve;
+const nativeHeaderReady=new Promise(resolve=>{headerResolve=resolve;});
 try {
  await client.start();
  const models=await client.listModels();write('models-observed.json',models);
  if(!models.some(m=>m.id===c.model))throw new Error('Pinned model not in authenticated catalog');
- session=await client.createSession({model:c.model,allowedModels:[c.model],reasoningEffort:c.effort,workingDirectory:c.workspace,
+ session=await client.createSession({sessionId:c.sessionId,model:c.model,allowedModels:[c.model],reasoningEffort:c.effort,workingDirectory:c.workspace,
  enableConfigDiscovery:true,enableFileHooks:true,enableHostGitOperations:true,enableSkills:true,
  trustWorkingDirectory:'session',disabledSkills:c.arm==='plain'?['harrtest']:[],
  skillDirectories:c.arm==='plain'?[]:[c.workspace+'/.github/skills'],
  sessionLimits:{maxAiCredits:c.maxAiCredits},onPermissionRequest:permission,
- onEvent:e=>fs.appendFileSync(c.output+'/generation.jsonl',JSON.stringify(e)+'\n')});
+ onEvent:e=>{fs.appendFileSync(c.output+'/generation.jsonl',JSON.stringify(e)+'\n');if(e.type==='session.start'&&!header){header=e.data;headerResolve(header);}}});
  write('sdk-session.json',{id:session.sessionId,cwd:c.workspace,model:c.model,effort:c.effort,mode:'copilot-cli'});
+ let headerTimer;
+ try{await Promise.race([nativeHeaderReady,new Promise((_,reject)=>{headerTimer=setTimeout(()=>reject(new Error('Native session header did not arrive within15seconds')),15000);})]);}
+ finally{clearTimeout(headerTimer);}
+ write('native-session-header.json',header||null);
+ if(session.sessionId!==c.sessionId||header?.sessionId!==c.sessionId)throw new Error('Requested/actual native parent identity mismatch');
+ const previous=await session.rpc.tools.getSubagentSettings();write('subagent-settings-before.json',previous);
+ const discovered=await session.rpc.agent.list({includeBuiltInAgents:true});write('agents-observed.json',discovered);
+ const agents={...(previous.subagents?.agents||{})};
+ const names=new Set(['task','general-purpose','explore','code-review','rubber-duck',...(discovered.agents||[]).map(x=>x.name)]);
+ for(const name of names)agents[name]={...(agents[name]||{}),model:c.model,modelPolicy:'required',effortLevel:c.effort};
+ await session.rpc.tools.updateSubagentSettings({subagents:{...(previous.subagents||{}),agents}});
+ const configured=await session.rpc.tools.getSubagentSettings();write('subagent-settings-applied.json',configured);
+ for(const name of names){const a=configured.subagents?.agents?.[name];if(a?.model!==c.model||a?.modelPolicy!=='required'||a?.effortLevel!==c.effort)throw new Error('Subagent model pin not confirmed: '+name);}
  if(c.arm==='plain')await session.rpc.skills.disable({name:'harrtest'});
  const inventory=await session.rpc.skills.list();write('skills-observed.json',inventory);
  const skills=Array.isArray(inventory)?inventory:inventory.skills;
@@ -758,6 +901,17 @@ finally {if(session){await session.rpc.usage.getMetrics().then(x=>write('usage.j
 
 
 def run_attempt(attempt, *, permit_generation=False):
+    if not permit_generation:raise ValueError('Generation requires explicit --permit-generation after protocol review')
+    attempt=Path(attempt).resolve();experiment,plan=frozen(attempt.parents[1])
+    with exclusive_runtime(experiment):
+        if plan.get('kind')=='acceptance':
+            expected=next_execution(experiment,plan)
+            if expected['action']!='generate' or Path(expected['attempt'])!=attempt:
+                raise ValueError('Follow the frozen interleaved execution order; next action: '+json.dumps(expected))
+        return _run_attempt(attempt,permit_generation=permit_generation)
+
+
+def _run_attempt(attempt, *, permit_generation=False):
     if not permit_generation:
         raise ValueError("Generation requires explicit --permit-generation after protocol review")
     attempt=Path(attempt).resolve(); experiment,plan=frozen(attempt.parents[1]);meta=load(attempt/'attempt.json')
@@ -771,6 +925,9 @@ def run_attempt(attempt, *, permit_generation=False):
                    'model':meta['model'],'effort':'low','arm':meta['arm'],'prompt':meta['prompt'],
                    'timeoutMs':budget['seconds']*1000,'maxAiCredits':budget['max_ai_credits'],
                    'readRoots':[str(Path(tools[key]).parent) for key in ('node','python','dotnet') if tools.get(key)]}
+    configuration['sessionId']=str(uuid.uuid4())
+    host_home=Path(os.environ.get('COPILOT_HOME',Path.home()/'.copilot')).resolve()
+    configuration['exactReadFiles']=[str(host_home/'session-state'/configuration['sessionId']/'events.jsonl')]
     save(attempt/'sdk-config.json',configuration)
     argv=[tools['node'],str(driver),str(attempt/'sdk-config.json')]
     # No --allow-all-paths, --allow-all-urls, --no-custom-instructions,
@@ -780,6 +937,7 @@ def run_attempt(attempt, *, permit_generation=False):
         if path.is_file(): before_settings[str(path)]=sha(path)
     before_configuration=configuration_inputs(workspace)
     environment=msvc_environment(tools['msvc_env']) if tools.get('msvc_env') else dict(os.environ)
+    environment['PYTHONDONTWRITEBYTECODE'] = '1'
     if tools.get('dotnet'):
         environment['PATH']=str(Path(tools['dotnet']).parent)+os.pathsep+environment.get('PATH','')
         environment['DOTNET_ROOT']=str(Path(tools['dotnet']).parent)
@@ -803,11 +961,23 @@ def run_attempt(attempt, *, permit_generation=False):
         for line in (attempt/'generation.jsonl').read_text(encoding='utf-8').splitlines():
             try:events.append(json.loads(line))
             except ValueError:continue
-        models=sorted({row.get('data',{}).get('model') for row in events if isinstance(row.get('data',{}).get('model'),str)})
+        headers=[row['data'] for row in events if row.get('type')=='session.start']
+        session_record=load(attempt/'sdk-session.json') if (attempt/'sdk-session.json').is_file() else {}
+        identity_valid=parent_identity_matches(configuration['sessionId'],session_record,headers,workspace)
+        if not identity_valid:
+            raw['status']='INVALID';raw['reason']='Requested/actual native parent identity mismatch'
+        models=sorted({model for row in events for model in [row.get('data',{}).get('model'),row.get('data',{}).get('newModel')] if isinstance(model,str)})
         children=[row for row in events if row.get('type')=='subagent.completed']
         invoked=[row.get('data',{}).get('arguments') for row in events if row.get('type')=='tool.execution_start' and row.get('data',{}).get('toolName')=='skill']
         raw['native_observations']={'models':models,'completed_subagents':len(children),'subagents':children,'skill_invocations':invoked,
+                                    'parent_identity_matches_requested':identity_valid,
                                     'usage_file_sha256':sha(attempt/'usage.json') if (attempt/'usage.json').is_file() else None}
+        effort=reasoning_pin_observation(events,configuration['effort'])
+        raw['native_observations']['reasoning_pin']=effort
+        if effort['status']=='FAIL':
+            raw['status']='INVALID';raw['reason']='Observed actual reasoning effort differs from the pinned effort'
+        elif effort['status']=='UNVERIFIED' and raw['status']=='COMPLETED':
+            raw['status']='UNVERIFIED';raw['reason']='Actual actor reasoning-effort metadata is incomplete'
         if any(model!=meta['model'] for model in models):
             raw['status']='INVALID';raw['reason']='Observed actual model differs from the pinned model'
         if meta['arm']=='plain' and any(isinstance(x,dict) and x.get('skill')=='harrtest' for x in invoked):
@@ -840,7 +1010,7 @@ def record_assessment(attempt, report_file):
     if reviewer.get('method') not in {'human','fresh-context-agent'} or not isinstance(reviewer.get('id'),str) or len(reviewer['id'])<3:
         raise ValueError('Independent reviewer identity/method required')
     generation = load(attempt/'generation.json') if (attempt/'generation.json').is_file() else None
-    if generation is None or generation.get('status') not in {'COMPLETED','FAILED','TIMEOUT','BLOCKED_UNVERIFIED','INVALID'}:
+    if generation is None or generation.get('status') not in GENERATION_OUTCOMES:
         raise ValueError('Retained generation outcome required, including failed attempts')
     completed = generation['status']=='COMPLETED'
     if completed and generation.get('source')!=result['source_before']:
@@ -956,20 +1126,25 @@ def summarize(experiment):
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='action',required=True)
     pre=sub.add_parser('preflight');pre.add_argument('--tools',type=Path)
-    fr=sub.add_parser('freeze');fr.add_argument('--output',type=Path,required=True);fr.add_argument('--baseline-skill',type=Path,required=True);fr.add_argument('--candidate-skill',type=Path,required=True);fr.add_argument('--models',nargs=2,required=True);fr.add_argument('--tools',type=Path);fr.add_argument('--seconds',type=int,default=2400);fr.add_argument('--credits',type=int,default=120);fr.add_argument('--kind',choices=['development','acceptance'],default='development')
+    fr=sub.add_parser('freeze');fr.add_argument('--output',type=Path,required=True);fr.add_argument('--baseline-skill',type=Path,required=True);fr.add_argument('--candidate-skill',type=Path,required=True);fr.add_argument('--models',nargs=2,required=True);fr.add_argument('--tools',type=Path);fr.add_argument('--seconds',type=int,default=2400);fr.add_argument('--credits',type=int,default=120);fr.add_argument('--kind',choices=['development','acceptance'],default='development');fr.add_argument('--seed',type=int,default=20261114)
     prep=sub.add_parser('prepare');prep.add_argument('--experiment',type=Path,required=True);prep.add_argument('--case',required=True);prep.add_argument('--arm',choices=ARMS,required=True);prep.add_argument('--model',required=True);prep.add_argument('--repetition',type=int,choices=[1,2],required=True)
     ev=sub.add_parser('evaluate');ev.add_argument('--attempt',type=Path,required=True)
     run=sub.add_parser('run');run.add_argument('--attempt',type=Path,required=True);run.add_argument('--permit-generation',action='store_true')
     review=sub.add_parser('assess');review.add_argument('--attempt',type=Path,required=True);review.add_argument('--report',type=Path,required=True)
     su=sub.add_parser('summarize');su.add_argument('--experiment',type=Path,required=True)
+    matrix=sub.add_parser('matrix');matrix.add_argument('--experiment',type=Path,required=True)
+    next_step=sub.add_parser('next');next_step.add_argument('--experiment',type=Path,required=True)
     args=parser.parse_args(argv)
     try:
         if args.action=='preflight': result=preflight(load(args.tools) if args.tools else None)
-        elif args.action=='freeze': result=freeze(args.output,args.baseline_skill,args.candidate_skill,args.models,tools=load(args.tools) if args.tools else None,seconds=args.seconds,credits=args.credits,kind=args.kind)
+        elif args.action=='freeze': result=freeze(args.output,args.baseline_skill,args.candidate_skill,args.models,tools=load(args.tools) if args.tools else None,seconds=args.seconds,credits=args.credits,kind=args.kind,seed=args.seed)
         elif args.action=='prepare': result={'attempt':str(prepare(args.experiment,args.case,args.arm,args.model,args.repetition))}
         elif args.action=='evaluate': result=evaluate_attempt(args.attempt)
         elif args.action=='run': result=run_attempt(args.attempt,permit_generation=args.permit_generation)
         elif args.action=='assess': result=record_assessment(args.attempt,args.report)
+        elif args.action=='matrix': result={'execution_order':frozen(args.experiment)[1]['execution_order']}
+        elif args.action=='next':
+            experiment,plan=frozen(args.experiment);result=next_execution(experiment,plan)
         else: result=summarize(args.experiment)
         print(json.dumps(result,indent=2,ensure_ascii=False));return 0
     except (ValueError,OSError,KeyError,TypeError,StopIteration) as exc:

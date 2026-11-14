@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -889,17 +890,24 @@ def native_completed_command(project, payload):
         return None
 
 
-def read_trace(project, meta, path, since):
-    require(path.stat().st_size <= MAX_ROLLOUT_BYTES, 'Native rollout exceeds the supported size')
+def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None):
+    if events is None:
+        require(path.stat().st_size <= MAX_ROLLOUT_BYTES, 'Native rollout exceeds the supported size')
     writes, markers, calls, running_commands, running_cells = [], {}, {}, {}, {}
     finished, context = None, {}
     turn_starts = []
     intervals, active = [], None
-    with path.open(encoding='utf-8-sig') as log:
-        for line in log:
-            if not line.endswith('\n'):
-                break  # The active parent may still be appending its final record.
-            event = strict_io.loads(line)
+    source = path.open(encoding='utf-8-sig') if events is None else nullcontext(events)
+    with source as log:
+        for item in log:
+            if events is None:
+                if not item.endswith('\n'):
+                    break  # The active parent may still be appending its final record.
+                event = strict_io.loads(item)
+            else:
+                event = item
+            if lifecycle_limit is not None and max(len(calls), len(running_commands), len(running_cells)) > lifecycle_limit:
+                raise ValueError('Native trace pending lifecycle limit exceeded')
             payload = event.get('payload', {})
             kind = payload.get('type')
             when = instant(event['timestamp'])
@@ -980,6 +988,8 @@ def read_trace(project, meta, path, since):
                         running_commands.pop(sid, None)
                 elif sid is not None:
                     running_commands[sid] = pending
+    if lifecycle_limit is not None and max(len(calls), len(running_commands), len(running_cells)) > lifecycle_limit:
+        raise ValueError('Native trace pending lifecycle limit exceeded')
     return {'id': meta['id'], 'start': instant(meta['timestamp']), 'end': finished,
             'writes': writes, 'markers': markers, 'turn_starts': turn_starts,
             'intervals': intervals, 'active': active, 'model': context.get('model'),

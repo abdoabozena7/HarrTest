@@ -6,7 +6,7 @@
   "contract": "REPLACE_ME existing interface, preserved behavior, lifecycle and permitted change",
   "validation_context": [],
   "max_parallel_workers": 1,
-  "host": {"kind": "unverified"},
+  "host": {"kind": "REPLACE_ME actual host kind: copilot, codex, or unverified"},
   "outcomes": {"R01": "REPLACE_ME observable requested behavior and preserved contract"},
   "tasks": [
     {

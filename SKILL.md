@@ -82,6 +82,10 @@ For narrow work use that guide's minimal schema2 sequence and actual returned
 worker/QA packets. A handcrafted prompt can lose the handoff and verification
 contract. Review instructions must allow FAIL and UNVERIFIED findings, as well
 as PASS and justified NOT_APPLICABLE; do not bias reviewers toward acceptance.
+Select the actual host before sealing the team plan. In Copilot, give the native
+`task` tool the exact `task_name` as `name` and the returned `message` as `prompt`.
+Use only the description for a friendlier label. The returned testing name is
+`qa`. Verify the current native Team after the testing worker completes.
 
 ## Assess all quality layers
 
@@ -101,6 +105,17 @@ Use project security requirements first. Apply risk-based design review and
 security testing, drawing on [Microsoft SDL](https://www.microsoft.com/en-us/securityengineering/sdl/practices)
 where supporting guidance is needed. A scanner cannot prove absence of vulnerabilities.
 Missing required tooling is an unverified check, not a clean result.
+
+Check interactions between layers. A restriction, filter, validation, cleanup or
+data transformation must both handle its intended target and preserve legitimate
+nearby cases. Derive rejected/changed and allowed/unchanged boundary examples from
+the contract, including plausible near matches. Removing every sensitive value
+does not establish correctness if useful nonsensitive structure or authorized
+behavior was lost. Review broad heuristics against the preserved contract rather
+than treating a stricter-looking result as automatically safer.
+For multi-step behavior, establish the intermediate invariants as well as the
+final result. A valid final value or successful final response does not show
+that intermediate operations, partial failures or state transitions were legal.
 
 Every required layer must PASS. NOT_APPLICABLE requires impact reasoning, cited
 evidence and separate review. Missing checks remain UNVERIFIED. A failed major

@@ -16,9 +16,145 @@ from uuid import uuid4
 import proof
 import strict_io
 
+MAX_NATIVE_EVENT_BYTES = 2 * 1024 * 1024
+MAX_NATIVE_WINDOW_BYTES = 32 * 1024 * 1024
+MAX_NATIVE_WINDOW_EVENTS = 100_000
+MAX_NATIVE_PENDING_CALLS = 4096
+MAX_NATIVE_SCAN_BYTES = 1024 * 1024 * 1024
+
 
 class HostEvidenceUnavailable(ValueError):
     """The native format/capture needed for an identity claim is unavailable."""
+
+
+class NativeWindow:
+    """Stream a fixed file snapshot, retaining only bounded plan-time events.
+
+    Every complete record is strictly decoded, including prehistory. An
+    oversized or malformed record is never skipped by guessing its timestamp.
+    The final unfinished record cannot establish a completion or a receipt.
+    """
+    def __init__(self, path, since, host):
+        self.path, self.since, self.host = Path(path), since, host
+        self.contexts, self.tail_incomplete = [], False
+        self.snapshot_bytes = self.scanned_bytes = self.window_bytes = self.window_events = 0
+
+    def __iter__(self):
+        t = common()
+        if self.path.is_symlink() or not self.path.is_file():
+            raise HostEvidenceUnavailable('Missing regular native session file')
+        with self.path.open('rb') as source:
+            self.snapshot_bytes = os.fstat(source.fileno()).st_size
+            if self.snapshot_bytes > MAX_NATIVE_SCAN_BYTES:
+                raise HostEvidenceUnavailable('Native scan byte budget exceeded')
+            carry, emitted_context, headers = {}, False, 0
+            model_transition_time = None
+            pending_tool_bytes = 0
+            pending_tools = {}
+            while source.tell() < self.snapshot_bytes:
+                remaining = self.snapshot_bytes - source.tell()
+                raw = source.readline(min(MAX_NATIVE_EVENT_BYTES + 1, remaining))
+                self.scanned_bytes += len(raw)
+                if len(raw) > MAX_NATIVE_EVENT_BYTES:
+                    raise HostEvidenceUnavailable('Native event exceeds bounded record size')
+                if not raw.endswith(b'\n'):
+                    self.tail_incomplete = True
+                    break
+                try:
+                    event = strict_io.loads(raw.decode('utf-8-sig'))
+                    if not isinstance(event, dict):
+                        raise ValueError('Event is not an object')
+                    when = t.instant(event['timestamp'])
+                except (ValueError, TypeError, KeyError, AttributeError, OverflowError, UnicodeError) as exc:
+                    raise HostEvidenceUnavailable('Malformed native event before snapshot boundary') from exc
+                if event.get('checkpoint') is True:
+                    continue
+                header_kind = 'session_meta' if self.host == 'codex' else 'session.start'
+                kind = event.get('type')
+                if self.host == 'copilot' and kind == 'session.model_change' and not event.get('agentId'):
+                    if model_transition_time is not None and when < model_transition_time:
+                        raise HostEvidenceUnavailable('Native model transitions are out of chronological order')
+                    model_transition_time = when
+                    if emitted_context and when < self.since:
+                        raise HostEvidenceUnavailable('Pre-plan model transition follows plan-time execution')
+                if kind == header_kind:
+                    headers += 1
+                    if headers != 1:
+                        raise HostEvidenceUnavailable('Duplicate native session header')
+                    self.charge(raw)
+                    yield event
+                    continue
+                if when < self.since:
+                    if (self.host == 'copilot' and not event.get('agentId')
+                            and kind in {'tool.execution_start', 'tool.execution_complete'}):
+                        # A coordinator tool can seal the plan before its own
+                        # completion arrives. Carry only unmatched starts.
+                        data = event.get('data', {})
+                        call_id = data.get('toolCallId') if isinstance(data, dict) else None
+                        if not isinstance(call_id, str) or not call_id or emitted_context:
+                            raise HostEvidenceUnavailable('Invalid pre-plan Copilot tool lifecycle')
+                        if kind == 'tool.execution_start':
+                            if call_id in pending_tools:
+                                raise HostEvidenceUnavailable('Duplicate pre-plan Copilot tool call')
+                            pending_tools[call_id] = (event, raw, source.tell())
+                            pending_tool_bytes += len(raw)
+                            if (len(pending_tools) > MAX_NATIVE_PENDING_CALLS
+                                    or pending_tool_bytes > MAX_NATIVE_WINDOW_BYTES):
+                                raise HostEvidenceUnavailable('Native pre-plan pending tool budget exceeded')
+                        else:
+                            previous = pending_tools.pop(call_id, None)
+                            if previous is not None:
+                                pending_tool_bytes -= len(previous[1])
+                    if self.host == 'codex' and kind == 'turn_context':
+                        carry[kind] = (event, raw, source.tell())
+                    if self.host == 'copilot' and kind == 'session.context_changed':
+                        carry[kind] = (event, raw, source.tell())
+                    if self.host == 'copilot' and kind == 'session.model_change' and not event.get('agentId'):
+                        data = event.get('data', {})
+                        if not isinstance(data, dict):
+                            raise HostEvidenceUnavailable('Malformed native model transition')
+                        # Keep actual records that last supplied each field. A
+                        # later sparse transition must not erase the other field.
+                        for field in ('newModel', 'reasoningEffort'):
+                            if field in data:
+                                carry[(kind, field)] = (event, raw, source.tell())
+                    continue
+                if not emitted_context:
+                    carry.update({('tool', call_id): value for call_id, value in pending_tools.items()})
+                    pending_tools.clear()
+                    for previous, encoded in self.carry_records(carry):
+                        self.charge(encoded)
+                        if previous.get('type') == 'turn_context':
+                            self.contexts.append(previous.get('payload', {}))
+                        yield previous
+                    carry.clear()
+                    emitted_context = True
+                self.charge(raw)
+                if kind == 'turn_context':
+                    self.contexts.append(event.get('payload', {}))
+                yield event
+            if not emitted_context:
+                for previous, encoded in self.carry_records(carry):
+                    self.charge(encoded)
+                    if previous.get('type') == 'turn_context':
+                        self.contexts.append(previous.get('payload', {}))
+                    yield previous
+            if headers != 1:
+                raise HostEvidenceUnavailable('Missing native session header')
+
+    @staticmethod
+    def carry_records(carry):
+        # One record may supply both model and effort. Re-emit it only once,
+        # in its native journal order (including timestamp ties); never
+        # synthesize a context event.
+        rows = {id(event): (event, raw, offset) for event, raw, offset in carry.values()}
+        return [(event, raw) for event, raw, _ in sorted(rows.values(), key=lambda item: item[2])]
+
+    def charge(self, raw):
+        self.window_bytes += len(raw)
+        self.window_events += 1
+        if self.window_bytes > MAX_NATIVE_WINDOW_BYTES or self.window_events > MAX_NATIVE_WINDOW_EVENTS:
+            raise HostEvidenceUnavailable('Native plan-time evidence window budget exceeded')
 
 
 def common():
@@ -265,7 +401,10 @@ def integrate(project, state):
                'Read current-source inputs and test the actual behavior independently. Cover applicable '
                'functionality, preservation, architecture, security, performance and failure/data risks. '
                'Use independent expected results and retain failures. Missing checks are UNVERIFIED, '
-               'not PASS. Review applicability exclusions with reasons and evidence. Do not edit product '
+               'not PASS. Record each quality layer as PASS, FAIL, UNVERIFIED or NOT_APPLICABLE; '
+               'retain failed and unverified observations. NOT_APPLICABLE needs an impact rationale '
+               'and supporting evidence reviewed independently. Do not omit required layers or '
+               'turn a missing measurement into an applicability exclusion. Do not edit product '
                'files or weaken the contract. Run a finite real check with assertions through:\n'
                f'{command} -- ACTUAL_ARGV\nRecord observations privately in {evidence}. '
                f'Then run {review_command} --evidence {evidence} --verdict pass only if all required '
@@ -360,14 +499,20 @@ def codex_adapter(project, state, parent, sessions, require_qa):
     t = common()
     created = t.instant(state['created'])
     logs = t.locate_sessions(project, parent, Path(sessions or t.codex_sessions()), state['created'])
-    rows = {role: t.read_trace(project, *value, created) for role, value in logs.items()}
-    for role, (_, path) in logs.items():
-        for line in path.read_text(encoding='utf-8-sig').splitlines():
-            event = strict_io.loads(line)
-            if event.get('type') == 'turn_context' and t.instant(event['timestamp']) >= created:
-                context = event.get('payload', {})
-                for key, field in [('models', 'model'), ('efforts', 'effort')]:
-                    rows[role].setdefault(key, set()).update(filter(None, [context.get(field)]))
+    rows = {}
+    for role, (meta, path) in logs.items():
+        window = NativeWindow(path, created, 'codex')
+        try:
+            rows[role] = t.read_trace(project, meta, path, created, events=window,
+                                      lifecycle_limit=MAX_NATIVE_PENDING_CALLS)
+        except ValueError as exc:
+            if 'pending lifecycle limit exceeded' in str(exc):
+                raise HostEvidenceUnavailable(str(exc)) from exc
+            raise
+        rows[role]['tail_incomplete'] = window.tail_incomplete
+        for context in window.contexts:
+            for key, field in [('models', 'model'), ('efforts', 'effort')]:
+                rows[role].setdefault(key, set()).update(filter(None, [context.get(field)]))
     return verify_native_rows(project, state, parent, rows, require_qa, 'codex-rollout')
 
 
@@ -385,22 +530,12 @@ def read_copilot_traces(project, parent, sessions, since):
     t.require(not path.is_symlink(), 'Copilot native session cannot be a symlink')
     if not path.is_file():
         raise HostEvidenceUnavailable('Missing selected Copilot native session')
-    if path.stat().st_size > t.MAX_ROLLOUT_BYTES:
-        raise HostEvidenceUnavailable('Copilot native session exceeds supported size')
-    events = []
-    with path.open(encoding='utf-8-sig') as source:
-        for line in source:
-            if not line.endswith('\n'):
-                break
-            event = strict_io.loads(line)
-            # The SDK marks replay checkpoint records explicitly; they are not
-            # original execution and cannot authenticate fresh receipt output.
-            if event.get('checkpoint') is not True:
-                events.append(event)
-    headers = [e for e in events if e.get('type') == 'session.start']
-    if len(headers) != 1:
+    window = NativeWindow(path, since, 'copilot')
+    events = iter(window)
+    header = next(events, None)
+    if header is None or header.get('type') != 'session.start':
         raise HostEvidenceUnavailable('Need one native Copilot session.start header')
-    data = headers[0].get('data', {})
+    data = header.get('data', {})
     t.require(data.get('sessionId') == parent and data.get('producer') == 'copilot-agent',
               'Copilot native session identity mismatch')
     if data.get('version') != 1:
@@ -413,18 +548,52 @@ def read_copilot_traces(project, parent, sessions, since):
                 'effort': effort, 'models': set(filter(None, [model])), 'efforts': set(filter(None, [effort]))}
     coordinator = row(parent, t.instant(data['startTime']), data.get('selectedModel'), data.get('reasoningEffort'))
     rows, by_agent, calls, dispatch = {'integration': coordinator}, {}, {}, {}
-    seen_ids = set()
+    seen_ids = {header.get('id')}
+    boundary_initialized = False
+    def apply_model_transition(current, payload, record):
+        t.require(isinstance(payload, dict), 'Invalid native model transition')
+        for field, target, history in [('newModel', 'model', 'models'),
+                                       ('reasoningEffort', 'effort', 'efforts')]:
+            if field not in payload:
+                continue
+            value = payload[field]
+            t.require((value is None and field == 'reasoningEffort')
+                      or isinstance(value, str) and bool(value.strip()), 'Invalid native ' + field)
+            current[target] = value
+            if record:
+                current[history].add(value)
     for event in events:
         eid = event.get('id')
         t.require(isinstance(eid, str) and eid not in seen_ids, 'Duplicate/missing Copilot event ID')
         seen_ids.add(eid)
         kind, payload = event.get('type'), event.get('data', {})
         when = t.instant(event['timestamp'])
-        if when < since:
-            continue
         agent = event.get('agentId')
         current = by_agent.get(agent) if agent else coordinator
         if kind == 'session.context_changed':
+            t.require(Path(payload.get('cwd', '')).resolve() == project,
+                      'Copilot session changed to a different workspace')
+        if when < since:
+            if kind == 'session.model_change' and not agent:
+                apply_model_transition(coordinator, payload, False)
+            elif kind == 'tool.execution_start' and not agent:
+                call_id = payload['toolCallId']
+                t.require(call_id not in calls, 'Duplicate Copilot tool call')
+                calls[call_id] = (event, when)
+            continue
+        if not boundary_initialized:
+            # The header may be hours old. Pins compare the actual effective
+            # context at the seal and every later transition, not old choices.
+            coordinator['models'] = {coordinator['model']}
+            coordinator['efforts'] = {coordinator['effort']}
+            boundary_initialized = True
+        if kind == 'session.model_change':
+            t.require(current is not None, 'Native model transition lacks its agent identity')
+            if agent:
+                t.require(when >= current['start'] and (current['end'] is None or when <= current['end']),
+                          'Copilot model transition is outside its task lifecycle')
+            apply_model_transition(current, payload, True)
+        elif kind == 'session.context_changed':
             t.require(Path(payload.get('cwd', '')).resolve() == project,
                       'Copilot session changed to a different workspace')
         elif kind == 'tool.execution_start':
@@ -435,13 +604,15 @@ def read_copilot_traces(project, parent, sessions, since):
             call_id = payload.get('toolCallId')
             t.require(isinstance(call_id, str) and call_id not in calls, 'Duplicate Copilot tool call')
             calls[call_id] = (event, when)
+            if len(calls) > MAX_NATIVE_PENDING_CALLS or len(dispatch) > MAX_NATIVE_PENDING_CALLS:
+                raise HostEvidenceUnavailable('Native trace pending lifecycle limit exceeded')
             if current and payload.get('model'):
                 current['models'].add(payload['model'])
             if payload.get('toolName') == 'task' and not agent:
                 dispatch[call_id] = payload
         elif kind == 'subagent.started':
             call_id = payload.get('toolCallId')
-            args = dispatch.get(call_id, {}).get('arguments', {})
+            args = dispatch.pop(call_id, {}).get('arguments', {})
             label = args.get('name') if isinstance(args, dict) else None
             t.require(label and label == payload.get('agentDisplayName') and label not in rows
                       and isinstance(agent, str) and agent not in by_agent and agent != parent,
@@ -494,7 +665,7 @@ def read_copilot_traces(project, parent, sessions, since):
             call = request['data']
             args = call.get('arguments', {})
             command = args.get('command') if isinstance(args, dict) else None
-            if (call.get('toolName') in {'powershell', 'bash'} and isinstance(command, str)
+            if (started >= since and call.get('toolName') in {'powershell', 'bash'} and isinstance(command, str)
                     and t.team_command(command) and payload.get('shellExecution', {}).get('exitCode') == 0):
                 result = payload.get('result', {})
                 # Never search assistant prose, call arguments, or partial stdout for receipts.
@@ -502,6 +673,8 @@ def read_copilot_traces(project, parent, sessions, since):
                 if isinstance(content, str):
                     for digest in t.re.findall(r'^' + t.RECEIPT + r'([0-9a-f]{64})\s*$', content, t.re.M):
                         current['markers'].setdefault(digest, when)
+    if not boundary_initialized:
+        coordinator['models'], coordinator['efforts'] = {coordinator['model']}, {coordinator['effort']}
     return rows
 
 
@@ -590,7 +763,8 @@ def verify_registered(project, team_id, *, require_qa=True, parent=None, session
         selected = proof.load(path) if path.is_file() else {}
         if parent is None:
             parent = (selected['parent'] if selected
-                      else t.os.environ.get('CODEX_THREAD_ID') if kind == 'codex' else None)
+                      else t.os.environ.get('CODEX_THREAD_ID') if kind == 'codex'
+                      else os.environ.get('HARRTEST_PARENT_SESSION_ID') if kind == 'copilot' else None)
         if sessions is None and selected.get('parent') == parent:
             sessions = selected.get('sessions')
         if kind == 'unverified' or (kind == 'copilot' and parent is None):

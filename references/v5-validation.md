@@ -82,9 +82,8 @@ It observes HarrTest disabled in the plain session and the exact project package
 selected in each skill session, while retaining normal non-HarrTest discovery.
 
 The first bounded development task completed through Copilot/Luna and passed its
-external functional checks. A new eight-case V5/Luna development run is in flight
-under `development-smoke-2`, with its older complete pin and retained evaluator.
-It predates later controller repairs and is diagnostic, not final acceptance.
+external functional checks. The eight-case V5/Luna run under `development-smoke-2`
+used an earlier fixed pin and its retained evaluator. It predates later repairs.
 Functional success, workflow compliance and independently reviewed full quality
 are separate outcomes; none is silently substituted for another.
 
@@ -111,13 +110,36 @@ functional passes and one failure affected by the disclosed tenant-schema
 ambiguity. This is neither a before/after comparison nor full-quality acceptance;
 all eight came from the earlier diagnostic V5 pin. Their raw costs and failed
 checks remain retained without rescoring under the newer visible contracts.
+Independent review identified two defects the earlier automated checks missed.
+One redaction implementation also removed valid non-sensitive fields. One C++
+total used an intermediate signed sum that could overflow for representable final
+totals. The latter finding comes from source analysis. The skill now asks reviewers
+to check legitimate near matches and intermediate contract invariants.
 
-The initial synthetic cases share related language-specific codebases. Final
-comparison is therefore an unseen-task/outcome comparison on related families,
-not unseen-family generalization. Two acceptance tasks are being expanded into
-multiple interacting components before any held model outcomes are observed.
-The remaining tasks cover bounded bugs and resource behavior. This mixed corpus
-does not establish enterprise-wide reliability or superiority to all harnesses.
+Development-smoke5 stopped before generation when the native session header
+arrived after the SDK create call. The next runner waits up to 15 seconds for the
+actual header and checks the requested ID and workspace. Development-smoke6
+confirmed the session binding and all three actual actor contexts at gpt-6-luna/low.
+It completed in 232.694s and passed all four external checks. Copilot recorded
+implementation, integration, test execution and QA review receipts. The plan set
+host.kind to unverified and the native labels differed from the sealed labels.
+Native verification reported UNVERIFIED. The frozen runner also marked the
+attempt INVALID when Python generated five import caches. The next runner
+suppresses imports' bytecode writes and distinguishes ordinary caches from
+mutations of source, settings or policies. The historical classification remains.
+
+The schema2 log adapter independently passed a long-session compatibility probe
+and replay controls for real model/effort changes. The old 4.1-pinned production
+audit reported that its native log exceeded its size limit. Independently tested
+controls also enforce the frozen evaluation order. Each acceptance block rotates
+three arms within a case, model and repetition. Evaluations require the matching
+terminal generation record. Reports retain invalid, timed-out and missing trials.
+
+The synthetic cases share related language-specific codebases. The held corpus
+contains two multi-component changes and six bounded changes, including a measured
+resource case. Public input and output contracts are supplied to every arm. This
+measures the defined tasks on those families. Broader reliability needs additional
+representative evidence.
 
 Detailed local artifacts will remain under `output/v5-corporate/`; private raw
 sessions are not automatically published with the skill.
