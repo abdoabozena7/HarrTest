@@ -338,6 +338,36 @@ def frozen(experiment):
     return experiment, plan
 
 
+BUILD_PLAN_CONTRACT = '''Public wire contract (UTF-8 JSON in, one JSON value out):
+plan: {"op":"plan","jobs":[{"id":"compile","depends_on":[]},{"id":"pack","depends_on":["compile"]}]} -> {"order":["compile","pack"],"error":null}.
+Job IDs are nonempty strings and case-sensitive. Each job includes a depends_on array of job ID strings, which may be empty. Repeated prerequisite references to the same ID impose one dependency. At each position select the earliest job in input order whose prerequisites have all been scheduled. An empty job array returns {"order":[],"error":null}.
+Reject duplicate job IDs with {"order":[],"error":"duplicate-id"}, then reject unknown prerequisite IDs with {"order":[],"error":"missing-dependency"}, then reject any cycle, including self-dependency, with {"order":[],"error":"cycle"}. Never return a partial plan on error.
+job_count: {"op":"job_count","jobs":[{"id":"compile","depends_on":[]}]} -> {"count":1}. This operation counts input records without validating dependency edges or unique IDs.
+The public library entrypoint and the existing positional JSON CLI both return the same response shape. Planning does not execute jobs.
+'''
+
+
+BUILD_PLAN_SOURCE = '''using System;
+using System.Linq;
+using System.Text.Json;
+
+public static class Rules
+{
+    public static string Evaluate(string text)
+    {
+        using var request = JsonDocument.Parse(text);
+        var root = request.RootElement;
+        var jobs = root.GetProperty("jobs");
+        if (root.GetProperty("op").GetString() == "job_count")
+            return JsonSerializer.Serialize(new { count = jobs.GetArrayLength() });
+
+        var order = jobs.EnumerateArray().Select(job => job.GetProperty("id").GetString()).ToArray();
+        return JsonSerializer.Serialize(new { order, error = (string?)null });
+    }
+}
+'''
+
+
 MONTHLY_REPORT_CONTRACT = '''Public wire contract (evaluate accepts JSON text and returns JSON text):
 month: {"op":"month","ledger":"<file-path>","month":"2025-03"} -> {"ids":["entry"],"total_cents":12} for a ledger containing [{"id":"entry","recorded_at":"2025-03-16T14:01:00Z","amount_cents":12}].
 The queried month must be a string of the form YYYY-MM with year 0001 through 9999 and month 01 through 12. Missing or malformed month values raise ValueError.
@@ -415,6 +445,8 @@ The original CLI takes the operation string as its first argument and prints ret
                                   'batch validation and leaves the store unchanged. False behaves like omission.\n')
     if scenario == 'month-report':
         common['CONTRACT.md'] = MONTHLY_REPORT_CONTRACT
+    if scenario == 'build-plan':
+        common['CONTRACT.md'] = BUILD_PLAN_CONTRACT
     if tools:
         common['RUNTIME.md']+='Pinned executable paths: '+json.dumps({key:tools[key] for key in ['python','node','dotnet','cxx'] if tools.get(key)},sort_keys=True)+'\n'
     smoke = {
@@ -428,6 +460,12 @@ The original CLI takes the operation string as its first argument and prints ret
                  "ledger.write_text(json.dumps([{'id':'old','recorded_at':'2025-03-16T14:01:00Z','amount_cents':12}])); "
                  "args=[sys.executable,'cli.py',json.dumps({'op':'month','ledger':str(ledger),'month':'2025-03'})]; "
                  "expected={'ids':['old'],'total_cents':12}")
+    if scenario == 'build-plan':
+        ordinary_plan = {'op': 'plan', 'jobs': [{'id': 'compile', 'depends_on': []},
+                                                 {'id': 'pack', 'depends_on': ['compile']}]}
+        smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
+                 f"'--verbosity','quiet','--',json.dumps({ordinary_plan!r})]; "
+                 "expected={'order':['compile','pack'],'error':None}")
     common['check_existing.py']='import json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nscratch = Path(".runtime-proof/scratch")\nscratch.mkdir(parents=True, exist_ok=True)\nwith tempfile.TemporaryDirectory(dir=scratch) as temp:\n    '+smoke+'\n    result=subprocess.run(args,capture_output=True,text=True,check=True);lines=result.stdout.strip().splitlines();actual=json.loads(lines[-1]);assert actual==expected,(actual,expected);print("Existing public behavior checked")\n'
     if case.get('scenario')=='lookup':
         common['PERFORMANCE.md']='For lookup30000 sorted keys and20000 queries, preserve exact results and reduce median command wall time to at most70% of the unchanged baseline on the same machine/compiler/options. Use one warmup and five measurements per version; retain raw values and noise.\n'
@@ -443,6 +481,8 @@ The original CLI takes the operation string as its first argument and prints ret
     if lang == "csharp":
         core = '''using System;\nusing System.Text.Json;\npublic static class Rules {\n public static string Evaluate(string text) {\n  using var d = JsonDocument.Parse(text); var x = d.RootElement; string op=x.GetProperty("op").GetString()!;\n  if(op=="refund") return (x.GetProperty("age").GetInt32()<x.GetProperty("window").GetInt32()).ToString().ToLowerInvariant();\n  if(op=="tenant") { foreach(var a in x.GetProperty("accounts").EnumerateArray()) if(a.GetProperty("id").GetString()==x.GetProperty("id").GetString()) return a.GetProperty("balance").GetRawText(); return "null"; }\n  long left=x.GetProperty("left").GetInt64(), amount=x.GetProperty("amount").GetInt64();\n  if(op=="credit") return JsonSerializer.Serialize(new {balance=left+amount,accepted=true});\n  long right=x.GetProperty("right").GetInt64(); left-=amount;\n  if(left<0) return JsonSerializer.Serialize(new {left,right,accepted=false});\n  return JsonSerializer.Serialize(new {left,right=right+amount,accepted=true});\n }\n}\n'''
         project = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>\n'
+        if scenario == 'build-plan':
+            core = BUILD_PLAN_SOURCE
         return {**common, "Rules.cs": core, "Program.cs": "Console.WriteLine(Rules.Evaluate(args[0]));\n", "Existing.csproj": project}
     core = r'''#pragma once
 #include <algorithm>
@@ -708,10 +748,41 @@ def build_public_cli(workspace, output, lang, tools):
     return [tools['dotnet'],str(output/'app/Existing.dll')],[built]
 
 
+def build_plan_vectors():
+    def request(op, jobs):
+        return json.dumps({'op': op, 'jobs': [
+            {'id': job, 'depends_on': dependencies} for job, dependencies in jobs]})
+
+    def plan(jobs, order=(), error=None):
+        return request('plan', jobs), {'order': list(order), 'error': error}
+
+    ordinary = [
+        plan([('compile', []), ('pack', ['compile'])], ['compile', 'pack']),
+        plan([]),
+        (request('job_count', [('repeat', ['missing']), ('repeat', [])]), {'count': 2}),
+    ]
+    target = [
+        plan([('publish', ['archive']), ('package', ['compile']), ('docs', []), ('compile', []),
+              ('test', ['compile']), ('archive', ['package', 'test']), ('audit', [])],
+             ['docs', 'compile', 'package', 'test', 'archive', 'publish', 'audit']),
+        plan([('clean', ['Build', 'Build']), ('build', []), ('Build', []), ('sign', [])],
+             ['build', 'Build', 'clean', 'sign']),
+        plan([('first', []), ('duplicate', []), ('duplicate', [])], error='duplicate-id'),
+        plan([('duplicate', ['missing']), ('duplicate', [])], error='duplicate-id'),
+        plan([('first', []), ('needs-build', ['Build']), ('build', [])], error='missing-dependency'),
+        plan([('cycle', ['cycle']), ('invalid', ['missing'])], error='missing-dependency'),
+        plan([('first', []), ('cycle-a', ['cycle-b']), ('cycle-b', ['cycle-a'])], error='cycle'),
+        plan([('first', []), ('self', ['self'])], error='cycle'),
+    ]
+    return ordinary, target
+
+
 def test_vectors(case, sandbox):
     scenario = case["scenario"]
     def j(x): return json.dumps(x, separators=(",", ":"))
     if case["language"] == "csharp":
+        if scenario == 'build-plan':
+            return build_plan_vectors()
         ordinary = [(j({"op":"refund","age":2,"window":30}), "true"), (j({"op":"refund","age":31,"window":30}), "false")]
         if scenario == "refund": return ordinary, [(j({"op":"refund","age":30,"window":30}), "true"), (j({"op":"refund","age":0,"window":0}), "true")]
         if scenario == "tenant":
@@ -1001,7 +1072,11 @@ def _evaluate_attempt(attempt):
     preservation=[x for x in checks if x['check'].startswith('preservation') or x['check'] in {'ordinary-persistence','public-positional-preserved'}]
     targeted=[x for x in checks if x not in preservation]
     security_relevant=scenario in {'tenant','path','redact','framing','credit','transfer','atomic','bounds'}
-    resilience_relevant=scenario in {'dedupe','retry','atomic','transfer'}
+    resilience_relevant=scenario in {'dedupe','retry','atomic','transfer','build-plan'}
+    resilience_checks = targeted
+    if scenario == 'build-plan':
+        resilience_checks = [check for check in targeted if isinstance(check.get('expected'), dict)
+                             and check['expected'].get('error')]
     security = {'status': ('PASS' if targeted and all(x['passed'] for x in targeted) else 'FAIL') if security_relevant else 'NOT_APPLICABLE',
                 'scope': 'Only case-specific isolation, input validation, framing, disclosure or bounds behavior; no general security certification.'}
     if case.get('security_scope'):
@@ -1012,7 +1087,7 @@ def _evaluate_attempt(attempt):
         'architecture':{'status':'PASS' if architecture else 'FAIL','scope':'Frozen documented contract, build/dependency files and existing tests preserved; independent API consumer compiles/runs. Semantic architecture/clean-code review remains separate.'},
         'security':security,
         'performance':performance if scenario=='lookup' else {'status':'NOT_APPLICABLE','reason':'This frozen case declares no measured performance change; independent applicability review still required.'},
-        'resilience':{'status':('PASS' if targeted and all(x['passed'] for x in targeted) else 'FAIL') if resilience_relevant else 'NOT_APPLICABLE','scope':'Only the declared state, interruption, replay or atomicity behaviors.'},
+        'resilience':{'status':('PASS' if resilience_checks and all(x['passed'] for x in resilience_checks) else 'FAIL') if resilience_relevant else 'NOT_APPLICABLE','scope':'Only the declared state, interruption, replay or atomicity behaviors.'},
     }
     result={'schema':1,'attempt':meta['id'],'case':meta['case']['id'],'arm':meta['arm'],'model':meta['model'],
             'builds':builds,'checks':checks,'source_before':before,'source_after':after,'unchanged_by_evaluator':before==after,
@@ -1263,7 +1338,7 @@ def record_assessment(attempt, report_file):
     scenario=case['scenario']
     required={'functionality','preservation','architecture'}
     if case.get('security_scope') or scenario in {'tenant','path','redact','framing','credit','transfer','atomic'}:required.add('security')
-    if scenario in {'dedupe','retry','atomic'}:required.add('resilience')
+    if scenario in {'dedupe','retry','atomic','build-plan'}:required.add('resilience')
     if scenario=='lookup':required.add('performance')
     layers = []
     for row in rows:
@@ -1274,6 +1349,9 @@ def record_assessment(attempt, report_file):
         if row['id'] == 'security' and case.get('security_scope') and row['status'] == 'PASS':
             if result['automated_artifact_layers']['security']['status'] != 'PASS':
                 raise ValueError('Failed or missing scoped security controls cannot become PASS')
+        if scenario == 'build-plan' and row['id'] == 'resilience' and row['status'] == 'PASS':
+            if result['automated_artifact_layers']['resilience']['status'] != 'PASS':
+                raise ValueError('Failed invalid-plan controls cannot become PASS')
         if scenario=='lookup' and row['id']=='performance' and row['status']=='PASS' and result['performance']['status']!='PASS':
             raise ValueError('Failed or missing paired performance cannot become PASS')
         for evidence in row['evidence']:

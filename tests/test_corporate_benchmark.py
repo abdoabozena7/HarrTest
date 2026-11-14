@@ -61,6 +61,9 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(splits['py-batch-atomicity'], 'development')
         self.assertEqual(splits['py-monthly-report-utc'], 'acceptance')
         self.assertNotIn('py-event-idempotency', splits)
+        self.assertEqual(splits['cs-credit-validation'], 'development')
+        self.assertEqual(splits['cs-build-dependency-plan'], 'acceptance')
+        self.assertNotIn('cs-refund-boundary', splits)
 
     def test_pin_does_not_expose_evaluator_or_corpus(self):
         self.freeze()
@@ -511,20 +514,68 @@ assert.deepEqual(audit[1].overrides, {
         self.assertTrue(result['functional_passed'])
 
     def test_csharp_actual_compiler_negative_and_positive_controls(self):
-        dotnet=ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe'
+        dotnet=Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
         if not dotnet.is_file():self.skipTest('Pinned local .NET10SDK unavailable')
         self.fake_probe['tools']['dotnet']=str(dotnet)
-        p=self.attempt('cs-refund-boundary')
+        p=self.attempt('cs-credit-validation')
         probe = bench.command([sys.executable, '-B', 'check_existing.py'], p/'work')
         self.assertEqual(probe['exit_code'], 0, probe['stderr'])
         bad=bench.evaluate_attempt(p)
         self.assertTrue(all(x['exit_code']==0 for x in bad['builds']))
         self.assertFalse(bad['functional_passed'])
         core=p/'work/Rules.cs';text=core.read_text()
-        text=text.replace('<x.GetProperty("window")','<=x.GetProperty("window")')
+        text=text.replace('new {balance=left+amount,accepted=true}',
+                          'new {balance=amount>0 ? left+amount : left,accepted=amount>0}')
         core.write_text(text)
         good=bench.evaluate_attempt(p)
         self.assertTrue(good['functional_passed'],str(good['builds']))
+
+    def test_csharp_build_plan_preserves_existing_behavior_and_rejects_partial_errors(self):
+        dotnet = Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
+        if not dotnet.is_file():
+            self.skipTest('Pinned local .NET10 SDK unavailable')
+        self.fake_probe['tools']['dotnet'] = str(dotnet)
+        attempt = self.attempt('cs-build-dependency-plan')
+        baseline = bench.evaluate_attempt(attempt)
+        self.assertTrue(all(row['passed'] for row in baseline['checks'] if row['check'].startswith('preservation')))
+        self.assertFalse(baseline['functional_passed'])
+        self.assertEqual(baseline['automated_artifact_layers']['resilience']['status'], 'FAIL')
+        # Disposable oracle control, outside the frozen generator's project and skill.
+        core = attempt / 'work/Rules.cs'
+        old = core.read_text(encoding='utf-8')
+        implementation = '''        var items = jobs.EnumerateArray().Select(job => (
+            Id: job.GetProperty("id").GetString()!,
+            Dependencies: job.GetProperty("depends_on").EnumerateArray().Select(value => value.GetString()!).ToArray()
+        )).ToList();
+        var known = items.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        static string Failure(string error) => JsonSerializer.Serialize(new { order = Array.Empty<string>(), error });
+        if (known.Count != items.Count)
+            return Failure("duplicate-id");
+        if (items.Any(item => item.Dependencies.Any(dep => !known.Contains(dep))))
+            return Failure("missing-dependency");
+        var order = new System.Collections.Generic.List<string>();
+        var completed = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        while (order.Count < items.Count)
+        {
+            var next = items.FindIndex(item => !completed.Contains(item.Id) && item.Dependencies.All(completed.Contains));
+            if (next < 0)
+                return Failure("cycle");
+            order.Add(items[next].Id);
+            completed.Add(items[next].Id);
+        }
+'''
+        fixed = old[:old.index('        var order =')] + implementation + old[old.index('        return JsonSerializer.Serialize(new { order,'):]
+        core.write_text(fixed, encoding='utf-8')
+        correct = bench.evaluate_attempt(attempt)
+        self.assertTrue(correct['automated_artifact_passed'], str([row['check'] for row in correct['checks'] if not row['passed']]))
+        self.assertTrue(correct['unchanged_by_evaluator'])
+        partial = fixed.replace('return Failure("cycle");', 'return JsonSerializer.Serialize(new { order, error = "cycle" });')
+        core.write_text(partial, encoding='utf-8')
+        partial_result = bench.evaluate_attempt(attempt)
+        failures = [row for row in partial_result['checks'] if not row['passed']]
+        self.assertEqual(len(failures), 2)
+        self.assertTrue(all(row['observed'] == {'order': ['first'], 'error': 'cycle'} for row in failures))
+        self.assertEqual(partial_result['automated_artifact_layers']['resilience']['status'], 'FAIL')
 
     def test_cpp_actual_compiler_negative_and_positive_controls(self):
         if sys.platform!='win32':
