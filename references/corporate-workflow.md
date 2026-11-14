@@ -102,8 +102,11 @@ and every layer/criterion verdict. Judge citation relevance, old/new behavior,
 test strength, architecture and applicability. The gate checks declared review
 structure; it cannot authenticate local identities or automate semantic judgment.
 
-Use project-approved risk-specific security analysis and misuse checks, not scan
-counts. Capture commands, runtime/tool versions, real outcomes and limitations.
+Follow the project's security policy and record which existing trust boundaries,
+permissions, data and dependencies the change affects. Refer to the design review,
+threat modeling and security testing practices in [Microsoft SDL](https://www.microsoft.com/en-us/securityengineering/sdl/practices)
+when choosing risk-specific checks. Capture commands, runtime/tool versions, real
+outcomes and limitations.
 Minimize sensitive capture; document redaction and rebind changed evidence.
 For selective rejection/removal/transformation, test both the intended target and
 legitimate near matches. Connect the security outcome to preservation criteria:
