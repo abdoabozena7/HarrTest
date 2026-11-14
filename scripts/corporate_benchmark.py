@@ -273,6 +273,7 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
             "evaluator_sha256": sha(__file__), "models": models, "arms": list(ARMS), "repetitions": 2,
             "execution_seed":seed,"execution_order":balanced_execution_order(rows,models,seed),
             "execution_policy":"One generation then its independent evaluation at a time. Follow the frozen rotated arm order inside case/model/repetition blocks; no heavy tests during paired performance measurements.",
+            "native_task_pin_policy":"All arms normalize explicit native task model and reasoning-effort overrides to the frozen session pins. Actual actor model and effort remain independently checked after execution.",
             "acceptance_attempts": 96, "budget": {"seconds": seconds, "max_ai_credits": credits},
             "packages": packages, "preflight": probe,
             "limits": ["Same wall/credit caps are not equal realized generation cost.",
@@ -1030,9 +1031,33 @@ def _evaluate_attempt(attempt):
     return result
 
 
+TASK_PIN_HOOK = r'''
+const recognizedEfforts = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+function pinNativeTaskArguments(input, pins, audit) {
+  const args = input.toolArgs;
+  if (input.toolName !== 'task' || !args || typeof args !== 'object' || Array.isArray(args)) return;
+  const modifiedArgs = {...args};
+  const overrides = {};
+  const fields = [
+    ['model', pins.model, pins.models],
+    ['reasoning_effort', pins.effort, recognizedEfforts],
+  ];
+  for (const [field, pinned, known] of fields) {
+    if (!Object.hasOwn(args, field) || args[field] === pinned) continue;
+    overrides[field] = {requested: known.has(args[field]) ? args[field] : '[unrecognized]', applied: pinned};
+    modifiedArgs[field] = pinned;
+  }
+  if (!Object.keys(overrides).length) return;
+  audit({tool: 'task', toolCallId: input.toolCallId ?? null, overrides});
+  return {modifiedArgs};
+}
+'''
+
+
 SDK_DRIVER = r'''import fs from 'node:fs';
 import {pathToFileURL} from 'node:url';
 import path from 'node:path';
+''' + TASK_PIN_HOOK + r'''
 const c=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const {CopilotClient,RuntimeConnection}=await import(pathToFileURL(c.sdk).href);
 const client=new CopilotClient({mode:'copilot-cli',workingDirectory:c.workspace,
@@ -1064,11 +1089,14 @@ try {
  await client.start();
  const models=await client.listModels();write('models-observed.json',models);
  if(!models.some(m=>m.id===c.model))throw new Error('Pinned model not in authenticated catalog');
+ const taskPins={model:c.model,effort:c.effort,models:new Set(models.map(m=>m.id))};
+ const taskPinAudit=row=>fs.appendFileSync(c.output+'/task-pin-overrides.jsonl',JSON.stringify(row)+'\n');
  session=await client.createSession({sessionId:c.sessionId,model:c.model,allowedModels:[c.model],reasoningEffort:c.effort,workingDirectory:c.workspace,
  enableConfigDiscovery:true,enableFileHooks:true,enableHostGitOperations:true,enableSkills:true,
  trustWorkingDirectory:'session',disabledSkills:c.arm==='plain'?['harrtest']:[],
  skillDirectories:c.arm==='plain'?[]:[c.workspace+'/.github/skills'],
  sessionLimits:{maxAiCredits:c.maxAiCredits},onPermissionRequest:permission,
+ hooks:{onPreToolUse: input=>pinNativeTaskArguments(input,taskPins,taskPinAudit)},
  onEvent:e=>{fs.appendFileSync(c.output+'/generation.jsonl',JSON.stringify(e)+'\n');if(e.type==='session.start'&&!header){header=e.data;headerResolve(header);}}});
  write('sdk-session.json',{id:session.sessionId,cwd:c.workspace,model:c.model,effort:c.effort,mode:'copilot-cli'});
  let headerTimer;
@@ -1165,6 +1193,7 @@ def _run_attempt(attempt, *, permit_generation=False):
         invoked=[row.get('data',{}).get('arguments') for row in events if row.get('type')=='tool.execution_start' and row.get('data',{}).get('toolName')=='skill']
         raw['native_observations']={'models':models,'completed_subagents':len(children),'subagents':children,'skill_invocations':invoked,
                                     'parent_identity_matches_requested':identity_valid,
+                                    'task_pin_overrides_sha256':sha(attempt/'task-pin-overrides.jsonl') if (attempt/'task-pin-overrides.jsonl').is_file() else None,
                                     'usage_file_sha256':sha(attempt/'usage.json') if (attempt/'usage.json').is_file() else None}
         effort=reasoning_pin_observation(events,configuration['effort'])
         raw['native_observations']['reasoning_pin']=effort

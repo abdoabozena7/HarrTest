@@ -426,8 +426,40 @@ class CorporateBenchmarkTests(unittest.TestCase):
                 {'type':'model.call_start','agentId':'worker','data':{'reasoningEffort':None}}]
         self.assertEqual(bench.reasoning_pin_observation(events)['status'],'UNVERIFIED')
 
+    @unittest.skipUnless(shutil.which('node'), 'Node required for actual hook code')
+    def test_native_task_arg_pin_changes_only_explicit_overrides_and_keeps_permissions(self):
+        test = r'''
+const pins = {model: 'weak', effort: 'low', models: new Set(['weak', 'usual'])};
+const audit = [];
+const record = row => audit.push(row);
+const original = Object.freeze({model: 'usual', reasoning_effort: 'high', prompt: 'private case prompt',
+                                agent_type: 'general-purpose', mode: 'sync', name: 'worker'});
+const apply = (toolName, toolArgs) => pinNativeTaskArguments({toolName, toolArgs, toolCallId: 'native-1'}, pins, record);
+assert.deepEqual(apply('task', original), {modifiedArgs: {...original, model: 'weak', reasoning_effort: 'low'}});
+assert.equal(original.model, 'usual');
+assert.equal(original.reasoning_effort, 'high');
+assert.deepEqual(audit, [{tool: 'task', toolCallId: 'native-1', overrides: {
+  model: {requested: 'usual', applied: 'weak'}, reasoning_effort: {requested: 'high', applied: 'low'}
+}}]);
+assert.equal(apply('task', {model: 'weak', reasoning_effort: 'low'}), undefined);
+assert.equal(apply('task', {prompt: 'only'}), undefined);
+assert.equal(apply('view', original), undefined);
+assert.equal(apply('task', ['high']), undefined);
+assert.equal(audit.length, 1);
+assert.deepEqual(apply('task', {model: 'sensitive-value', reasoning_effort: {value: 'sensitive-value'}}),
+                 {modifiedArgs: {model: 'weak', reasoning_effort: 'low'}});
+assert.deepEqual(audit[1].overrides, {
+  model: {requested: '[unrecognized]', applied: 'weak'}, reasoning_effort: {requested: '[unrecognized]', applied: 'low'}
+});
+'''
+        runner = self.root / 'native-task-pin-test.mjs'
+        runner.write_text("import assert from 'node:assert/strict';\n" + bench.TASK_PIN_HOOK + test, encoding='utf-8')
+        result = bench.command([shutil.which('node'), str(runner)], self.root, 15)
+        self.assertEqual(result['exit_code'], 0, result['stderr'])
+
     def test_frozen_execution_order_is_complete_reproducible_and_rotated(self):
         plan=self.freeze('acceptance');order=plan['execution_order']
+        self.assertIn('All arms', plan['native_task_pin_policy'])
         self.assertEqual(len(order),96)
         self.assertEqual(order,bench.balanced_execution_order(plan['cases'],plan['models'],plan['execution_seed']))
         self.assertEqual(len({(x['case'],x['model'],x['repetition'],x['arm']) for x in order}),96)
