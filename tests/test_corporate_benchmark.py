@@ -436,6 +436,73 @@ class CorporateBenchmarkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'generation record changed'):
             bench.summarize(self.experiment)
 
+    def test_original_check_replay_detects_regression_after_generated_test_weakening(self):
+        attempt = self.attempt('py-event-idempotency')
+        workspace = attempt / 'work'
+        core = workspace / 'rules.py'
+        core.write_text(core.read_text().replace("state['balance'] += event['amount']", "state['balance'] += event['amount'] + 1"))
+        edited_oracle = workspace / 'check_existing.py'
+        edited_oracle.write_text(edited_oracle.read_text().replace("'balance':3", "'balance':4"))
+        before = bench.tree(workspace)
+        result = bench.evaluate_attempt(attempt)
+        replay = next(check for check in result['checks'] if check['check'] == 'preservation-existing-test-replay')
+        self.assertEqual(replay['execution']['baseline']['exit_code'], 0)
+        self.assertNotEqual(replay['execution']['candidate']['exit_code'], 0)
+        self.assertEqual(replay['oracle_sha256'], bench.load(attempt / 'attempt.json')['baseline']['check_existing.py'])
+        self.assertEqual(result['automated_artifact_layers']['preservation']['status'], 'FAIL')
+        self.assertEqual(bench.tree(workspace), before)
+
+    def test_summary_reports_reviewed_layer_failures_and_bound_credit_receipts(self):
+        attempt = self.attempt('py-batch-atomicity')
+        report = self.timeout_review(attempt)
+        review = bench.load(report)
+        for row in review['layers']:
+            if row['id'] in ('preservation', 'architecture', 'security'):
+                row['status'] = 'FAIL'
+        bench.save(report, review)
+        usage_path = attempt / 'usage.json'
+        usage = {'aiCreditsStatus': 'complete', 'totalNanoAiu': 1_500_000_000,
+                 'agentMetrics': {'main': {'totalNanoAiu': 1_000_000_000}, 'child': {'totalNanoAiu': 500_000_000}},
+                 'modelMetrics': {'weak-observed': {'totalNanoAiu': 1_500_000_000}}}
+        bench.save(usage_path, usage)
+        generation_path = attempt / 'generation.json'
+        generation = bench.load(generation_path)
+        generation.update(seconds=3.5, native_observations={'usage_file_sha256': bench.sha(usage_path),
+                          'completed_subagents': 1, 'subagents': [{'agentId': 'child'}]})
+        bench.save(generation_path, generation)
+        bench.record_assessment(attempt, report)
+        summary = bench.summarize(self.experiment)
+        counts = summary['counts']['plain']
+        self.assertEqual((counts['regressions'], counts['security_defects'], counts['architecture_violations']), (1, 1, 1))
+        self.assertEqual(counts['reviewed_layer_counts']['security']['UNREVIEWED'], 31)
+        self.assertEqual(counts['generation_seconds']['median_observed'], 3.5)
+        self.assertEqual(counts['evaluation_seconds']['observed_attempts'], 1)
+        self.assertEqual(counts['copilot_usage']['reported_ai_credits_subtotal'], 1.5)
+        self.assertEqual(counts['copilot_usage']['child_totals_reconciled'], 1)
+        usage['totalNanoAiu'] = 0
+        bench.save(usage_path, usage)
+        invalidated = bench.summarize(self.experiment)['counts']['plain']['copilot_usage']
+        self.assertEqual(invalidated['status_counts']['UNVERIFIED'], 1)
+        self.assertIsNone(invalidated['reported_ai_credits_subtotal'])
+
+    def test_usage_partial_and_unavailable_are_distinct_from_zero(self):
+        usage_path = self.root / 'usage.json'
+        for status, reported in [('complete', 0.0), ('partial', 0.0), ('unavailable', None)]:
+            with self.subTest(status=status):
+                bench.save(usage_path, {'aiCreditsStatus': status, 'totalNanoAiu': 0})
+                result = bench.credit_metrics(self.root, {'native_observations': {'usage_file_sha256': bench.sha(usage_path)}})
+                self.assertEqual(result['status'], status.upper())
+                self.assertEqual(result['reported_ai_credits'], reported)
+
+    def test_performance_metrics_keep_recorded_samples_and_reject_missing_samples(self):
+        metric = bench.performance_metrics({'performance': {'status': 'PASS', 'median_ratio': 0.5,
+                            'baseline': [{'exit_code': 0, 'seconds': 2.0}],
+                            'candidate': [{'exit_code': 0, 'seconds': 1.0}, {'exit_code': None, 'timed_out': True, 'seconds': 120}]}})
+        self.assertEqual(metric['median_ratio'], 0.5)
+        self.assertEqual(metric['baseline_seconds'], [2.0])
+        self.assertEqual(metric['candidate_seconds'], [1.0])
+        self.assertIsNone(bench.performance_metrics({})['candidate_median_seconds'])
+
     @unittest.skipUnless(shutil.which('node'),'Node required')
     def test_multicomponent_typescript_consumer_and_safe_diagnostics(self):
         p=self.attempt('ts-explicit-config')

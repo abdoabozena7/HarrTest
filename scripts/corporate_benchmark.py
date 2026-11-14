@@ -13,6 +13,7 @@ import ast
 from contextlib import contextmanager
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -207,6 +208,33 @@ def generation_environment(workspace, tools):
         environment['DOTNET_NOLOGO'] = '1'
         environment['DOTNET_CLI_TELEMETRY_OPTOUT'] = '1'
     return environment
+
+
+def replay_original_checks(workspace, evidence, meta, tools, candidate_manifest):
+    """Run the original preservation oracle on byte-verified scratch copies."""
+    baseline, candidate = evidence / 'existing-baseline', evidence / 'existing-candidate'
+    baseline.mkdir()
+    candidate.mkdir()
+    for path, content in fixture(meta['case'], tools).items():
+        (baseline / path).write_text(content, encoding='utf-8')
+    for path in candidate_manifest:
+        destination = candidate / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(workspace / path, destination)
+    if tree(baseline) != meta['baseline'] or tree(candidate) != candidate_manifest:
+        raise ValueError('Original test replay inputs differ from the frozen source manifests')
+    oracle = 'check_existing.py'
+    shutil.copyfile(baseline / oracle, candidate / oracle)
+    executions = {}
+    for role, directory in [('baseline', baseline), ('candidate', candidate)]:
+        executions[role] = command([tools['python'], '-B', oracle], directory, 120,
+                                   env=generation_environment(directory, tools))
+    baseline_passed = executions['baseline']['exit_code'] == 0
+    candidate_passed = executions['candidate']['exit_code'] == 0
+    return {'check': 'preservation-existing-test-replay', 'oracle_sha256': meta['baseline'][oracle],
+            'baseline_source_sha256': digest(meta['baseline']), 'candidate_source_sha256': digest(candidate_manifest),
+            'execution': executions, 'passed': baseline_passed and candidate_passed,
+            'status': 'UNVERIFIED' if not baseline_passed else 'PASS' if candidate_passed else 'FAIL'}
 
 
 def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400, credits=120, corpus=CORPUS, kind='development', seed=20261114):
@@ -700,6 +728,7 @@ def evaluate_attempt(attempt):
 
 
 def _evaluate_attempt(attempt):
+    started = time.monotonic()
     attempt = Path(attempt).resolve()
     experiment, plan = frozen(attempt.parents[1])
     meta = load(attempt / "attempt.json")
@@ -791,6 +820,8 @@ def _evaluate_attempt(attempt):
                     performance={'status':'PASS' if passed else 'FAIL','baseline':baseline_runs,'candidate':candidate_runs,'median_ratio':ratio,'maximum_ratio':threshold,'warmup_per_version':1,'measured_repetitions':5,'workload':workload,'scope':'External process wall time, same machine/compiler/options; raw variation retained'}
                     checks.append({'check':'performance-relative','passed':passed,'expected_max_ratio':threshold,'observed_ratio':ratio})
                 else:performance={'status':'UNVERIFIED','reason':'Baseline compiler failed'}
+    replay = replay_original_checks(workspace, evidence, meta, toolchain(plan), before)
+    checks.append(replay)
     after=tree(workspace)
     baseline=meta['baseline']
     allowed={'rules.py','rules.ts','Rules.cs','rules.hpp'}
@@ -823,7 +854,7 @@ def _evaluate_attempt(attempt):
     resilience_relevant=scenario in {'dedupe','retry','atomic','transfer'}
     layers={
         'functionality':{'status':'PASS' if functionality else 'FAIL','scope':'Independent public-API/CLI cases listed below; not all conceivable inputs.'},
-        'preservation':{'status':'PASS' if preservation and all(x['passed'] for x in preservation) else 'FAIL','checks':[x['check'] for x in preservation]},
+        'preservation':{'status':'UNVERIFIED' if replay['status']=='UNVERIFIED' else 'PASS' if all(x['passed'] for x in preservation) else 'FAIL','checks':[x['check'] for x in preservation]},
         'architecture':{'status':'PASS' if architecture else 'FAIL','scope':'Frozen documented contract, build/dependency files and existing tests preserved; independent API consumer compiles/runs. Semantic architecture/clean-code review remains separate.'},
         'security':{'status':('PASS' if targeted and all(x['passed'] for x in targeted) else 'FAIL') if security_relevant else 'NOT_APPLICABLE','scope':'Only case-specific isolation, input validation, framing, disclosure or bounds behavior; no general security certification.'},
         'performance':performance if scenario=='lookup' else {'status':'NOT_APPLICABLE','reason':'This frozen case declares no measured performance change; independent applicability review still required.'},
@@ -837,7 +868,7 @@ def _evaluate_attempt(attempt):
             'test_oracle_preservation':'Independent semantic review required for changed tests' if tests_changed else 'Original test source unchanged',
             'functional_passed':functionality,'automated_artifact_layers':layers,
             'automated_artifact_passed':functionality and architecture and before==after and all(row['status'] in {'PASS','NOT_APPLICABLE'} for row in layers.values()),
-            'performance':performance,
+            'performance':performance,'evaluation_seconds':time.monotonic()-started,
             'attribution':'Not inferred from output correctness; inspect retained native Copilot JSONL independently',
             'complete_quality_passed':False,'quality_status':'UNVERIFIED','evidence_directory':str(evidence)}
     # Functional truth is useful but cannot silently stand in for all six layers.
@@ -1093,6 +1124,111 @@ def record_assessment(attempt, report_file):
     return assessment
 
 
+def observed_number(value):
+    if (type(value) is int and value >= 0) or (type(value) is float and math.isfinite(value) and value >= 0):
+        return value
+    return None
+
+
+def observed_nanoaiu(value):
+    return value if type(value) is int and value >= 0 else None
+
+
+def credit_metrics(attempt, generation):
+    """Report the SDK total once and expose the independently recorded breakdown."""
+    path = attempt / 'usage.json'
+    usage_sha = generation.get('native_observations', {}).get('usage_file_sha256')
+    if not path.is_file():
+        return {'status': 'UNAVAILABLE', 'reason': 'No retained Copilot usage receipt'}
+    if usage_sha is None or sha(path) != usage_sha:
+        return {'status': 'UNVERIFIED', 'reason': 'Usage receipt is missing a matching generation hash'}
+    try:
+        usage = load(path)
+    except ValueError:
+        return {'status': 'UNVERIFIED', 'reason': 'Invalid Copilot usage receipt'}
+    if not isinstance(usage, dict):
+        return {'status': 'UNVERIFIED', 'reason': 'Invalid Copilot usage receipt'}
+
+    agent_metrics = usage.get('agentMetrics')
+    model_metrics = usage.get('modelMetrics')
+    agents = agent_metrics if isinstance(agent_metrics, dict) else {}
+    models = model_metrics if isinstance(model_metrics, dict) else {}
+    total = observed_nanoaiu(usage.get('totalNanoAiu'))
+    receipt_status = usage.get('aiCreditsStatus')
+    if receipt_status not in ('complete', 'partial'):
+        total = None
+    status = {'complete': 'COMPLETE', 'partial': 'PARTIAL'}.get(receipt_status, 'UNAVAILABLE') if total is not None else 'UNAVAILABLE'
+
+    # Agent totals reflect the SDK's reported metrics, not counts multiplied
+    # by a model estimate. Claim child coverage only when actual actor IDs
+    # are all represented and their amounts reconcile to the SDK total.
+    native = generation.get('native_observations', {})
+    observed_children = native.get('subagents', [])
+    child_ids = {row.get('agentId') for row in observed_children if row.get('agentId')}
+    per_agent = {key: observed_nanoaiu(row.get('totalNanoAiu'))
+                 for key, row in agents.items() if isinstance(row, dict)}
+    if status == 'COMPLETE' and child_ids and len(child_ids) == len(observed_children) == native.get('completed_subagents'):
+        reconciled = set(per_agent) == child_ids | {'main'} and all(value is not None for value in per_agent.values())
+        child_coverage = 'VERIFIED_IN_TOTAL' if reconciled and sum(per_agent.values()) == total else 'UNVERIFIED'
+    else:
+        child_coverage = ('UNVERIFIED' if observed_children or set(agents) - {'main'}
+                          or native.get('completed_subagents') != 0 else 'NO_CHILDREN_RECORDED')
+    return {'status': status, 'sdk_status': receipt_status, 'reported_nano_aiu': total,
+            'reported_ai_credits': total / 1_000_000_000 if total is not None else None,
+            'child_coverage': child_coverage, 'by_agent': agents, 'by_model': models,
+            'evidence': {'path': str(path), 'sha256': usage_sha}}
+
+
+def performance_metrics(result):
+    performance = result.get('performance') or {}
+    ratio = observed_number(performance.get('median_ratio'))
+    summary = {'status': performance.get('status', 'UNAVAILABLE'), 'median_ratio': ratio,
+               'maximum_ratio': performance.get('maximum_ratio'), 'workload': performance.get('workload')}
+    for role in ('baseline', 'candidate'):
+        executions = performance.get(role, [])
+        samples = [observed_number(row.get('seconds')) for row in executions
+                   if row.get('exit_code') == 0 and not row.get('timed_out')]
+        samples = [value for value in samples if value is not None]
+        summary[f'{role}_seconds'] = samples
+        summary[f'{role}_median_seconds'] = statistics.median(samples) if samples else None
+    return summary
+
+
+def attempt_counts(rows):
+    counts = {'denominator': len(rows),
+              'functional_passed': sum(row['functional_passed'] for row in rows),
+              'complete_quality_passed': sum(row['complete_quality_passed'] for row in rows),
+              'missing': sum(row['status'] == 'MISSING' for row in rows),
+              'false_accepts': sum(row.get('false_accept') is True for row in rows),
+              'unreviewed': sum(row.get('false_accept') is None for row in rows)}
+    layer_counts = {}
+    for layer in LAYER_NAMES:
+        outcomes = [row.get('reviewed_layers', {}).get(layer, 'UNREVIEWED') for row in rows]
+        layer_counts[layer] = {status: outcomes.count(status) for status in
+                               ('PASS', 'FAIL', 'UNVERIFIED', 'NOT_APPLICABLE', 'UNREVIEWED')}
+    counts['reviewed_layer_counts'] = layer_counts
+    counts['regressions'] = layer_counts['preservation']['FAIL']
+    counts['security_defects'] = layer_counts['security']['FAIL']
+    counts['architecture_violations'] = layer_counts['architecture']['FAIL']
+    for key in ('generation_seconds', 'evaluation_seconds'):
+        values = [row[key] for row in rows if row.get(key) is not None]
+        counts[key] = {'observed_attempts': len(values), 'sum_observed': sum(values) if values else None,
+                       'median_observed': statistics.median(values) if values else None}
+    usage = [row['copilot_usage'] for row in rows]
+    amounts = [item['reported_nano_aiu'] for item in usage if item.get('reported_nano_aiu') is not None]
+    counts['copilot_usage'] = {'status_counts': {status: sum(item['status'] == status for item in usage)
+                                                for status in ('COMPLETE', 'PARTIAL', 'UNVERIFIED', 'UNAVAILABLE')},
+                               'observed_amounts': len(amounts),
+                               'reported_ai_credits_subtotal': sum(amounts) / 1_000_000_000 if amounts else None,
+                               'child_totals_reconciled': sum(item.get('child_coverage') == 'VERIFIED_IN_TOTAL' for item in usage)}
+    performance = [row['performance'] for row in rows if row.get('performance', {}).get('median_ratio') is not None]
+    counts['measured_performance'] = {'attempts': len(performance),
+                                     'passed': sum(item['status'] == 'PASS' for item in performance),
+                                     'failed': sum(item['status'] == 'FAIL' for item in performance),
+                                     'median_ratio': statistics.median(item['median_ratio'] for item in performance) if performance else None}
+    return counts
+
+
 def summarize(experiment):
     experiment,plan=frozen(experiment);rows=[]
     for case in [c for c in plan['cases'] if c['split']=='acceptance']:
@@ -1101,12 +1237,18 @@ def summarize(experiment):
                 for repetition in (1,2):
                     path=experiment/'attempts'/f'{case["id"]}--{arm}--{index}--{repetition}'
                     entry={'case':case['id'],'arm':arm,'model':model,'repetition':repetition,'status':'MISSING','functional_passed':False,'complete_quality_passed':False}
-                    if (path/'generation.json').exists(): entry['status']=load(path/'generation.json')['status']
+                    generation = load(path / 'generation.json') if (path / 'generation.json').is_file() else {}
+                    entry['status'] = generation.get('status', 'MISSING')
+                    entry['generation_seconds'] = observed_number(generation.get('seconds'))
+                    entry['copilot_usage'] = credit_metrics(path, generation)
                     if (path/'latest-evaluation.json').exists():
                         ref=load(path/'latest-evaluation.json');p=path/ref['path']
                         if not p.resolve().is_relative_to(path) or sha(p)!=ref['sha256']: raise ValueError('Stale evaluation pointer')
                         result=load(p)
                         for k in ['functional_passed','complete_quality_passed','quality_status']:entry[k]=result[k]
+                        entry['evaluation_seconds'] = observed_number(result.get('evaluation_seconds'))
+                        entry['performance'] = performance_metrics(result)
+                        entry['automated_layers'] = {name: row['status'] for name, row in result.get('automated_artifact_layers', {}).items()}
                         if (path/'assessment.json').is_file():
                             assessment=load(path/'assessment.json')
                             seal=assessment.pop('sha256',None)
@@ -1125,12 +1267,16 @@ def summarize(experiment):
                             entry['complete_quality_passed']=assessment['complete_quality_passed']
                             entry['quality_status']='PASS' if entry['complete_quality_passed'] else 'FAIL'
                             entry['false_accept']=assessment['false_accept']
+                            entry['reviewed_layers'] = {row['id']: row['status'] for row in assessment['layers']}
+                            entry['completion_claim'] = assessment['completion_claim']
                     rows.append(entry)
-    counts={arm:{'denominator':32,'functional_passed':sum(x['functional_passed'] for x in rows if x['arm']==arm),'complete_quality_passed':sum(x['complete_quality_passed'] for x in rows if x['arm']==arm),'missing':sum(x['status']=='MISSING' for x in rows if x['arm']==arm),'false_accepts':sum(x.get('false_accept') is True for x in rows if x['arm']==arm),'unreviewed':sum(x.get('false_accept') is None for x in rows if x['arm']==arm)} for arm in ARMS}
+    counts = {arm: attempt_counts([row for row in rows if row['arm'] == arm]) for arm in ARMS}
     qualified=(plan.get('kind')=='acceptance' and all(x['missing']==0 and x['unreviewed']==0 for x in counts.values())
                and counts['v5']['false_accepts']==0
                and counts['v5']['complete_quality_passed']>max(counts['plain']['complete_quality_passed'],counts['v4.1']['complete_quality_passed']))
-    return {'schema':1,'kind':plan.get('kind','development'),'declared_attempts':96,'attempts':rows,'counts':counts,'release_qualified':qualified,'limitation':'Independent operator-supplied six-layer assessments on current source and actual completion claims required for all attempts; functional counts alone cannot qualify Corporate release. Attribution remains cooperative local evidence.'}
+    return {'schema':1,'kind':plan.get('kind','development'),'declared_attempts':96,'attempts':rows,'counts':counts,'release_qualified':qualified,
+            'metric_scope':'Regression, security and architecture counts are failed independent layer verdicts per attempt, not distinct findings. Credit totals cover the reported subtotal only. Time and performance summaries identify their observed denominators.',
+            'limitation':'Independent operator-supplied six-layer assessments on current source and actual completion claims required for all attempts; functional counts alone cannot qualify Corporate release. Attribution remains cooperative local evidence.'}
 
 
 def main(argv=None):
