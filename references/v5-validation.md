@@ -18,7 +18,7 @@ before fixtures were updated; another imported an evaluator while it was being
 edited. They are not replaced or presented as passed. Final live-model comparison
 and subsequent session-pinning changes require their own validation.
 
-## Planned live comparison
+## Live comparison
 
 Eight development cases and eight separate acceptance cases cover existing
 C# service/library, TypeScript CLI/SDK, Python data-processing and C++ library
@@ -28,6 +28,11 @@ Models, source packages, toolchains, workload, budgets and independent oracles
 must be frozen before generation. All task product changes come from Copilot.
 The harness developer supplies general workflow changes and external evaluation,
 with no task-specific repairs to generated artifacts.
+
+The frozen acceptance run began on 2026-11-14 using GPT-6 Luna and GPT-6.1 Sol
+at low reasoning effort, with the same 2,400-second and 120-AI-credit caps for
+each attempt. Independent assessments are recorded as attempts complete.
+The local protocol, journal and partial summary are under `output/v5-corporate/acceptance-v5-1/`.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
@@ -148,6 +153,12 @@ recorded. The next pinned fixture keeps the existing check assertions and runs
 them with the declared .NET executable and a workspace-local scratch directory.
 This fixture setup applies equally to each arm. The evaluator also replays the
 original checker on source-qualified baseline and candidate copies separately.
+
+Development-smoke10 used that pinned checker. QA independently ran the existing
+check and recorded exit 0 on the integrated source. Copilot's SDK did not reach
+idle within the 900s session limit and the trial ended without an independent
+review receipt. All five external checks, including the old checker replay,
+passed. The model run remains a failure in the development record.
 
 The schema2 log adapter independently passed a long-session compatibility probe
 and replay controls for real model/effort changes. The old 4.1-pinned production
