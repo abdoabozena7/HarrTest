@@ -71,6 +71,12 @@ Each applicable criterion has id, requirement_ids, claim, oracle, counterexample
 check and negative_check. Select checks with `{task_id,check_id}`. Meaningful shared
 checks can close several criteria; do not create repetitive tests to fill rows.
 Negative controls assert the named fault/rejection actually occurred.
+For changed validation or side-effecting operations, inventory the affected
+input controls from the current contract. Include optional fields, metadata,
+configuration and failure signals where they can change behavior. Exercise
+distinct allowed values and contract-forbidden inputs. For atomic rejection,
+place a rejected input after valid work and assert that the relevant persisted
+state, emitted events or external effects remain at the required boundary.
 
 Preservation also declares baseline_check. Its current check must replay the old
 command with unchanged assertions, expected exits, mode and role. A feature test
@@ -89,6 +95,10 @@ Use [Team schema2](production-teams.md) for bounded owners and actual host capac
 Parallelize independent ready scopes, serialize dependencies and shared resources,
 and route failures to existing owners. Integration can be validation-only.
 Run changed-behavior and preservation checks through the proof collector.
+If QA finds an apparent inherited fault, replay the same condition on baseline
+and candidate without changing the oracle. Record the affected requirements and
+evidence. Record unrelated existing findings with their limitations and keep
+the repair scope guided by the request and project policy.
 
 The mutable report contains schema1, plan_sha256, current source, executions and
 review. Execution references are `{receipt:project-relative-path,sha256:digest}`.

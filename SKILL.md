@@ -119,6 +119,11 @@ than treating a stricter-looking result as automatically safer.
 For multi-step behavior, establish the intermediate invariants as well as the
 final result. A valid final value or successful final response does not show
 that intermediate operations, partial failures or state transitions were legal.
+For each affected input boundary, derive checks from the whole relevant contract,
+including optional controls and failure triggers. Exercise the valid alternate
+values and malformed shapes or types the contract rejects. For a rejected
+operation that can cause side effects, assert the before/after state at the
+rejection boundary as well as the public response.
 
 Every required layer must PASS. NOT_APPLICABLE requires impact reasoning, cited
 evidence and separate review. Missing checks remain UNVERIFIED. A failed major
@@ -152,6 +157,10 @@ Reproduce, explain, repair with the owner, rerun and inspect. Preserve existing
 tests and add meaningful tests for changed behavior; test counts are not quality.
 Use [acceptance and test quality](references/acceptance-and-test-quality.md) for
 independent oracles and safe negative controls.
+For a newly found issue, replay the same observation against the pinned baseline
+and the current source. Record its impact on the agreed requirements before
+routing repair. Keep inherited out-of-scope findings visible and keep affected
+requirements open until their failures are resolved.
 
 Load domain instructions only when actual behavior needs them:
 [visible output](references/quality-intent.md), [browser behavior](references/web-validation.md),
@@ -171,6 +180,9 @@ Keep ordinary diagnosis and repair in the active mission. A handoff, failed revi
 or attempt timebox is not completion. Respect authorization, actual resource
 limits, cancellation and host limits. Report missing capabilities honestly while
 continuing useful authorized work.
+Qualify completion claims to the behavior and inputs actually verified. If an
+applicable criterion is still open, report the affected requirement as incomplete
+alongside check results already established.
 
 For harness improvement keep product edits and task-specific repair coaching out
 of the experiment. Improve the general mechanism, pin a new version and retain
