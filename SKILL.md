@@ -85,7 +85,10 @@ as PASS and justified NOT_APPLICABLE; do not bias reviewers toward acceptance.
 Select the actual host before sealing the team plan. In Copilot, give the native
 `task` tool the exact `task_name` as `name` and the returned `message` as `prompt`.
 Use only the description for a friendlier label. The returned testing name is
-`qa`. Verify the current native Team after the testing worker completes.
+`qa`. Choose a worker allowed to run checks and save private proof artifacts.
+Keep its product scope read-only. If a built-in reviewer forbids all writes,
+use another permitted worker type with the same `qa` name. Verify the current
+native Team after the testing worker completes.
 
 ## Assess all quality layers
 

@@ -407,6 +407,9 @@ def integrate(project, state):
                'turn a missing measurement into an applicability exclusion. Do not edit product '
                'files or weaken the contract. Run a finite real check with assertions through:\n'
                f'{command} -- ACTUAL_ARGV\nRecord observations privately in {evidence}. '
+               'The evidence file is a private verification artifact. The no-product-edits rule permits '
+               'writing that artifact when your host authorizes it. Use the exact project-relative '
+               'forward-slash path below for --evidence, including on Windows. '
                f'Then run {review_command} --evidence {evidence} --verdict pass only if all required '
                'checks pass, otherwise --verdict fail. Release owned runtime resources afterward. '
                'A successful receipt proves the recorded process, not semantic correctness or native identity.')

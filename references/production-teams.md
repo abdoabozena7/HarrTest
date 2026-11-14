@@ -74,6 +74,12 @@ packet. QA may report PASS, FAIL, UNVERIFIED or NOT_APPLICABLE for a layer; do n
 ask it to choose only passing labels. Overall unverified required checks cannot
 be a passing review. Do not restrict what defects the reviewer may report.
 
+Confirm the QA worker type can run checks and write the private evidence file.
+In Copilot, use an available `general-purpose` worker when the built-in `task`
+worker's instructions prohibit file writes. The QA packet still prohibits
+editing product files. Pass the `--evidence` path exactly as printed in the packet.
+It is relative to the project and uses forward slashes, including on Windows.
+
 ```text
 python <skill>/scripts/team.py --project . verify --team mission --parent ACTUAL_PARENT_SESSION_UUID
 ```
