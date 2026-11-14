@@ -57,6 +57,10 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(len({row['id'] for row in rows}),16)
         for split in ['development','acceptance']:
             self.assertEqual(sum(x['split']==split for x in rows),8)
+        splits = {row['id']: row['split'] for row in rows}
+        self.assertEqual(splits['py-batch-atomicity'], 'development')
+        self.assertEqual(splits['py-monthly-report-utc'], 'acceptance')
+        self.assertNotIn('py-event-idempotency', splits)
 
     def test_pin_does_not_expose_evaluator_or_corpus(self):
         self.freeze()
@@ -83,7 +87,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
         p=self.experiment/'protocol.json';data=bench.load(p);data['models'][0]='other'
         bench.save(p,data)
         with self.assertRaisesRegex(ValueError,'Protocol was changed'):
-            bench.prepare(self.experiment,'py-event-idempotency','plain','other',1)
+            bench.prepare(self.experiment,'py-retry-recovery','plain','other',1)
 
     def test_package_change_invalidates_attempt(self):
         self.freeze()
@@ -107,19 +111,19 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertFalse(result['release_qualified'])
 
     def test_attempt_cannot_be_silently_overwritten(self):
-        p=self.attempt('py-event-idempotency')
+        p=self.attempt('py-retry-recovery')
         with self.assertRaises(FileExistsError):
-            bench.prepare(self.experiment,'py-event-idempotency','plain','weak-observed',1)
+            bench.prepare(self.experiment,'py-retry-recovery','plain','weak-observed',1)
         self.assertEqual(bench.load(p/'attempt.json')['arm'],'plain')
 
     def test_plain_settings_are_local_and_do_not_turn_off_hooks(self):
-        p=self.attempt('py-event-idempotency')
+        p=self.attempt('py-retry-recovery')
         settings=bench.load(p/'work/.github/copilot/settings.local.json')
         self.assertEqual(settings['disabledSkills'],['harrtest'])
         self.assertNotIn('disableAllHooks',settings)
 
     def test_generation_needs_explicit_authorization(self):
-        p=self.attempt('py-event-idempotency')
+        p=self.attempt('py-retry-recovery')
         with self.assertRaisesRegex(ValueError,'explicit'):
             bench.run_attempt(p)
 
@@ -132,17 +136,19 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertTrue(bench.skill_isolation({'skills':[expected]},work,'v5'))
 
     def test_real_python_baseline_fails_duplicate_across_processes(self):
-        p=self.attempt('py-event-idempotency')
+        p=self.attempt('py-retry-recovery')
         result=bench.evaluate_attempt(p)
-        self.assertTrue(result['checks'][0]['passed'])
-        self.assertFalse(result['checks'][1]['passed'])
-        self.assertEqual(result['checks'][1]['observed']['balance'],6)
+        checks = {check['check']: check for check in result['checks']}
+        self.assertTrue(checks['ordinary-persistence']['passed'])
+        self.assertTrue(checks['partial-interruption']['passed'])
+        self.assertFalse(checks['retry-after-committed-prefix']['passed'])
+        self.assertEqual(checks['retry-after-committed-prefix']['observed']['balance'], 15)
         self.assertTrue(result['unchanged_by_evaluator'])
         self.assertFalse(result['complete_quality_passed'])
 
     def test_independent_oracle_accepts_known_positive_control(self):
         # Disposable evaluator unit control only; never enters a live arm or claim.
-        p=self.attempt('py-event-idempotency');core=p/'work/rules.py'
+        p=self.attempt('py-retry-recovery');core=p/'work/rules.py'
         text=core.read_text();text=text.replace("    for event in x['events']:\n", "    for event in x['events']:\n        if event['id'] in state['seen']:\n            continue\n")
         core.write_text(text)
         result=bench.evaluate_attempt(p)
@@ -151,12 +157,12 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertFalse(result['complete_quality_passed'])
 
     def test_contract_edit_is_detected_despite_correct_function(self):
-        p=self.attempt('py-event-idempotency');(p/'work/ARCHITECTURE.md').write_text('relaxed contract')
+        p=self.attempt('py-retry-recovery');(p/'work/ARCHITECTURE.md').write_text('relaxed contract')
         result=bench.evaluate_attempt(p)
         self.assertFalse(result['documented_contract_and_adapter_preserved'])
 
     def test_extended_existing_tests_do_not_fail_architecture_on_byte_changes(self):
-        p=self.attempt('py-event-idempotency');test=p/'work/check_existing.py'
+        p=self.attempt('py-retry-recovery');test=p/'work/check_existing.py'
         test.write_text(test.read_text()+'\nassert len([1,2,3]) == 3\n')
         result=bench.evaluate_attempt(p)
         self.assertTrue(result['existing_tests_changed'])
@@ -164,14 +170,14 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertIn('Independent',result['test_oracle_preservation'])
 
     def test_deleted_or_trivially_weakened_test_does_not_pass_architecture(self):
-        p=self.attempt('py-event-idempotency');test=p/'work/check_existing.py'
+        p=self.attempt('py-retry-recovery');test=p/'work/check_existing.py'
         test.write_text('assert True\n')
         self.assertFalse(bench.evaluate_attempt(p)['documented_contract_and_adapter_preserved'])
         test.unlink()
         self.assertFalse(bench.evaluate_attempt(p)['documented_contract_and_adapter_preserved'])
 
     def test_actual_shell_policy_edit_is_invalid_even_with_exit_zero(self):
-        p=self.attempt('py-event-idempotency');work=p/'work'
+        p=self.attempt('py-retry-recovery');work=p/'work'
         with patch.object(bench.Path,'home',return_value=self.root/'no-user-configuration'):
             before=bench.configuration_inputs(work)
             target=work/'.github/copilot/settings.local.json'
@@ -183,7 +189,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
 
     def test_python_import_cache_keeps_skill_identity_and_configuration_stable(self):
         self.freeze()
-        attempt = bench.prepare(self.experiment, 'py-event-idempotency', 'v5', 'weak-observed', 1)
+        attempt = bench.prepare(self.experiment, 'py-retry-recovery', 'v5', 'weak-observed', 1)
         work = attempt / 'work'
         package = work / '.github/skills/harrtest'
         scripts = package / 'scripts'
@@ -222,7 +228,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
         outside = {key: os.environ.get(key) for key in ('TEMP', 'TMP', 'TMPDIR')}
         for arm in bench.ARMS:
             with self.subTest(arm=arm):
-                attempt = bench.prepare(self.experiment, 'py-event-idempotency', arm, 'weak-observed', 1)
+                attempt = bench.prepare(self.experiment, 'py-retry-recovery', arm, 'weak-observed', 1)
                 workspace = attempt / 'work'
                 before = bench.tree(workspace)
                 environment = bench.generation_environment(workspace, {})
@@ -244,6 +250,112 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertTrue(by_id['invalid-batch']['passed'])
         self.assertFalse(by_id['state-unchanged']['passed'])
         self.assertEqual(by_id['state-unchanged']['observed']['balance'],8)
+
+    def test_batch_optional_control_validates_type_before_writing(self):
+        attempt = self.attempt('py-batch-atomicity')
+        core = attempt / 'work/rules.py'
+        amount_only = core.read_text(encoding='utf-8').replace(
+            "    for event in x['events']:\n",
+            "    for event in x['events']:\n        if event['amount'] < 0:\n            raise ValueError('negative amount')\n"
+            "    for event in x['events']:\n", 1)
+        core.write_text(amount_only, encoding='utf-8')
+        result = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row for row in result['checks']}
+        self.assertTrue(checks['state-unchanged']['passed'])
+        self.assertTrue(checks['control-field-false-is-valid']['passed'])
+        checkpoint = checks['control-field-true-commits-then-interrupts']
+        self.assertTrue(checkpoint['passed'])
+        self.assertEqual(checkpoint['observed'], 'RUNTIME_ERROR')
+        self.assertEqual(checkpoint['persisted_observed'], {'balance': 12, 'seen': ['old', 'prefix', 'flagged']})
+        self.assertEqual(checkpoint['persisted_sha256'],
+                         bench.sha(Path(result['evidence_directory']) / 'control-field-true.json'))
+        for label in ('string', 'integer', 'null'):
+            check = checks[f'control-field-{label}']
+            self.assertFalse(check['passed'])
+            self.assertNotEqual(check['input_file_sha256_before'], check['input_file_sha256_after'])
+        complete = amount_only.replace("        if event['amount'] < 0:\n",
+            "        if 'fail_after' in event and not isinstance(event['fail_after'], bool):\n"
+            "            raise ValueError('fail_after must be a bool')\n"
+            "        if event['amount'] < 0:\n", 1)
+        core.write_text(complete, encoding='utf-8')
+        self.assertTrue(bench.evaluate_attempt(attempt)['automated_artifact_passed'])
+        core.write_text(complete.replace("RuntimeError('injected interruption')", "ValueError('injected interruption')"),
+                        encoding='utf-8')
+        wrong_error = next(row for row in bench.evaluate_attempt(attempt)['checks']
+                           if row['check'] == 'control-field-true-commits-then-interrupts')
+        self.assertEqual(wrong_error['persisted_observed'], wrong_error['persisted_expected'])
+        self.assertEqual(wrong_error['observed'], 'VALUE_ERROR')
+        self.assertFalse(wrong_error['passed'])
+
+    def test_monthly_report_baseline_preserves_existing_checks_but_fails_utc_boundaries(self):
+        attempt = self.attempt('py-monthly-report-utc')
+        result = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row for row in result['checks']}
+        self.assertTrue(all(row['passed'] for name, row in checks.items() if name.startswith('preservation')))
+        self.assertFalse(checks['utc-march-in-ledger-order']['passed'])
+        self.assertEqual(checks['utc-march-in-ledger-order']['observed'], {'ids': ['first', 'west'], 'total_cents': 1299})
+        self.assertFalse(checks['timestamp-naive']['passed'])
+        self.assertFalse(checks['month-year-zero']['passed'])
+        self.assertFalse(checks['timestamp-year-zero']['passed'])
+        self.assertEqual(result['automated_artifact_layers']['security']['status'], 'FAIL')
+        self.assertFalse(result['automated_artifact_passed'])
+
+    def test_monthly_report_oracle_checks_read_only_ledgers_and_real_validation_errors(self):
+        # Disposable oracle controls. No solution enters the benchmark workspace templates.
+        attempt = self.attempt('py-monthly-report-utc')
+        core = attempt / 'work/rules.py'
+        source = core.read_text(encoding='utf-8')
+        reference = '''def summarize(entries, month):
+    if not isinstance(month, str) or not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month) or month.startswith('0000'):
+        raise ValueError('invalid query month')
+    selected = []
+    for entry in entries:
+        stamp = entry.get('recorded_at')
+        if not isinstance(stamp, str) or not re.fullmatch(
+            r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-](0[0-9]|1[0-9]|2[0-3]):[0-5][0-9])', stamp
+        ):
+            raise ValueError('invalid timestamp shape')
+        try:
+            utc = datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone(timezone.utc)
+        except OverflowError as error:
+            raise ValueError('out-of-range UTC date') from error
+        if f'{utc.year:04d}-{utc.month:02d}' == month:
+            selected.append(entry)
+    return {'ids': [entry['id'] for entry in selected],
+            'total_cents': sum(entry['amount_cents'] for entry in selected)}
+
+
+'''
+        candidate = ('import re\nfrom datetime import datetime, timezone\n' + source[:source.index('def summarize')]
+                     + reference + source[source.index('def evaluate'):].replace("request['month']", "request.get('month')"))
+        core.write_text(candidate, encoding='utf-8')
+        result = bench.evaluate_attempt(attempt)
+        self.assertTrue(result['automated_artifact_passed'])
+        self.assertTrue(result['unchanged_by_evaluator'])
+        security = result['automated_artifact_layers']['security']
+        self.assertEqual(security['status'], 'PASS')
+        self.assertIn('month-year-zero', security['rejection_checks'])
+        self.assertIn('timestamp-year-zero', security['rejection_checks'])
+        self.assertIn('timestamp-utc-underflow', security['rejection_checks'])
+        self.assertIn('timestamp-utc-overflow', security['rejection_checks'])
+        for label in ('accept-first-supported-year', 'accept-last-supported-year'):
+            self.assertTrue(next(row for row in result['checks'] if row['check'] == label)['passed'])
+        changed = candidate.replace("        return json.dumps(summarize(entries, request.get('month')))",
+            "        if request.get('month') == '2025-13':\n            return 'VALUE_ERROR'\n"
+            "        result = summarize(entries, request.get('month'))\n"
+            "        Path(request['ledger']).write_text(json.dumps(entries, indent=2), encoding='utf-8')\n"
+            "        return json.dumps(result)")
+        core.write_text(changed, encoding='utf-8')
+        result = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row for row in result['checks']}
+        report = checks['utc-march-in-ledger-order']
+        self.assertEqual(report['observed'], report['expected'])
+        self.assertFalse(report['passed'])
+        self.assertNotEqual(report['input_file_sha256_before'], report['input_file_sha256_after'])
+        self.assertEqual(checks['month-out-of-range']['observed'], 'VALUE_ERROR')
+        self.assertEqual(checks['month-out-of-range']['execution']['exit_code'], 0)
+        self.assertFalse(checks['month-out-of-range']['passed'])
+        self.assertEqual(result['automated_artifact_layers']['security']['status'], 'FAIL')
 
     @unittest.skipUnless(shutil.which('node'),'Node required for actual TypeScript runtime')
     def test_real_typescript_explicit_values_fail_baseline(self):
@@ -414,7 +526,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
         return path
 
     def test_reviewed_timeout_is_a_failed_retained_denominator_not_a_dead_end(self):
-        p=self.attempt('py-batch-atomicity');review=self.timeout_review(p)
+        p=self.attempt('py-monthly-report-utc');review=self.timeout_review(p)
         assessment=bench.record_assessment(p,review)
         self.assertFalse(assessment['complete_quality_passed'])
         self.assertFalse(assessment['false_accept'])
@@ -423,8 +535,21 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(counts['unreviewed'],31)
         self.assertEqual(counts['false_accepts'],0)
 
+    def test_monthly_report_review_requires_applicable_security_with_passing_controls(self):
+        attempt = self.attempt('py-monthly-report-utc')
+        report = self.timeout_review(attempt)
+        review = bench.load(report)
+        security = next(row for row in review['layers'] if row['id'] == 'security')
+        for verdict, error in [('NOT_APPLICABLE', 'layers are required'),
+                               ('PASS', 'scoped security controls cannot become PASS')]:
+            with self.subTest(verdict=verdict):
+                security['status'] = verdict
+                bench.save(report, review)
+                with self.assertRaisesRegex(ValueError, error):
+                    bench.record_assessment(attempt, report)
+
     def test_failed_generation_cannot_be_upgraded_by_positive_layer_assertions(self):
-        p=self.attempt('py-event-idempotency');core=p/'work/rules.py'
+        p=self.attempt('py-retry-recovery');core=p/'work/rules.py'
         core.write_text(core.read_text().replace("    for event in x['events']:\n", "    for event in x['events']:\n        if event['id'] in state['seen']:\n            continue\n"))
         review=self.timeout_review(p,'FAILED');data=bench.load(review)
         for layer in data['layers']:layer['status']='PASS'
@@ -432,14 +557,14 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertFalse(bench.record_assessment(p,review)['complete_quality_passed'])
 
     def test_post_review_generation_changes_invalidate_summary(self):
-        p=self.attempt('py-batch-atomicity');review=self.timeout_review(p)
+        p=self.attempt('py-monthly-report-utc');review=self.timeout_review(p)
         bench.record_assessment(p,review)
         bench.save(p/'generation.json',{'status':'COMPLETED'})
         with self.assertRaisesRegex(ValueError,'generation record changed'):
             bench.summarize(self.experiment)
 
     def test_original_check_replay_detects_regression_after_generated_test_weakening(self):
-        attempt = self.attempt('py-event-idempotency')
+        attempt = self.attempt('py-retry-recovery')
         workspace = attempt / 'work'
         core = workspace / 'rules.py'
         core.write_text(core.read_text().replace("state['balance'] += event['amount']", "state['balance'] += event['amount'] + 1"))
@@ -455,7 +580,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(bench.tree(workspace), before)
 
     def test_summary_reports_reviewed_layer_failures_and_bound_credit_receipts(self):
-        attempt = self.attempt('py-batch-atomicity')
+        attempt = self.attempt('py-monthly-report-utc')
         report = self.timeout_review(attempt)
         review = bench.load(report)
         for row in review['layers']:

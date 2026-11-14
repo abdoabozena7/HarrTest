@@ -337,6 +337,37 @@ def frozen(experiment):
     return experiment, plan
 
 
+MONTHLY_REPORT_CONTRACT = '''Public wire contract (evaluate accepts JSON text and returns JSON text):
+month: {"op":"month","ledger":"<file-path>","month":"2025-03"} -> {"ids":["entry"],"total_cents":12} for a ledger containing [{"id":"entry","recorded_at":"2025-03-16T14:01:00Z","amount_cents":12}].
+The queried month must be a string of the form YYYY-MM with year 0001 through 9999 and month 01 through 12. Missing or malformed month values raise ValueError.
+Each recorded_at must be a valid calendar date and whole-second time in the form YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS±HH:MM. Offsets have hours 00 to 23 and minutes 00 to 59. Hours 24 and leap seconds are invalid. Missing, non-string, malformed, or timezone-less timestamps anywhere in the ledger raise ValueError. A timestamp whose UTC result is out of the supported year range also raises ValueError.
+Month membership uses UTC. For example, 2025-04-01T00:10:00+01:00 belongs to March UTC. Return matching IDs in ledger order and sum their signed integer amount_cents. An empty result returns {"ids":[],"total_cents":0}.
+entry_count: {"op":"entry_count","ledger":"<file-path>"} -> {"count":1} for the one-entry ledger above. This operation counts the records without parsing timestamps.
+Both operations are read-only. The CLI takes JSON text as its first positional argument and prints the returned JSON.
+'''
+
+
+MONTHLY_REPORT_SOURCE = '''import json
+from pathlib import Path
+
+
+def summarize(entries, month):
+    selected = [entry for entry in entries if entry['recorded_at'][:7] == month]
+    return {'ids': [entry['id'] for entry in selected],
+            'total_cents': sum(entry['amount_cents'] for entry in selected)}
+
+
+def evaluate(text):
+    request = json.loads(text)
+    entries = json.loads(Path(request['ledger']).read_text(encoding='utf-8'))
+    if request['op'] == 'entry_count':
+        return json.dumps({'count': len(entries)})
+    if request['op'] == 'month':
+        return json.dumps(summarize(entries, request['month']))
+    raise ValueError('unsupported operation')
+'''
+
+
 def fixture(case, tools=None):
     """Pre-existing defective project and ordinary public contract; no target fixes."""
     tools = tools or {}
@@ -377,6 +408,12 @@ The original CLI takes the operation string as its first argument and prints ret
 ''',
     }
     common['CONTRACT.md']=contracts[lang]
+    scenario = case.get('scenario')
+    if scenario == 'atomic':
+        common['CONTRACT.md'] += ('When present, fail_after must be a JSON boolean. A non-boolean value raises ValueError during '
+                                  'batch validation and leaves the store unchanged. False behaves like omission.\n')
+    if scenario == 'month-report':
+        common['CONTRACT.md'] = MONTHLY_REPORT_CONTRACT
     if tools:
         common['RUNTIME.md']+='Pinned executable paths: '+json.dumps({key:tools[key] for key in ['python','node','dotnet','cxx'] if tools.get(key)},sort_keys=True)+'\n'
     smoke = {
@@ -385,10 +422,18 @@ The original CLI takes the operation string as its first argument and prints ret
         'csharp': f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj','--verbosity','quiet','--',json.dumps({{'op':'refund','age':2,'window':30}})]; expected=True",
         'cpp': "build=Path('.runtime-proof');build.mkdir(exist_ok=True); binary=build/('existing.exe' if os.name=='nt' else 'existing'); compiler=shutil.which('cl') if os.name=='nt' else (shutil.which('c++') or shutil.which('g++')); command=[compiler,'/nologo','/std:c++17','/EHsc','main.cpp','/Fo:'+str(build/'main.obj'),'/Fe:'+str(binary)] if os.name=='nt' else [compiler,'-std=c++17','main.cpp','-o',str(binary)];subprocess.run(command,check=True,capture_output=True);args=[str(binary.resolve()),'total 1 2 3'];expected=6",
     }[lang]
+    if scenario == 'month-report':
+        smoke = ("ledger=Path(temp)/'ledger.json'; "
+                 "ledger.write_text(json.dumps([{'id':'old','recorded_at':'2025-03-16T14:01:00Z','amount_cents':12}])); "
+                 "args=[sys.executable,'cli.py',json.dumps({'op':'month','ledger':str(ledger),'month':'2025-03'})]; "
+                 "expected={'ids':['old'],'total_cents':12}")
     common['check_existing.py']='import json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nscratch = Path(".runtime-proof/scratch")\nscratch.mkdir(parents=True, exist_ok=True)\nwith tempfile.TemporaryDirectory(dir=scratch) as temp:\n    '+smoke+'\n    result=subprocess.run(args,capture_output=True,text=True,check=True);lines=result.stdout.strip().splitlines();actual=json.loads(lines[-1]);assert actual==expected,(actual,expected);print("Existing public behavior checked")\n'
     if case.get('scenario')=='lookup':
         common['PERFORMANCE.md']='For lookup30000 sorted keys and20000 queries, preserve exact results and reduce median command wall time to at most70% of the unchanged baseline on the same machine/compiler/options. Use one warmup and five measurements per version; retain raw values and noise.\n'
     if lang == "python":
+        if scenario == 'month-report':
+            return {**common, 'rules.py': MONTHLY_REPORT_SOURCE,
+                    'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
         core = '''import json\nfrom pathlib import Path\n\ndef evaluate(text):\n    x = json.loads(text)\n    if x['op'] == 'redact':\n        return json.dumps(x['data'], sort_keys=True)\n    p = Path(x['store'])\n    state = json.loads(p.read_text()) if p.exists() else {'balance': 0, 'seen': []}\n    for event in x['events']:\n        state['balance'] += event['amount']\n        if event['amount'] < 0:\n            raise ValueError('negative amount')\n        state['seen'].append(event['id'])\n        p.write_text(json.dumps(state, sort_keys=True))\n        if event.get('fail_after'):\n            raise RuntimeError('injected interruption')\n    return json.dumps(state, sort_keys=True)\n'''
         return {**common, "rules.py": core, "cli.py": "from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n"}
     if lang == "typescript":
@@ -602,11 +647,21 @@ def toolchain(plan):
     return plan["preflight"]["tools"]
 
 
-def build_program(workspace, output, lang, tools):
+PYTHON_EXCEPTION_EXITS = {'VALUE_ERROR': 65, 'RUNTIME_ERROR': 66}
+
+
+def build_program(workspace, output, lang, tools, *, python_typed_errors=False):
     output.mkdir(parents=True, exist_ok=False)
     if lang == "python":
         driver = output / "driver.py"
-        driver.write_text("import sys\nsys.path.insert(0, " + repr(str(workspace)) + ")\nfrom rules import evaluate\ntry: print(evaluate(sys.argv[1]))\nexcept Exception: print('ERROR')\n", encoding="utf-8")
+        error_handlers = "except Exception: print('ERROR')\n"
+        if python_typed_errors:
+            error_handlers = (
+                f"except ValueError: print('VALUE_ERROR'); sys.exit({PYTHON_EXCEPTION_EXITS['VALUE_ERROR']})\n"
+                f"except RuntimeError: print('RUNTIME_ERROR'); sys.exit({PYTHON_EXCEPTION_EXITS['RUNTIME_ERROR']})\n"
+                + error_handlers
+            )
+        driver.write_text("import sys\nsys.path.insert(0, " + repr(str(workspace)) + ")\nfrom rules import evaluate\ntry: print(evaluate(sys.argv[1]))\n" + error_handlers, encoding="utf-8")
         return [tools["python"], str(driver)], []
     if lang == "typescript":
         driver = output / "driver.mjs"
@@ -714,6 +769,93 @@ def nonsensitive_structure(value):
     return value
 
 
+def state_file_unchanged(check, path, original_sha256):
+    check['input_file_sha256_before'] = original_sha256
+    check['input_file_sha256_after'] = sha(path) if path.is_file() else None
+    check['passed'] = check['passed'] and check['input_file_sha256_after'] == original_sha256
+
+
+def check_monthly_report(exercise, evidence):
+    initial = [
+        {'id': 'first', 'recorded_at': '2025-03-08T12:00:00Z', 'amount_cents': 300},
+        {'id': 'east', 'recorded_at': '2025-04-01T00:10:00+01:00', 'amount_cents': -40},
+        {'id': 'west', 'recorded_at': '2025-03-31T23:45:00-02:00', 'amount_cents': 999},
+        {'id': 'previous', 'recorded_at': '2025-02-28T22:00:00-03:30', 'amount_cents': 60},
+    ]
+
+    def report(label, entries, query, expected):
+        ledger = evidence / f'{label}.json'
+        ledger.write_text(json.dumps(entries), encoding='utf-8')
+        before = sha(ledger)
+        check = exercise(label, json.dumps({'ledger': str(ledger), **query}), expected)
+        state_file_unchanged(check, ledger, before)
+
+    report('preservation-entry-count', initial, {'op': 'entry_count'}, {'count': 4})
+    report('preservation-empty-report', [], {'op': 'month', 'month': '2025-03'}, {'ids': [], 'total_cents': 0})
+    report('utc-march-in-ledger-order', initial, {'op': 'month', 'month': '2025-03'},
+           {'ids': ['first', 'east', 'previous'], 'total_cents': 320})
+    report('utc-april-offset', initial, {'op': 'month', 'month': '2025-04'}, {'ids': ['west'], 'total_cents': 999})
+    report('accept-valid-leap-day', [{'id': 'leap', 'recorded_at': '2024-02-29T23:00:00+00:00', 'amount_cents': -12}],
+           {'op': 'month', 'month': '2024-02'}, {'ids': ['leap'], 'total_cents': -12})
+    report('accept-first-supported-year', [{'id': 'first', 'recorded_at': '0001-01-01T00:00:00Z', 'amount_cents': 2}],
+           {'op': 'month', 'month': '0001-01'}, {'ids': ['first'], 'total_cents': 2})
+    report('accept-last-supported-year', [{'id': 'last', 'recorded_at': '9999-12-31T23:59:59Z', 'amount_cents': 3}],
+           {'op': 'month', 'month': '9999-12'}, {'ids': ['last'], 'total_cents': 3})
+    for label, month in [('month-out-of-range', '2025-13'), ('month-not-string', 202503),
+                         ('month-shape', '2025-3'), ('month-year-zero', '0000-01')]:
+        report(label, initial, {'op': 'month', 'month': month}, 'VALUE_ERROR')
+    report('month-missing', initial, {'op': 'month'}, 'VALUE_ERROR')
+    invalid = [('timestamp-naive', '2025-02-18T12:00:00'), ('timestamp-offset', '2025-02-18T12:00:00+00:99'),
+               ('timestamp-calendar', '2025-02-29T12:00:00Z'), ('timestamp-not-string', 1),
+               ('timestamp-year-zero', '0000-01-01T00:00:00Z'),
+               ('timestamp-utc-underflow', '0001-01-01T00:00:00+01:00'),
+               ('timestamp-utc-overflow', '9999-12-31T23:59:59-00:01')]
+    for label, recorded_at in invalid:
+        report(label, [initial[0], {'id': 'invalid', 'amount_cents': 3, 'recorded_at': recorded_at}],
+               {'op': 'month', 'month': '2025-03'}, 'VALUE_ERROR')
+    unparseable = [initial[0], {'id': 'missing', 'amount_cents': 3}]
+    report('timestamp-missing', unparseable, {'op': 'month', 'month': '2025-03'}, 'VALUE_ERROR')
+    report('preservation-count-does-not-parse-timestamps', unparseable, {'op': 'entry_count'}, {'count': 2})
+
+
+def check_typed_batch_control(exercise, evidence):
+    # Independent store copies ensure each malformed value follows a valid prefix.
+    initial = b'{"balance":3,"seen":["old"]}'
+    for label, invalid in [('string', 'false'), ('integer', 0), ('null', None)]:
+        store = evidence / f'control-field-{label}.json'
+        store.write_bytes(initial)
+        before = sha(store)
+        request = {'op': 'batch', 'store': str(store), 'events': [
+            {'id': 'prefix', 'amount': 2}, {'id': 'final', 'amount': 7, 'fail_after': invalid}]}
+        check = exercise(f'control-field-{label}', json.dumps(request), 'VALUE_ERROR')
+        state_file_unchanged(check, store, before)
+    store = evidence / 'control-field-false.json'
+    exercise('control-field-false-is-valid', json.dumps({'op': 'batch', 'store': str(store),
+             'events': [{'id': 'first', 'amount': 5, 'fail_after': False}]}), {'balance': 5, 'seen': ['first']})
+    store = evidence / 'control-field-true.json'
+    store.write_bytes(initial)
+    request = {'op': 'batch', 'store': str(store), 'events': [
+        {'id': 'prefix', 'amount': 2}, {'id': 'flagged', 'amount': 7, 'fail_after': True},
+        {'id': 'unreached', 'amount': 11}]}
+    check = exercise('control-field-true-commits-then-interrupts', json.dumps(request), 'RUNTIME_ERROR')
+    committed_bytes = store.read_bytes() if store.is_file() else b''
+    committed_state = parse_output(committed_bytes.decode('utf-8', errors='replace'))
+    expected_state = {'balance': 12, 'seen': ['old', 'prefix', 'flagged']}
+    check.update(persisted_expected=expected_state, persisted_observed=committed_state,
+                 persisted_sha256=hashlib.sha256(committed_bytes).hexdigest() if committed_bytes else None)
+    check['passed'] = check['passed'] and same_value(committed_state, expected_state)
+
+
+def report_security_checks(checks, scope):
+    rejected = [check for check in checks if check.get('expected') == 'VALUE_ERROR']
+    ledger_reads = [check for check in checks if 'input_file_sha256_before' in check]
+    ledger_intact = all(check['input_file_sha256_before'] == check['input_file_sha256_after'] for check in ledger_reads)
+    passed = bool(rejected and ledger_reads) and all(check['passed'] for check in rejected) and ledger_intact
+    return {'status': 'PASS' if passed else 'FAIL', 'scope': scope,
+            'rejection_checks': [check['check'] for check in rejected],
+            'integrity_checks': [check['check'] for check in ledger_reads]}
+
+
 def evaluate_attempt(attempt):
     attempt = Path(attempt).resolve()
     experiment, plan = frozen(attempt.parents[1])
@@ -737,7 +879,10 @@ def _evaluate_attempt(attempt):
     before = tree(workspace)
     evidence = attempt / ("evaluation-" + uuid.uuid4().hex)
     evidence.mkdir()
-    invocation, builds = build_program(workspace, evidence / "build", meta["case"]["language"], toolchain(plan))
+    case = meta['case']
+    scenario = case['scenario']
+    invocation, builds = build_program(workspace, evidence / "build", case['language'], toolchain(plan),
+                                       python_typed_errors=scenario in {'atomic', 'month-report'})
     checks = []
     performance = {'status':'UNVERIFIED','reason':'Independent applicability review/measurement required for non-benchmark-critical performance.'}
     build_ok = all(x["exit_code"] == 0 and not x["timed_out"] for x in builds if x.get('role')!='typecheck')
@@ -745,15 +890,18 @@ def _evaluate_attempt(attempt):
     def exercise(label, text, expected):
         raw = command([*invocation,text], evidence, 20)
         observed = raw["stdout"].strip() if isinstance(expected, str) else parse_output(raw["stdout"])
-        checks.append({"check":label,"input":text,"expected":expected,"observed":observed,"execution":raw,
-                       "passed":raw["exit_code"]==0 and not raw["timed_out"] and same_value(observed,expected)})
+        exit_code = PYTHON_EXCEPTION_EXITS.get(expected, 0) if isinstance(expected, str) else 0
+        check = {"check":label,"input":text,"expected":expected,"observed":observed,"execution":raw,
+                 "passed":raw["exit_code"]==exit_code and not raw["timed_out"] and same_value(observed,expected)}
+        checks.append(check)
+        return check
     if build_ok:
-        case = meta["case"]
-        if case["language"] == "python":
+        if scenario == 'month-report':
+            check_monthly_report(exercise, evidence)
+        elif case["language"] == "python":
             store=evidence/'state.json'
             def event(events,expected,label): exercise(label,json.dumps({"op":"batch","store":str(store),"events":events}),expected)
             event([{"id":"old","amount":3}],{"balance":3,"seen":["old"]},"ordinary-persistence")
-            scenario=case['scenario']
             if scenario=='redact':
                 text=json.dumps({'op':'redact','data':{'user':'Ada','password':'secret-A','nested':{'token':'secret-B','safe':4},
                     'items':[{'api_key':'secret-C','label':'invoice','active':False,'count':0},
@@ -773,8 +921,9 @@ def _evaluate_attempt(attempt):
                 event([{'id':'new','amount':5,'fail_after':True}],'ERROR','partial-interruption')
                 event([{'id':'new','amount':5},{'id':'last','amount':2}],{'balance':10,'seen':['old','new','last']},'retry-after-committed-prefix')
             else:
-                event([{'id':'good','amount':5},{'id':'bad','amount':-2}],'ERROR','invalid-batch')
+                event([{'id':'good','amount':5},{'id':'bad','amount':-2}],'VALUE_ERROR','invalid-batch')
                 exercise('state-unchanged',json.dumps({'op':'batch','store':str(store),'events':[]}),{'balance':3,'seen':['old']})
+                check_typed_batch_control(exercise, evidence)
         else:
             ordinary,target=test_vectors(case,evidence)
             for i,(text,expected) in enumerate(ordinary): exercise('preservation-'+str(i),text,expected)
@@ -850,14 +999,17 @@ def _evaluate_attempt(attempt):
     functionality=build_ok and bool(checks) and all(x['passed'] for x in checks)
     preservation=[x for x in checks if x['check'].startswith('preservation') or x['check'] in {'ordinary-persistence','public-positional-preserved'}]
     targeted=[x for x in checks if x not in preservation]
-    scenario=meta['case']['scenario']
     security_relevant=scenario in {'tenant','path','redact','framing','credit','transfer','atomic','bounds'}
     resilience_relevant=scenario in {'dedupe','retry','atomic','transfer'}
+    security = {'status': ('PASS' if targeted and all(x['passed'] for x in targeted) else 'FAIL') if security_relevant else 'NOT_APPLICABLE',
+                'scope': 'Only case-specific isolation, input validation, framing, disclosure or bounds behavior; no general security certification.'}
+    if case.get('security_scope'):
+        security = report_security_checks(checks, case['security_scope'])
     layers={
         'functionality':{'status':'PASS' if functionality else 'FAIL','scope':'Independent public-API/CLI cases listed below; not all conceivable inputs.'},
         'preservation':{'status':'UNVERIFIED' if replay['status']=='UNVERIFIED' else 'PASS' if all(x['passed'] for x in preservation) else 'FAIL','checks':[x['check'] for x in preservation]},
         'architecture':{'status':'PASS' if architecture else 'FAIL','scope':'Frozen documented contract, build/dependency files and existing tests preserved; independent API consumer compiles/runs. Semantic architecture/clean-code review remains separate.'},
-        'security':{'status':('PASS' if targeted and all(x['passed'] for x in targeted) else 'FAIL') if security_relevant else 'NOT_APPLICABLE','scope':'Only case-specific isolation, input validation, framing, disclosure or bounds behavior; no general security certification.'},
+        'security':security,
         'performance':performance if scenario=='lookup' else {'status':'NOT_APPLICABLE','reason':'This frozen case declares no measured performance change; independent applicability review still required.'},
         'resilience':{'status':('PASS' if targeted and all(x['passed'] for x in targeted) else 'FAIL') if resilience_relevant else 'NOT_APPLICABLE','scope':'Only the declared state, interruption, replay or atomicity behaviors.'},
     }
@@ -1078,9 +1230,10 @@ def record_assessment(attempt, report_file):
         raise ValueError('Review every quality layer exactly once')
     statuses = {'PASS','FAIL','UNVERIFIED','NOT_APPLICABLE'}
     checked = {c['check']:c for c in result['checks']}
-    scenario=load(attempt/'attempt.json')['case']['scenario']
+    case=load(attempt/'attempt.json')['case']
+    scenario=case['scenario']
     required={'functionality','preservation','architecture'}
-    if scenario in {'tenant','path','redact','framing','credit','transfer','atomic'}:required.add('security')
+    if case.get('security_scope') or scenario in {'tenant','path','redact','framing','credit','transfer','atomic'}:required.add('security')
     if scenario in {'dedupe','retry','atomic'}:required.add('resilience')
     if scenario=='lookup':required.add('performance')
     layers = []
@@ -1089,6 +1242,9 @@ def record_assessment(attempt, report_file):
             raise ValueError('Layer needs status, concrete rationale and evidence')
         if row['id'] in required and row['status']=='NOT_APPLICABLE':
             raise ValueError('Core existing-code layers are required')
+        if row['id'] == 'security' and case.get('security_scope') and row['status'] == 'PASS':
+            if result['automated_artifact_layers']['security']['status'] != 'PASS':
+                raise ValueError('Failed or missing scoped security controls cannot become PASS')
         if scenario=='lookup' and row['id']=='performance' and row['status']=='PASS' and result['performance']['status']!='PASS':
             raise ValueError('Failed or missing paired performance cannot become PASS')
         for evidence in row['evidence']:
