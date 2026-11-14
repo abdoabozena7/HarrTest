@@ -519,6 +519,77 @@ def codex_adapter(project, state, parent, sessions, require_qa):
     return verify_native_rows(project, state, parent, rows, require_qa, 'codex-rollout')
 
 
+def copilot_agent_message(worker, parent, payload, when):
+    """Bind the follow-up delivered by the parent to its original worker."""
+    t = common()
+    resume = worker.get('resume')
+    message = payload.get('content')
+    interaction = payload.get('interactionId')
+    initial_turn = payload.get('turnId')
+    t.require(resume is not None and 'interaction' not in resume and when >= resume['sent']
+              and payload.get('source') == 'agent-' + parent and payload.get('delivery') == 'idle'
+              and isinstance(interaction, str) and interaction and interaction not in worker['interactions']
+              and isinstance(initial_turn, str) and initial_turn
+              and isinstance(message, str) and hashlib.sha256(message.encode()).digest() == resume['message'],
+              'Copilot follow-up message lacks its original native delivery')
+    worker['interactions'].add(interaction)
+    resume.update(interaction=interaction, delivered=when, initial_turn=initial_turn,
+                  turns=set(), pending=set())
+
+
+def copilot_followup_turn(worker, kind, payload, when):
+    t = common()
+    resume = worker.get('resume')
+    turn = payload.get('turnId')
+    t.require(resume is not None and 'interaction' in resume
+              and payload.get('parentToolCallId') == worker['dispatch_call']
+              and isinstance(turn, str) and turn, 'Copilot follow-up turn lacks its original task identity')
+    if kind == 'assistant.turn_start':
+        t.require(resume.get('turn') is None and turn not in resume['turns']
+                  and payload.get('interactionId') == resume['interaction']
+                  and (resume['turns'] or turn == resume['initial_turn'])
+                  and when >= resume.get('turn_end', resume['delivered']),
+                  'Copilot follow-up turn has wrong interaction or order')
+        if worker['active'] is None:
+            worker['active'] = when
+            worker['turn_starts'].append(when)
+        resume['turn'], resume['turn_start'] = turn, when
+        resume['turns'].add(turn)
+    else:
+        t.require(resume.get('turn') == turn and when >= resume['turn_start'] and not resume['pending'],
+                  'Copilot follow-up turn ended without its own completed tools')
+        resume['turn'], resume['turn_end'] = None, when
+
+
+def copilot_followup_result(by_agent, tool, args, payload, started, when):
+    """Accept delivery and final idle only from paired native parent tools."""
+    if tool not in {'write_agent', 'read_agent'} or not isinstance(args, dict):
+        return
+    worker = by_agent.get(args.get('agent_id'))
+    if worker is None or worker['end'] is None:
+        return
+    telemetry = payload.get('toolTelemetry', {})
+    properties, metrics = telemetry.get('properties', {}), telemetry.get('metrics', {})
+    if properties.get('agent_id') != worker['id']:
+        return
+    if tool == 'write_agent':
+        message = args.get('message')
+        if started >= worker['end'] and worker.get('resume') is None and isinstance(message, str) and message:
+            worker['resume'] = {'sent': when, 'message': hashlib.sha256(message.encode()).digest()}
+        return
+    resume = worker.get('resume')
+    if (not resume or 'turn_end' not in resume or resume.get('turn') is not None
+            or args.get('wait') is not True or properties.get('status') != 'idle'
+            or type(metrics.get('queue_depth')) is not int or metrics['queue_depth'] != 0
+            or type(metrics.get('total_turns')) is not int or metrics['total_turns'] != len(worker['intervals']) + 1
+            or started < resume['delivered'] or when < resume['turn_end']):
+        return
+    worker['end'] = resume['turn_end']
+    worker['intervals'].append((worker['active'], worker['end']))
+    worker['active'] = None
+    del worker['resume']
+
+
 def read_copilot_traces(project, parent, sessions, since):
     """Read Copilot's persisted session-events v1, not model-authored summaries.
 
@@ -593,19 +664,33 @@ def read_copilot_traces(project, parent, sessions, since):
         if kind == 'session.model_change':
             t.require(current is not None, 'Native model transition lacks its agent identity')
             if agent:
-                t.require(when >= current['start'] and (current['end'] is None or when <= current['end']),
+                t.require(when >= current['start'] and (current['end'] is None or current['active'] is not None),
                           'Copilot model transition is outside its task lifecycle')
             apply_model_transition(current, payload, True)
+        elif kind == 'user.message' and agent and current is not None:
+            if current['end'] is not None:
+                copilot_agent_message(current, parent, payload, when)
+                context = payload.get('responsesReasoning', {})
+                for field, observed in [('model', 'models'), ('effort', 'efforts'), ('initialEffort', 'efforts')]:
+                    if field in context:
+                        current[observed].add(context[field])
+            elif isinstance(payload.get('interactionId'), str):
+                current['interactions'].add(payload['interactionId'])
         elif kind == 'session.context_changed':
             t.require(Path(payload.get('cwd', '')).resolve() == project,
                       'Copilot session changed to a different workspace')
         elif kind == 'tool.execution_start':
-            if agent:
-                t.require(current is not None and when >= current['start']
-                          and (current['end'] is None or when <= current['end']),
-                          'Copilot child tool is outside its actual task lifecycle')
             call_id = payload.get('toolCallId')
             t.require(isinstance(call_id, str) and call_id not in calls, 'Duplicate Copilot tool call')
+            if agent:
+                t.require(current is not None and when >= current['start'],
+                          'Copilot child tool is outside its actual task lifecycle')
+                if current['end'] is not None:
+                    resume = current.get('resume', {})
+                    t.require(resume.get('turn') is not None and payload.get('turnId') == resume['turn']
+                              and payload.get('parentToolCallId') == current['dispatch_call']
+                              and when >= resume['turn_start'], 'Copilot child tool is outside its actual task lifecycle')
+                    resume['pending'].add(call_id)
             calls[call_id] = (event, when)
             if len(calls) > MAX_NATIVE_PENDING_CALLS or len(dispatch) > MAX_NATIVE_PENDING_CALLS:
                 raise HostEvidenceUnavailable('Native trace pending lifecycle limit exceeded')
@@ -622,6 +707,7 @@ def read_copilot_traces(project, parent, sessions, since):
                       'Copilot subagent lacks a unique originating named task')
             current = row(agent, when, payload.get('model'))
             current['dispatch_call'] = call_id
+            current['interactions'] = set()
             current['turn_starts'].append(when)
             current['active'] = when
             by_agent[agent], rows[label] = current, current
@@ -637,6 +723,10 @@ def read_copilot_traces(project, parent, sessions, since):
             current['active'] = None
             current['intervals'].append((current['start'], when))
             current['failed'] = kind == 'subagent.failed'
+        elif kind in ('assistant.turn_start', 'assistant.turn_end') and agent and current is not None and current['end'] is not None:
+            copilot_followup_turn(current, kind, payload, when)
+        elif kind in ('abort', 'session.error') and agent and current is not None and current.get('resume') is not None:
+            t.require(False, 'Copilot follow-up reported a native failure or abort')
         elif kind == 'assistant.turn_start' and not agent:
             coordinator['active'] = when
             coordinator['turn_starts'].append(when)
@@ -654,6 +744,15 @@ def read_copilot_traces(project, parent, sessions, since):
                 t.require(payload.get('parentToolCallId') == current['dispatch_call']
                           and request['data'].get('parentToolCallId') == current['dispatch_call'],
                           'Copilot child tool belongs to a different task')
+                if current['end'] is not None:
+                    resume = current.get('resume', {})
+                    t.require(payload.get('toolCallId') in resume.get('pending', ())
+                              and payload.get('turnId') == resume.get('turn')
+                              and payload.get('interactionId') == resume.get('interaction'),
+                              'Copilot child completion lacks its follow-up turn identity')
+                    resume['pending'].remove(payload['toolCallId'])
+                    if payload.get('model'):
+                        current['models'].add(payload['model'])
             if payload.get('success') is not True:
                 continue
             edits = payload.get('fileEdits', [])
@@ -667,6 +766,8 @@ def read_copilot_traces(project, parent, sessions, since):
                 current['writes'].append((when, t.product_key(target.resolve().relative_to(project).as_posix())))
             call = request['data']
             args = call.get('arguments', {})
+            if not agent and started >= since:
+                copilot_followup_result(by_agent, call.get('toolName'), args, payload, started, when)
             command = args.get('command') if isinstance(args, dict) else None
             if (started >= since and call.get('toolName') in {'powershell', 'bash'} and isinstance(command, str)
                     and t.team_command(command) and payload.get('shellExecution', {}).get('exitCode') == 0):
@@ -710,6 +811,8 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         row, receipt = rows[tid], usable_handoff(project, state, tid)
         t.require(row['id'] != parent and row['start'] >= created, tid + ': wrong native identity/start')
         t.require(not row.get('failed'), tid + ': native worker failed')
+        if row.get('resume') is not None:
+            raise t.NativeTurnPending(tid)
         t.require_receipt_turn_finished(row, [receipt], tid)
         at = t.receipt_event(row, receipt, tid)
         t.require(row['end'] and t.completed_receipt(row, at), tid + ': worker turn has not completed')
@@ -744,6 +847,8 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         reviewer = rows['qa']
         t.require(not reviewer.get('failed'), 'Native QA worker failed')
         t.require(reviewer['id'] not in {parent, *(v['id'] for v in builds.values())}, 'QA is not independent')
+        if reviewer.get('resume') is not None:
+            raise t.NativeTurnPending('qa')
         t.require_receipt_turn_finished(reviewer, [check, qa], 'qa')
         check_at, qa_at = t.receipt_event(reviewer, check, 'QA check'), t.receipt_event(reviewer, qa, 'QA')
         t.require(reviewer['end'] and t.turn_start(reviewer, check_at) >= when

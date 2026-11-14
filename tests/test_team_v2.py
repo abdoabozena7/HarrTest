@@ -1,4 +1,5 @@
 """Existing-code Team2 behavior; native adapter fixtures are not live-model claims."""
+from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -527,6 +528,146 @@ class CopilotAdapter(unittest.TestCase):
         self.assertTrue(result['passed'], result)
         self.assertEqual(result['host_assurance']['adapter'], 'copilot-session-events-v1')
         self.assertEqual(result['host_assurance']['workers']['arithmetic']['model'], 'fixture-model')
+
+    def followup_trace(self, *, coordinator_check=False):
+        owner, integrated, check, qa, _ = self.complete()
+        rows = self.trace(owner, integrated, check, qa)
+        original = next(r for r in rows if r['type'] == 'subagent.started'
+                        and r['data']['agentDisplayName'] == 'qa')
+        worker, dispatch = original['agentId'], original['data']['toolCallId']
+        interaction = str(uuid4())
+        message = 'Check the current observed source again after the retained failed review.'
+        resume_rows = {
+            'write_start': self.event('tool.execution_start', 13, {
+                'toolCallId': 'escalated-write', 'toolName': 'write_agent',
+                'arguments': {'agent_id': worker, 'message': message}}),
+            'write_done': self.event('tool.execution_complete', 13.1, {
+                'toolCallId': 'escalated-write', 'success': True,
+                'toolTelemetry': {'properties': {'agent_id': worker}}}),
+            'message': self.event('user.message', 13.2, {
+                'source': 'agent-' + self.parent, 'content': message, 'delivery': 'idle',
+                'interactionId': interaction, 'turnId': '0',
+                'responsesReasoning': {'model': 'fixture-model', 'effort': 'low', 'initialEffort': 'low'}}, worker),
+            'turn_start': self.event('assistant.turn_start', 13.3, {
+                'interactionId': interaction, 'turnId': '0', 'parentToolCallId': dispatch}, worker),
+            'read_start': self.event('tool.execution_start', 13.4, {
+                'toolCallId': 'wait-for-worker', 'toolName': 'read_agent',
+                'arguments': {'agent_id': worker, 'wait': True}}),
+            'turn_end': self.event('assistant.turn_end', 15, {
+                'turnId': '0', 'parentToolCallId': dispatch}, worker),
+            'next_turn_start': self.event('assistant.turn_start', 15.1, {
+                'interactionId': interaction, 'turnId': '1', 'parentToolCallId': dispatch}, worker),
+            'next_turn_end': self.event('assistant.turn_end', 17, {
+                'turnId': '1', 'parentToolCallId': dispatch}, worker),
+            'read_done': self.event('tool.execution_complete', 18, {
+                'toolCallId': 'wait-for-worker', 'success': True, 'toolTelemetry': {
+                    'properties': {'agent_id': worker, 'status': 'idle'},
+                    'metrics': {'queue_depth': 0, 'total_turns': 2}}}),
+        }
+        for r in rows:
+            data = r['data']
+            digest = data.get('toolCallId')
+            if digest not in {check['sha256'], qa['sha256']}:
+                continue
+            section = 0 if digest == check['sha256'] else 1
+            r['timestamp'] = self.event('time', 14 + 2 * section + (0.01 if r['type'].endswith('complete') else 0), {})['timestamp']
+            if coordinator_check and section == 0:
+                del r['agentId']
+                del data['parentToolCallId']
+            else:
+                data.update(turnId=str(section), interactionId=interaction)
+        return rows, resume_rows
+
+    def save_followup(self, rows, resume):
+        self.save(sorted(rows + list(resume.values()), key=lambda r: r['timestamp']))
+
+    def test_same_worker_followup_preserves_original_and_resumed_intervals(self):
+        rows, resume = self.followup_trace()
+        self.save_followup(rows, resume)
+        result = self.verify()
+        self.assertTrue(result['passed'], result)
+        observed = team_v2.read_copilot_traces(self.project, self.parent, self.sessions,
+                                               team.instant(self.state['created']))['qa']
+        self.assertEqual(len(observed['intervals']), 2)
+        self.assertLess(observed['intervals'][0][1], observed['intervals'][1][0])
+        self.assertEqual(observed['intervals'][1], (team.instant(resume['turn_start']['timestamp']),
+                                                    team.instant(resume['next_turn_end']['timestamp'])))
+
+    def test_followup_never_attributes_coordinator_check_to_qa(self):
+        rows, resume = self.followup_trace(coordinator_check=True)
+        self.save_followup(rows, resume)
+        result = self.verify()
+        self.assertFalse(result['passed'])
+        self.assertIn('QA check: missing native tool receipt', result['errors'][0])
+
+    def test_wrong_or_failed_followup_delivery_cannot_authorize_child_tools(self):
+        rows, resume = self.followup_trace()
+        for record, field, wrong in [('write_done', 'success', False), ('message', 'source', 'unknown'),
+                                     ('message', 'content', 'different message'),
+                                     ('turn_start', 'interactionId', 'another interaction'),
+                                     ('turn_start', 'parentToolCallId', 'different dispatch')]:
+            with self.subTest(record=record, field=field):
+                altered = deepcopy(resume)
+                altered[record]['data'][field] = wrong
+                self.save_followup(rows, altered)
+                self.assertFalse(self.verify()['passed'])
+
+    def test_followup_requires_confirmed_idle_with_closed_turns(self):
+        rows, resume = self.followup_trace()
+        for cause in ['missing_read', 'failed_read', 'prose_only', 'busy', 'queued', 'stale_counter', 'open_turn', 'abort']:
+            with self.subTest(cause=cause):
+                altered = deepcopy(resume)
+                if cause == 'missing_read':
+                    del altered['read_done']
+                elif cause == 'failed_read':
+                    altered['read_done']['data']['success'] = False
+                elif cause == 'prose_only':
+                    del altered['read_done']['data']['toolTelemetry']
+                    altered['read_done']['data']['result'] = {'content': 'Agent is idle with zero queued messages.'}
+                elif cause == 'busy':
+                    altered['read_done']['data']['toolTelemetry']['properties']['status'] = 'running'
+                elif cause == 'queued':
+                    altered['read_done']['data']['toolTelemetry']['metrics']['queue_depth'] = 1
+                elif cause == 'stale_counter':
+                    altered['read_done']['data']['toolTelemetry']['metrics']['total_turns'] = 1
+                elif cause == 'open_turn':
+                    del altered['next_turn_end']
+                else:
+                    altered['abort'] = self.event('abort', 16.5, {}, resume['message']['agentId'])
+                self.save_followup(rows, altered)
+                report = self.verify()
+                self.assertFalse(report['passed'], report)
+                if cause != 'abort':
+                    self.assertEqual(report['status'], 'pending-native-turn')
+
+    def test_followup_wrong_tool_identity_or_failed_check_cannot_pass(self):
+        rows, resume = self.followup_trace()
+        completion = next(r for r in rows if r['type'] == 'tool.execution_complete' and r.get('agentId')
+                          == resume['message']['agentId'])
+        payload = completion['data']
+        good_interaction = payload['interactionId']
+        payload['interactionId'] = 'old interaction'
+        self.save_followup(rows, resume)
+        self.assertIn('follow-up turn identity', self.verify()['errors'][0])
+        payload['interactionId'] = good_interaction
+        payload['shellExecution']['exitCode'] = 1
+        self.save_followup(rows, resume)
+        self.assertIn('QA check: missing native tool receipt', self.verify()['errors'][0])
+
+    def test_prior_qa_review_cannot_pass_while_followup_is_queued(self):
+        owner, integrated, check, qa, _ = self.complete()
+        rows = self.trace(owner, integrated, check, qa)
+        worker = next(r['agentId'] for r in rows if r['type'] == 'subagent.started'
+                      and r['data']['agentDisplayName'] == 'qa')
+        rows.extend([self.event('tool.execution_start', 13, {
+            'toolCallId': 'queued-follow-up', 'toolName': 'write_agent',
+            'arguments': {'agent_id': worker, 'message': 'Please revisit the reviewed checks.'}}),
+            self.event('tool.execution_complete', 13.1, {'toolCallId': 'queued-follow-up', 'success': True,
+                        'toolTelemetry': {'properties': {'agent_id': worker}}})])
+        self.save(rows)
+        result = self.verify()
+        self.assertFalse(result['passed'])
+        self.assertEqual(result['status'], 'pending-native-turn')
 
     def cross_seal(self, *, observed=None, receipt=None, agent=None):
         call = 'sealing-tool'
