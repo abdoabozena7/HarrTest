@@ -301,9 +301,11 @@ def packet(project, state, task):
             'Preserve existing contracts and unrelated behavior. Use the actual host editing tools; '
             'do not invent native identity or verification. Read prerequisite handoffs and supplied '
             'acceptance/risk criteria. Implement and test only your scope; return boundary conflicts '
-            'to the coordinator. Record meaningful focused behavior checks and unresolved findings.\n'
+            'to the coordinator. Use the project’s documented checks and runtime with its approved '
+            'workspace scratch directory if needed. Report observed results or exact blockers.\n'
             'Acceptance:\n' + '\n'.join(f'- {x}: {plan["outcomes"][x]}' for x in task['outcomes']) + '\n'
-            'Handoff command:\n' + t.worker_command(project, plan['id'], 'handoff') + ' --task ' + tid)
+            'Run this handoff command with its exact script path and flags:\n'
+            + t.worker_command(project, plan['id'], 'handoff') + ' --task ' + tid)
     repair = pending_repair(project, state, tid)
     if repair:
         text += (f'\nRepair current finding: {repair["observation"]}. '
@@ -400,18 +402,25 @@ def integrate(project, state):
                f'Acceptance check: {plan["integration"]["check"]}\n'
                'Read current-source inputs and test the actual behavior independently. Cover applicable '
                'functionality, preservation, architecture, security, performance and failure/data risks. '
-               'Use independent expected results and retain failures. Missing checks are UNVERIFIED, '
+               'Derive expected results from the agreed contract. Cover affected input controls, '
+               'including optional ones, and assert relevant state for rejected operations. '
+               'Replay apparent inherited failures on the baseline before judging their impact on this request. '
+               'Retain failures. Missing checks are UNVERIFIED, '
                'not PASS. Record each quality layer as PASS, FAIL, UNVERIFIED or NOT_APPLICABLE; '
                'retain failed and unverified observations. NOT_APPLICABLE needs an impact rationale '
                'and supporting evidence reviewed independently. Do not omit required layers or '
-               'turn a missing measurement into an applicability exclusion. Do not edit product '
-               'files or weaken the contract. Run a finite real check with assertions through:\n'
-               f'{command} -- ACTUAL_ARGV\nRecord observations privately in {evidence}. '
-               'The evidence file is a private verification artifact. The no-product-edits rule permits '
-               'writing that artifact when your host authorizes it. Use the exact project-relative '
-               'forward-slash path below for --evidence, including on Windows. '
-               f'Then run {review_command} --evidence {evidence} --verdict pass only if all required '
-               'checks pass, otherwise --verdict fail. Release owned runtime resources afterward. '
+               'turn a missing measurement into an applicability exclusion. Leave product files and '
+               'the contract intact. Run the documented project checks on this source. Use the '
+               'approved runtime and workspace-local scratch path for temporary files. Run a finite '
+               'check with assertions yourself and use this exact Team command prefix:\n'
+               f'{command} -- ACTUAL_ARGV\nReplace ACTUAL_ARGV with the real executable and arguments '
+               'for the check. The collector runs them directly from the project and manages its '
+               'subprocess. If access or an executable is missing, record the exact blocker and '
+               f'retain any results. Write observations to {evidence} if authorized. Use the exact '
+               'project-relative forward-slash --evidence path below, including on Windows.\n'
+               f'{review_command} --evidence {evidence} --verdict pass\nUse pass only if the required '
+               'checks pass. Otherwise submit fail with the available evidence. Report and release '
+               'any separate service or resource you actually started. '
                'A successful receipt proves the recorded process, not semantic correctness or native identity.')
     return receipt, {'task_name': 'qa', 'fork_turns': 'none', 'message': message}
 

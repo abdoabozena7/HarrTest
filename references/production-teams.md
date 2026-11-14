@@ -55,33 +55,40 @@ python <skill>/scripts/team.py --project . init --plan .runtime-proof/team-plan.
 Dispatch the returned complete ready packet as a native implementation worker;
 use its returned task_name exactly so the host adapter can correlate identity.
 Pass the actual model/effort explicitly when the native tool supports them.
-The worker executes its packet's handoff command after its component checks.
+The worker runs the documented component checks and executes the handoff
+command from its packet. Use the printed script path and flags.
 Do not substitute a short handcrafted prompt for the returned contract.
 For Copilot's `task` tool, put packet `task_name` in the tool's `name` argument
 and packet `message` in its `prompt` argument. The friendly task description
-can use other wording. Keep the QA tool name `qa` exactly as returned. Use the
-same naming rule for owner repairs. Check both `name` and `prompt` before each
-dispatch so a different tool label does not break the evidence chain.
+can use other wording. Set the initial QA worker's `name` to `qa` as returned.
+Retain the actual native worker IDs for subsequent repairs and reviews.
 
 ```text
 python <skill>/scripts/team.py --project . integrate --team mission
 ```
 
 Dispatch the returned complete qa packet to a separate native worker named qa.
-It exercises the old/new behavior through the finite `check` command, records
-the observations and executes its `review` command. Both commands are in that
-packet. QA may report PASS, FAIL, UNVERIFIED or NOT_APPLICABLE for a layer; do not
-ask it to choose only passing labels. Overall unverified required checks cannot
-be a passing review. Do not restrict what defects the reviewer may report.
+It runs the actual old and new behavior through the finite `check` command,
+records the observations and executes `review`. Use the exact commands in the
+packet. Supply the documented check's executable and arguments after `--`. The
+collector launches that process directly from the project and manages its own
+subprocess. Use the workspace scratch directory authorized for that project.
+Track and release separate resources only if the worker started them.
+
+QA can report `PASS`, `FAIL`, `UNVERIFIED` or `NOT_APPLICABLE` for each layer.
+Retain observed failures and blockers. Accept a passing review only after all
+required checks pass and any exclusions have supporting evidence.
 
 Confirm the QA worker type can run checks and write the private evidence file.
 Give it the documented runtime and any approved workspace-local temporary
 paths it needs to rerun the project's existing checks on the integrated source.
-Reviewing an earlier coordinator run does not establish independent execution.
+Independent QA itself must run the check that backs its current review.
 In Copilot, use an available `general-purpose` worker when the built-in `task`
 worker's instructions prohibit file writes. The QA packet still prohibits
 editing product files. Pass the `--evidence` path exactly as printed in the packet.
 It is relative to the project and uses forward slashes, including on Windows.
+If the host denies the command or private evidence write, retain the exact error
+and keep the review unverified until an authorized path can run it.
 
 ```text
 python <skill>/scripts/team.py --project . verify --team mission --parent ACTUAL_PARENT_SESSION_UUID
@@ -90,9 +97,25 @@ python <skill>/scripts/team.py --project . verify --team mission --parent ACTUAL
 For Copilot use its actual session UUID. Verification reads native tool/worker
 records, so handoffs, check and review must finish in the corresponding native
 turns. This command verifies current receipts and provenance; narrative six-layer
-meaning still requires inspecting the recorded QA evidence. Ordinary failures go
-back through `repair` to their owner and fresh integration/QA. A missing receipt
-is unfinished evidence, not permission to skip the worker or invent an ID.
+meaning still requires inspecting the recorded QA evidence. A missing receipt
+keeps acceptance open. Use the host's actual worker status and check exit/output
+to decide whether to wait, retry the command, or record a blocker. Team exposes
+`packets` for dispatch and `verify` for verification.
+
+### Repair and review again
+
+Record the failed review and run `repair` for the responsible owner using the
+current evidence and a concrete observation. Send the full returned repair
+packet to that original native worker. When the owner returns a current
+handoff, run `integrate` and send the full current QA packet to the original
+independent QA worker. Repeat the affected checks on the integrated source.
+
+In Copilot, use `write_agent` with the original worker's `agent_id` and the
+complete packet `message`. Use `read_agent` with `wait: true` for that ID to
+observe whether the worker finished. The native verifier checks follow-up
+delivery, worker identity and completion. In Codex, use `followup_task` for
+the original worker. If the host cannot resume the actor, keep native acceptance
+unverified and record the limitation.
 
 When `HARRTEST_PARENT_SESSION_ID` is available, `verify --team mission` can select
 that session directly. Invoke Python commands with `-B` to avoid writing import
