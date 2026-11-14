@@ -52,6 +52,14 @@ covers one case, one model and one repetition. The original comparison retains
 the measured results. Any further iteration that uses this finding must replace
 the consumed case in the next held corpus before measuring improvement.
 
+The same frozen protocol retained a credit-validation attempt with seven passing
+external checks and a passing native Team replay. Both native workers ran at
+high effort, whereas the protocol required low for every actor. The attempt
+is INVALID in the comparison. A separate disposable Copilot SDK probe confirmed
+that a session hook can pin an explicit child override to the declared effort.
+The next evaluator uses that transport rule in all arms and checks actual
+actor effort after execution. [GitHub SDK hook reference](https://docs.github.com/en/copilot/how-tos/copilot-sdk/hooks/pre-tool-use)
+
 The next candidate adds checks for the full affected input boundary, compares
 state before and after rejection, and asks reviewers to reproduce apparent
 inherited faults on the baseline. The consumed case is a development control
@@ -62,6 +70,14 @@ At `ae28793`, the next candidate ran 477 tests in 259.549s with four skipped and
 zero failures. Independent review confirmed the new positive and adverse
 controls, the schedule, and the exclusion of the evaluator and corpus from the
 generation package.
+
+A Copilot development replay of the consumed case took 1973.437s and 5.443232
+credits at Luna/low. The independent reviewer replayed the two partial-write
+failures on the frozen baseline. Both rejected without changing stored bytes
+on the final Copilot source, and a valid interruption still committed its
+checkpoint and retried correctly. The post-repair independent Team receipt was
+stale because the synchronous QA worker could not resume. A new development
+trial is exercising the reusable native-worker guidance.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
