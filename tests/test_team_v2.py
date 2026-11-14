@@ -65,6 +65,7 @@ class ExistingCodeTeam(unittest.TestCase):
         self.assertEqual(integrated['inputs'], {'arithmetic': owner['sha256']})
         self.assertEqual(review['check'], check['sha256'])
         self.assertEqual(packet['task_name'], 'qa')
+        self.assertNotIn('dispatch_note', packet)
         result = team.verify_registered(self.project, 'fix')
         self.assertTrue(result['structural_passed'])
         self.assertEqual(result['status'], 'UNVERIFIED')
@@ -78,6 +79,18 @@ class ExistingCodeTeam(unittest.TestCase):
         self.assertFalse(result['passed'])
         self.assertEqual(result['host_assurance']['status'], 'UNVERIFIED')
         self.assertIn('copilot', result['errors'][0])
+
+    def test_copilot_dispatch_guidance_preserves_reusable_owner_and_qa_ids(self):
+        self.plan['host'] = {'kind': 'copilot'}
+        _, _, _, _, qa_packet = self.complete()
+        owner_packet = self.dispatch['ready'][0]
+        for packet in (owner_packet, qa_packet):
+            with self.subTest(task=packet['task_name']):
+                note = packet['dispatch_note']
+                self.assertIn('mode: background', note)
+                self.assertIn('read_agent with wait: true', note)
+                self.assertIn('write_agent to the original agent_id', note)
+                self.assertNotIn('write_agent', packet['message'])
 
     def test_source_change_invalidates_qa_even_with_unchanged_narrative(self):
         self.complete()

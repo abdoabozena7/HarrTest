@@ -289,6 +289,17 @@ def deleted_paths(task):
     return set(task.get('deletions', [])) | {r['from'] for r in task.get('renames', [])}
 
 
+def dispatch_packet(plan, task_name, message):
+    result = {'task_name': task_name, 'fork_turns': 'none', 'message': message}
+    if plan.get('host', {}).get('kind') == 'copilot':
+        result['dispatch_note'] = (
+            'For an initial Copilot dispatch when this actor may need follow-up, use task with '
+            'mode: background. Retain the returned agent_id and use read_agent with wait: true. '
+            'For repair or re-review, send the complete message with write_agent to the original '
+            'agent_id, then wait for that ID with read_agent.')
+    return result
+
+
 def packet(project, state, task):
     t = common()
     plan, tid = state['plan'], task['id']
@@ -311,7 +322,7 @@ def packet(project, state, task):
         text += (f'\nRepair current finding: {repair["observation"]}. '
                  f'Read immutable evidence {next(iter(repair["files"]))}; retain the failed attempt. '
                  'Diagnose in your owned scope, rerun affected checks, then hand off again.')
-    return {'task_name': tid, 'fork_turns': 'none', 'message': text}
+    return dispatch_packet(plan, tid, text)
 
 
 def current_receipt(project, state, tid):
@@ -422,7 +433,7 @@ def integrate(project, state):
                'checks pass. Otherwise submit fail with the available evidence. Report and release '
                'any separate service or resource you actually started. '
                'A successful receipt proves the recorded process, not semantic correctness or native identity.')
-    return receipt, {'task_name': 'qa', 'fork_turns': 'none', 'message': message}
+    return receipt, dispatch_packet(plan, 'qa', message)
 
 
 def runtime_check(project, state, argv):

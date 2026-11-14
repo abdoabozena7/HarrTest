@@ -61,7 +61,9 @@ Do not substitute a short handcrafted prompt for the returned contract.
 For Copilot's `task` tool, put packet `task_name` in the tool's `name` argument
 and packet `message` in its `prompt` argument. The friendly task description
 can use other wording. Set the initial QA worker's `name` to `qa` as returned.
-Retain the actual native worker IDs for subsequent repairs and reviews.
+If the original owner or QA may need a follow-up, initially dispatch each with
+`task` and `mode: background`. Retain the returned `agent_id` and wait for that
+ID with `read_agent` and `wait: true`. The same ID receives later packets.
 
 ```text
 python <skill>/scripts/team.py --project . integrate --team mission
