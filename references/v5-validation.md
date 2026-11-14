@@ -11,9 +11,9 @@ failures in 79.323 seconds on Windows/Python3.13.7 before V5 integration.
 The baseline log is retained in `.runtime-proof/v5-implementation/baseline-tests.log`.
 Its scope is controller compatibility, not proof of generated code quality.
 
-The integrated V5 tree at `3c9174e` ran **462 tests, four skipped, zero failures**
-in 201.012s. The earlier failed
-integration runs remain retained: one exposed the intentional root-Team requirement
+The integrated V5 tree at `39d1bb1` ran **473 tests, four skipped, zero failures**
+in 245.682s. Its log is in `.runtime-proof/v5-implementation/integrated-tests-r6.log`.
+The earlier failed integration runs remain retained. One exposed the root-Team requirement
 before fixtures were updated; another imported an evaluator while it was being
 edited. They are not replaced or presented as passed. Final live-model comparison
 and subsequent session-pinning changes require their own validation.
