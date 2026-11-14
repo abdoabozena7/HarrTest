@@ -339,12 +339,13 @@ def frozen(experiment):
 
 def fixture(case, tools=None):
     """Pre-existing defective project and ordinary public contract; no target fixes."""
+    tools = tools or {}
     lang = case["language"]
     signature={'python':'rules.evaluate(text: str) -> str','typescript':'evaluate(text: string): string','csharp':'Rules.Evaluate(string text) -> string','cpp':'evaluate(const std::string& input) -> std::string'}[lang]
     common = {"ARCHITECTURE.md": "The core Rules module owns domain behavior. The CLI is only an adapter.\nPreserve the public " + signature + " API. No external packages or services.\nDo not put domain cases into the CLI or change this contract to bypass acceptance.\n",
               ".gitignore": "bin/\nobj/\n__pycache__/\n.runtime-proof/\n.github/copilot/settings.local.json\n"}
     common['RUNTIME.md']='Python3.10+ is available. Node22+ runs TypeScript directly with --experimental-strip-types. C# targets net10.0. C++ targets C++17. The supplied process environment contains the pinned local toolchains. Existing checks: python check_existing.py.\n'
-    common['RUNTIME.md']+='The supplied process sets TEMP, TMP and TMPDIR to .runtime-proof/scratch within the project. Standard temporary-file APIs use this private location for build and test scratch data.\n'
+    common['RUNTIME.md']+='The existing checker uses .runtime-proof/scratch within the project. The supplied process also sets TEMP, TMP and TMPDIR to this location for other standard temporary-file APIs.\n'
     contracts={
         'csharp': '''Public wire contract (UTF-8 JSON in, one JSON value out):
 refund: {"op":"refund","age":2,"window":30} -> true; age/window are nonnegative integer days.
@@ -381,10 +382,10 @@ The original CLI takes the operation string as its first argument and prints ret
     smoke = {
         'python': "text=json.dumps({'op':'batch','store':str(Path(temp)/'state.json'),'events':[{'id':'original','amount':3}]}); args=[sys.executable,'cli.py',text]; expected={'balance':3,'seen':['original']}",
         'typescript': "args=['node','--experimental-strip-types','cli.ts',json.dumps({'op':'limit'})]; expected={'limit':10}",
-        'csharp': "args=['dotnet','run','--project','Existing.csproj','--verbosity','quiet','--',json.dumps({'op':'refund','age':2,'window':30})]; expected=True",
+        'csharp': f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj','--verbosity','quiet','--',json.dumps({{'op':'refund','age':2,'window':30}})]; expected=True",
         'cpp': "build=Path('.runtime-proof');build.mkdir(exist_ok=True); binary=build/('existing.exe' if os.name=='nt' else 'existing'); compiler=shutil.which('cl') if os.name=='nt' else (shutil.which('c++') or shutil.which('g++')); command=[compiler,'/nologo','/std:c++17','/EHsc','main.cpp','/Fo:'+str(build/'main.obj'),'/Fe:'+str(binary)] if os.name=='nt' else [compiler,'-std=c++17','main.cpp','-o',str(binary)];subprocess.run(command,check=True,capture_output=True);args=[str(binary.resolve()),'total 1 2 3'];expected=6",
     }[lang]
-    common['check_existing.py']='import json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nwith tempfile.TemporaryDirectory() as temp:\n    '+smoke+'\n    result=subprocess.run(args,capture_output=True,text=True,check=True);lines=result.stdout.strip().splitlines();actual=json.loads(lines[-1]);assert actual==expected,(actual,expected);print("Existing public behavior checked")\n'
+    common['check_existing.py']='import json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nscratch = Path(".runtime-proof/scratch")\nscratch.mkdir(parents=True, exist_ok=True)\nwith tempfile.TemporaryDirectory(dir=scratch) as temp:\n    '+smoke+'\n    result=subprocess.run(args,capture_output=True,text=True,check=True);lines=result.stdout.strip().splitlines();actual=json.loads(lines[-1]);assert actual==expected,(actual,expected);print("Existing public behavior checked")\n'
     if case.get('scenario')=='lookup':
         common['PERFORMANCE.md']='For lookup30000 sorted keys and20000 queries, preserve exact results and reduce median command wall time to at most70% of the unchanged baseline on the same machine/compiler/options. Use one warmup and five measurements per version; retain raw values and noise.\n'
     if lang == "python":

@@ -371,6 +371,8 @@ class CorporateBenchmarkTests(unittest.TestCase):
         if not dotnet.is_file():self.skipTest('Pinned local .NET10SDK unavailable')
         self.fake_probe['tools']['dotnet']=str(dotnet)
         p=self.attempt('cs-refund-boundary')
+        probe = bench.command([sys.executable, '-B', 'check_existing.py'], p/'work')
+        self.assertEqual(probe['exit_code'], 0, probe['stderr'])
         bad=bench.evaluate_attempt(p)
         self.assertTrue(all(x['exit_code']==0 for x in bad['builds']))
         self.assertFalse(bad['functional_passed'])
