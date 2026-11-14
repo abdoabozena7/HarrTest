@@ -58,6 +58,10 @@ inherited faults on the baseline. The consumed case is a development control
 with probes for malformed, false and true control values. A new existing-code
 case replaces it in the held set. The schedule still has eight development
 cases and 96 held slots, with 32 per arm. The new held slot has not been run.
+At `ae28793`, the next candidate ran 477 tests in 259.549s with four skipped and
+zero failures. Independent review confirmed the new positive and adverse
+controls, the schedule, and the exclusion of the evaluator and corpus from the
+generation package.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
