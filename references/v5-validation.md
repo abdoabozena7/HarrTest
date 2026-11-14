@@ -138,8 +138,16 @@ three actors used gpt-6-luna/low. The attempt completed in 348.622s, consuming
 targeted checks; the coordinator replayed the existing test. In a resumed QA
 turn the worker inspected that replay and wrote a review receipt. Native Team
 verification failed because the adapter could not read the resumed worker turn.
-The evaluator now supplies workspace-local temporary paths to all three arms
-so standard test scratch APIs can operate within the same project permission scope.
+Independent replay with the updated adapter recovered the resumed turn and
+correctly rejected the coordinator's check as evidence of independent execution.
+
+Development-smoke9 timed out at 630.21s. It recorded owner and integration
+receipts and passed four external checks. Its QA run failed because the worker's
+shell resolved a different .NET installation, and no QA review receipt was
+recorded. The next pinned fixture keeps the existing check assertions and runs
+them with the declared .NET executable and a workspace-local scratch directory.
+This fixture setup applies equally to each arm. The evaluator also replays the
+original checker on source-qualified baseline and candidate copies separately.
 
 The schema2 log adapter independently passed a long-session compatibility probe
 and replay controls for real model/effort changes. The old 4.1-pinned production
