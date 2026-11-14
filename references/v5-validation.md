@@ -98,6 +98,20 @@ classification, rather than the dispatch label. Its result and cost are retained
 without upgrading it to a valid final attempt. Per-agent pinning must be observed
 for every arm before the held comparison begins.
 
+The subsequent actual runtime probe and development-smoke4 confirmed required
+per-agent session model settings: implementation and independent tester both
+configured and invoked gpt-6-luna/low. That fresh C# diagnostic passed all four
+external behavioral checks in 133.721s of generation and recorded 1.5523585 AI
+credits. It has no formal Team receipts; valid model attribution and artifact
+success do not upgrade its durable-workflow status. A later minimal schema2
+template and command sequence are being forward-tested as another pinned trial.
+
+The original eight-case development-smoke2 completed, with seven external
+functional passes and one failure affected by the disclosed tenant-schema
+ambiguity. This is neither a before/after comparison nor full-quality acceptance;
+all eight came from the earlier diagnostic V5 pin. Their raw costs and failed
+checks remain retained without rescoring under the newer visible contracts.
+
 The initial synthetic cases share related language-specific codebases. Final
 comparison is therefore an unseen-task/outcome comparison on related families,
 not unseen-family generalization. Two acceptance tasks are being expanded into

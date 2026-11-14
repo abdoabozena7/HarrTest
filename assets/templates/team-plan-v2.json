@@ -1,0 +1,25 @@
+{
+  "schema": 2,
+  "id": "mission",
+  "kind": "change",
+  "request": "REPLACE_ME exact original user request",
+  "contract": "REPLACE_ME existing interface, preserved behavior, lifecycle and permitted change",
+  "validation_context": [],
+  "max_parallel_workers": 1,
+  "host": {"kind": "unverified"},
+  "outcomes": {"R01": "REPLACE_ME observable requested behavior and preserved contract"},
+  "tasks": [
+    {
+      "id": "component",
+      "brief": "REPLACE_ME bounded implementation and focused component checks",
+      "outputs": ["REPLACE_ME exact existing product file"],
+      "depends_on": [],
+      "outcomes": ["R01"]
+    }
+  ],
+  "integration": {
+    "outputs": [],
+    "check": "REPLACE_ME real finite old/new behavior checks with independent expected results",
+    "timeout_seconds": 120
+  }
+}

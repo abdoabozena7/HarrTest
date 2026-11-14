@@ -78,6 +78,10 @@ Independent review checks the diff, evidence relevance and project constraints.
 These roles are distinct from the implementer. Record actual worker identities
 and capability limits; do not label unsupported host provenance verified.
 [Team contracts and host evidence](references/production-teams.md)
+For narrow work use that guide's minimal schema2 sequence and actual returned
+worker/QA packets. A handcrafted prompt can lose the handoff and verification
+contract. Review instructions must allow FAIL and UNVERIFIED findings, as well
+as PASS and justified NOT_APPLICABLE; do not bias reviewers toward acceptance.
 
 ## Assess all quality layers
 

@@ -33,6 +33,55 @@ small. Team receipts prove scopes, lifecycle and process results; six-layer
 semantic completeness of this lightweight narrative needs actual review.
 Use corporate-v1 for mechanically structured six-layer root acceptance.
 
+### Minimal existing-change sequence
+
+Use [the schema2 template](../assets/templates/team-plan-v2.json), replacing its
+placeholders with the actual request, interface, owned files and checks. Set
+host.kind to the observed host and add actual model/reasoning_effort pins when
+required. Include the existing contract/baseline and relevant validation inputs
+in validation_context. Keep the plan under `.runtime-proof/team-plan.json`.
+Do this before any product edit, including a narrow one-file fix.
+
+```text
+python <skill>/scripts/team.py --project . init --plan .runtime-proof/team-plan.json
+```
+
+Dispatch the returned complete ready packet as a native implementation worker;
+use its returned task_name exactly so the host adapter can correlate identity.
+Pass the actual model/effort explicitly when the native tool supports them.
+The worker executes its packet's handoff command after its component checks.
+Do not substitute a short handcrafted prompt for the returned contract.
+
+```text
+python <skill>/scripts/team.py --project . integrate --team mission
+```
+
+Dispatch the returned complete qa packet to a separate native worker named qa.
+It exercises the old/new behavior through the finite `check` command, records
+the observations and executes its `review` command. Both commands are in that
+packet. QA may report PASS, FAIL, UNVERIFIED or NOT_APPLICABLE for a layer; do not
+ask it to choose only passing labels. Overall unverified required checks cannot
+be a passing review. Do not restrict what defects the reviewer may report.
+
+```text
+python <skill>/scripts/team.py --project . verify --team mission --parent ACTUAL_PARENT_SESSION_UUID
+```
+
+For Copilot use its actual session UUID. Verification reads native tool/worker
+records, so handoffs, check and review must finish in the corresponding native
+turns. This command verifies current receipts and provenance; narrative six-layer
+meaning still requires inspecting the recorded QA evidence. Ordinary failures go
+back through `repair` to their owner and fresh integration/QA. A missing receipt
+is unfinished evidence, not permission to skip the worker or invent an ID.
+
+A host integration may expose `HARRTEST_PARENT_SESSION_ID` in the Copilot process
+environment. Schema2 can use that explicit session selector when no parent flag
+or cached binding is supplied; the actual native header and workspace must still
+match. A surrounding Codex thread ID is never a Copilot parent. This variable
+selects evidence and does not authenticate it or grant access to unrelated logs.
+When it is absent, obtain the exact ID from the host and use `--parent`; do not
+guess a UUID or choose whichever session directory was modified most recently.
+
 ## Legacy schema1 (4.1)
 
 The remaining instructions describe schema1, including its minimum-worker and
