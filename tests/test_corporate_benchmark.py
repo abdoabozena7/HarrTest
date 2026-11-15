@@ -460,6 +460,51 @@ assert.deepEqual(audit[1].overrides, {
         result = bench.command([shutil.which('node'), str(runner)], self.root, 15)
         self.assertEqual(result['exit_code'], 0, result['stderr'])
 
+    @unittest.skipUnless(shutil.which('node'), 'Node required for actual permission callback code')
+    def test_sdk_permission_keeps_credential_test_text_and_distinguishes_denials(self):
+        test = r'''
+const workspace = path.resolve('work');
+const config = {workspace, readRoots: [path.resolve('tools')], exactReadFiles: [path.resolve('host/events.jsonl')]};
+const rows = [];
+const decide = (request, invocation={}) => benchmarkPermission({toolCallId:'test', ...request}, invocation, config,
+                                                             row=>rows.push(row));
+const shell = (fullCommandText, possiblePaths=[], extra={}) => decide({kind:'shell', fullCommandText, possiblePaths, ...extra});
+const narrative = "@'\n# Contract requires credentials to be omitted.\nFAIL: redact leaks credential values.\n'@ | Set-Content .runtime-proof/credential-evidence.md";
+assert.equal(shell(narrative, ['.runtime-proof/credential-evidence.md']).kind, 'approve-once');
+assert.equal(shell(narrative, [{path:'.runtime-proof/credential-evidence.md'}]).kind, 'approve-once');
+assert.equal(shell(narrative, ['../work-neighbor/credential-evidence.md']).kind, 'reject');
+assert.equal(rows.at(-1).reason, 'path-outside-scope');
+assert.equal(shell(narrative, [{}]).kind, 'reject');
+assert.equal(rows.at(-1).reason, 'path-outside-scope');
+assert.equal(shell('Get-Content $target', ['.git-credentials']).kind, 'reject');
+assert.equal(rows.at(-1).reason, 'protected-shell-path');
+for (const command of ['git credential fill', 'git credential-manager erase', 'git-credential-manager get',
+                       'git config credential.helper store', 'gh auth token', 'cmdkey /list', 'Get-StoredCredential',
+                       'Get-Content .git-credentials', 'Get-Content .ssh/id_rsa', 'Get-Content .copilot/settings.json',
+                       'git push', 'npm install --global foo', 'Invoke-WebRequest example.invalid',
+                       'curl example.invalid', 'wget example.invalid']) {
+  assert.equal(shell(command).kind, 'reject', command);
+  assert.equal(rows.at(-1).reason, 'blocked-shell-pattern');
+}
+assert.equal(shell(narrative, [], {managedApprovalRequired:true}).kind, 'no-result');
+assert.equal(shell(narrative, [], {requestSandboxBypass:true}).kind, 'no-result');
+assert.equal(decide({kind:'read',path:'rules.py'}, {managedSettingsEnabled:true}).kind, 'no-result');
+assert.equal(rows.at(-1).reason, 'host-approval-required');
+assert.equal(decide({kind:'read',path:path.resolve('tools/compiler')}).kind, 'approve-once');
+assert.equal(decide({kind:'read',path:path.resolve('host/events.jsonl')}).kind, 'approve-once');
+assert.equal(decide({kind:'read',path:path.resolve('host/other.jsonl')}).kind, 'reject');
+assert.equal(decide({kind:'write',fileName:'.github/skills/harrtest/SKILL.md'}).kind, 'reject');
+assert.equal(decide({kind:'write',fileName:'.github/copilot/settings.local.json'}).kind, 'reject');
+assert.equal(decide({kind:'write',fileName:'rules.py'}).kind, 'approve-once');
+assert.ok(rows.every(row=>Object.keys(row).length===5 && row.toolCallId==='test'));
+assert.ok(!JSON.stringify(rows).includes('credential'));
+'''
+        runner = self.root / 'sdk-permission-test.mjs'
+        runner.write_text("import assert from 'node:assert/strict';\nimport path from 'node:path';\n"
+                          + bench.SDK_PERMISSION + test, encoding='utf-8')
+        result = bench.command([shutil.which('node'), str(runner)], self.root, 15)
+        self.assertEqual(result['exit_code'], 0, result['stderr'])
+
     def test_frozen_execution_order_is_complete_reproducible_and_rotated(self):
         plan=self.freeze('acceptance');order=plan['execution_order']
         self.assertIn('All arms', plan['native_task_pin_policy'])

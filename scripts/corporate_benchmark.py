@@ -1129,35 +1129,66 @@ function pinNativeTaskArguments(input, pins, audit) {
 '''
 
 
+SDK_PERMISSION = r'''
+const protectedShellPath = /(?:^|[\\/])(?:\.copilot|\.ssh|\.git-credentials|\.git-credential-cache|[._]netrc)(?:$|[\\/])/i;
+const blockedShellPatterns = [
+  /\.copilot|\.ssh|git\s+push|--global|Invoke-WebRequest|curl\s|wget\s/i,
+  /\bgit(?:\.exe)?\s+(?:credential(?:-[\w-]+)?\b|config\s+credential\.)|\bgit-credential(?:-[\w-]+)?\b/i,
+  /\bgh(?:\.exe)?\s+auth\b|\b(?:cmdkey|vaultcmd|Get-Credential|(?:Get|New|Set|Remove)-StoredCredential)\b/i,
+  /(?:^|[\s'"=\\/])(?:\.git-credentials|\.git-credential-cache|[._]netrc)(?=$|[\s'"\\/])/i,
+];
+
+function benchmarkPermission(request, invocation, c, audit) {
+  const decide = (kind, reason) => {
+    audit({kind:request.kind, toolCallId:request.toolCallId, allowed:kind==='approve-once', decision:kind, reason});
+    return kind === 'reject'
+      ? {kind, feedback:'Outside this benchmark permission scope; use only the project, selected skill and supplied toolchain.'}
+      : {kind};
+  };
+  if (request.managedApprovalRequired || invocation.managedSettingsEnabled || request.requestSandboxBypass) {
+    return decide('no-result', 'host-approval-required');
+  }
+  const contained = (value, root) => {
+    if (typeof value !== 'string' || !value) return false;
+    const p = path.resolve(c.workspace, value);
+    const r = path.resolve(root);
+    return p === r || p.startsWith(r + path.sep);
+  };
+  const readable = p => contained(p,c.workspace) || (c.readRoots || []).some(r=>contained(p,r)) ||
+    (typeof p === 'string' && !!p && (c.exactReadFiles || []).some(f=>path.resolve(c.workspace,p)===path.resolve(f)));
+  let allowed = false;
+  if (request.kind === 'read') allowed = readable(request.path);
+  if (request.kind === 'write') {
+    const files = [request.fileName, ...(request.fileEdits || []).flatMap(x=>[x.before?.path,x.after?.path])].filter(Boolean);
+    allowed = files.length > 0 && files.every(p=>contained(p,c.workspace) &&
+      !contained(p,c.workspace+'/.github/skills') && !contained(p,c.workspace+'/.github/copilot'));
+  }
+  if (request.kind === 'shell') {
+    const paths = (request.possiblePaths || []).map(p=>typeof p === 'string' ? p : p?.path);
+    if (paths.some(p=>!readable(p))) return decide('reject', 'path-outside-scope');
+    if (paths.some(p=>protectedShellPath.test(p))) return decide('reject', 'protected-shell-path');
+    if (blockedShellPatterns.some(pattern=>pattern.test(request.fullCommandText || ''))) {
+      return decide('reject', 'blocked-shell-pattern');
+    }
+    allowed = true;
+  }
+  return allowed ? decide('approve-once', 'within-scope') : decide('reject', 'kind-or-path-outside-scope');
+}
+'''
+
+
 SDK_DRIVER = r'''import fs from 'node:fs';
 import {pathToFileURL} from 'node:url';
 import path from 'node:path';
-''' + TASK_PIN_HOOK + r'''
+''' + TASK_PIN_HOOK + SDK_PERMISSION + r'''
 const c=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const {CopilotClient,RuntimeConnection}=await import(pathToFileURL(c.sdk).href);
 const client=new CopilotClient({mode:'copilot-cli',workingDirectory:c.workspace,
  env:{...process.env,HARRTEST_PARENT_SESSION_ID:c.sessionId},
  connection:RuntimeConnection.forStdio({path:c.runtime[0],args:[...c.runtime.slice(1),'--no-auto-update']})});
 const write=(name,value)=>fs.writeFileSync(c.output+'/'+name,JSON.stringify(value,null,2));
-const contained=(value,root)=>{const p=path.resolve(c.workspace,value);const r=path.resolve(root);return p===r||p.startsWith(r+path.sep);};
-const permission=(request,invocation)=>{
- if(request.managedApprovalRequired||invocation.managedSettingsEnabled)return {kind:'no-result'};
- let allowed=false;
- const readable=p=>contained(p,c.workspace)||(c.readRoots||[]).some(r=>contained(p,r))||(c.exactReadFiles||[]).some(f=>path.resolve(c.workspace,p)===path.resolve(f));
- if(request.kind==='read')allowed=!!request.path&&readable(request.path);
- if(request.kind==='write'){
-  const files=[request.fileName,...(request.fileEdits||[]).flatMap(x=>[x.before?.path,x.after?.path])].filter(Boolean);
-  allowed=files.length>0&&files.every(p=>contained(p,c.workspace)&&!contained(p,c.workspace+'/.github/skills')&&!contained(p,c.workspace+'/.github/copilot'));
- }
- if(request.kind==='shell'){
-  const text=request.fullCommandText||'';
-  const paths=request.possiblePaths||[];
-  allowed=paths.every(p=>readable(typeof p==='string'?p:p.path||''))&&
-   !/(?:\.copilot|\.ssh|credential|git\s+push|--global|Invoke-WebRequest|curl\s|wget\s)/i.test(text);
- }
- fs.appendFileSync(c.output+'/permission-decisions.jsonl',JSON.stringify({kind:request.kind,allowed,toolCallId:request.toolCallId})+'\n');
- return allowed?{kind:'approve-once'}:{kind:'reject',feedback:'Outside this benchmark permission scope; use only the project, selected skill and supplied toolchain.'};
-};
+const permission=(request,invocation)=>benchmarkPermission(request,invocation,c,
+ row=>fs.appendFileSync(c.output+'/permission-decisions.jsonl',JSON.stringify(row)+'\n'));
 let session;let header;let headerResolve;
 const nativeHeaderReady=new Promise(resolve=>{headerResolve=resolve;});
 try {
@@ -1269,6 +1300,7 @@ def _run_attempt(attempt, *, permit_generation=False):
         raw['native_observations']={'models':models,'completed_subagents':len(children),'subagents':children,'skill_invocations':invoked,
                                     'parent_identity_matches_requested':identity_valid,
                                     'task_pin_overrides_sha256':sha(attempt/'task-pin-overrides.jsonl') if (attempt/'task-pin-overrides.jsonl').is_file() else None,
+                                    'permission_decisions_sha256':sha(attempt/'permission-decisions.jsonl') if (attempt/'permission-decisions.jsonl').is_file() else None,
                                     'usage_file_sha256':sha(attempt/'usage.json') if (attempt/'usage.json').is_file() else None}
         effort=reasoning_pin_observation(events,configuration['effort'])
         raw['native_observations']['reasoning_pin']=effort
