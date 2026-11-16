@@ -64,6 +64,9 @@ does not alone create an implementation dependency. Record a real blocking input
 when a dependent worker must wait. For a single owner, cite the shared invariant
 or inseparable write scope that makes a split unnecessary. The independent
 reviewer compares the decision to the code, contracts, and actual handoffs.
+Plan concurrency from the available worker tool and its known limits. Check
+actual overlap in the native execution log after dispatch. If ready independent
+scopes have to run serially, record the observed host or resource constraint.
 Follow the [Team planning review](production-teams.md) before the implementation
 owners are dispatched.
 

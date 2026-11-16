@@ -73,6 +73,8 @@ At `ae28793`, the next candidate ran 477 tests in 259.549s with four skipped and
 zero failures. Independent review confirmed the new positive and adverse
 controls, the schedule, and the exclusion of the evaluator and corpus from the
 generation package.
+At `881b2e6`, the integrated suite ran 494 tests in 351.124s with four skipped
+and zero failures. It includes the reviewed Team and Corporate seal controls.
 
 A Copilot development replay of the consumed case took 1973.437s and 5.443232
 credits at Luna/low. The independent reviewer replayed the two partial-write
