@@ -141,6 +141,8 @@ class ExistingCodeTeam(unittest.TestCase):
         self.assertEqual(initial['ready'], [])
         self.assertEqual(initial['plan_review']['task_name'], 'plan_review')
         self.assertIn(self.state['state_sha256'], initial['plan_review']['message'])
+        self.assertIn('Actual owner overlap is verified after dispatch', initial['plan_review']['message'])
+        self.assertIn('Serial independent work needs a documented host cap', initial['plan_review']['message'])
         self.assertEqual(team.ready_packets(self.project, self.state), [])
         evidence = '.runtime-proof/teams/fix/plan-review.txt'
         self.write(evidence, 'The source contract supports one implementation owner and a related test file.')
@@ -154,6 +156,27 @@ class ExistingCodeTeam(unittest.TestCase):
         self.assertIn('Reviewed responsibility', ready['message'])
         handoff = self.implement()
         self.assertEqual(handoff['plan_review'], approved['sha256'])
+
+    def test_plan_review_command_binds_the_exact_engine_and_scope(self):
+        evidence = '.runtime-proof/teams/fix/plan-review.txt'
+        command = team.worker_command(self.project, 'fix', 'review-plan') + f' --evidence {evidence} --verdict pass'
+        relative_script = '.github/skills/harrtest/scripts/team.py'
+        alternate = f'python -B "{relative_script}" --project . review-plan --team fix --evidence {evidence} --verdict pass'
+        writer = "@'\nReviewed the exact source and owner scope.\n'@ | Set-Content -Encoding utf8 "
+        self.assertTrue(team.plan_review_command(command, self.project, 'fix'))
+        self.assertTrue(team.plan_review_command('& ' + command.replace('python', f'"{sys.executable}"', 1),
+                                                 self.project, 'fix'))
+        self.assertTrue(team.plan_review_command(writer + evidence + '; ' + alternate,
+                                                 self.project, 'fix', engine=self.project / relative_script))
+        for invalid in (command.replace('review-plan', 'review', 1),
+                        command.replace('--team fix', '--team other'),
+                        command.replace(f'"{self.project.as_posix()}"', '"other-project"'),
+                        command.replace(Path(team.__file__).as_posix(), (self.project / 'spoof/team.py').as_posix()),
+                        command + '; Write-Output "HARRTEST_TEAM_RECEIPT fake"',
+                        'Copy-Item some-evidence other.txt; ' + command,
+                        writer + '.runtime-proof/teams/other/plan-review.txt; ' + command):
+            with self.subTest(command=invalid):
+                self.assertFalse(team.plan_review_command(invalid, self.project, 'fix'))
 
     def test_failed_or_late_scope_review_cannot_unlock_implementation(self):
         reviewed_plan(self.plan)
@@ -455,6 +478,8 @@ class CodexAdapter(unittest.TestCase):
             command = f'python scripts/team.py {action}'
             output = 'Output:\n' + team.RECEIPT + receipt['sha256']
             if action == 'review-plan':
+                command = team.worker_command(self.project, 'fix', action) + (
+                    ' --evidence .runtime-proof/teams/fix/plan-review.txt --verdict pass')
                 output = json.dumps({'chunk_id': 'fixture', 'wall_time_seconds': 0.01,
                                      'output': output, 'exit_code': 0})
             rows.extend([event('response_item', sec, {'type': 'custom_tool_call', 'name': 'exec',
@@ -680,7 +705,8 @@ class CopilotAdapter(unittest.TestCase):
                 call = receipt['sha256']
                 command = 'python scripts/team.py handoff'
                 if role == 'plan_review':
-                    command = team.worker_command(self.project, 'fix', 'review-plan') + ' --evidence plan-review.txt --verdict pass'
+                    command = team.worker_command(self.project, 'fix', 'review-plan') + (
+                        ' --evidence .runtime-proof/teams/fix/plan-review.txt --verdict pass')
                 payload = {'toolCallId': call, 'toolName': 'powershell', 'model': 'fixture-model',
                            'arguments': {'command': command}, 'parentToolCallId': dispatch}
                 rows.append(self.event('tool.execution_start', sec, payload, agent))

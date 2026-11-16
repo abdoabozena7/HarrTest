@@ -225,7 +225,8 @@ def validate_plan(project, plan):
               'Each product path needs exactly one owner')
     t.ancestors(tasks)
     capacity = plan.get('max_parallel_workers', 1)
-    t.require(type(capacity) is int and 1 <= capacity <= 128, 'Invalid observed worker capacity')
+    t.require(type(capacity) is int and 1 <= capacity <= 128,
+              'Invalid planned worker capacity' if reviewed else 'Invalid observed worker capacity')
     if capacity == 1 and independent_pairs(tasks):
         t.concrete(plan.get('execution_rationale'), 'Explain serial execution of independent scopes')
     timeout = integration.get('timeout_seconds', 120)
@@ -353,16 +354,23 @@ def plan_review_packet(project, state):
                'For each owner verify the responsibility, preserved interface, exact owned files, '
                'outcomes and independent check against those sources. Find missing responsibilities '
                'or independent components grouped into one owner. A narrow responsibility may span '
-               'multiple files. Confirm any single-scope and dependency rationales and observed worker '
-               'capacity. Record each judgment with the source location and why it supports the scope. '
+               'multiple files. Confirm any single-scope and dependency rationales. Check the planned '
+               'worker width against available native dispatch and known runtime limits. Use that '
+               'capability evidence at plan review. Actual owner overlap is verified after dispatch. '
+               'Serial independent work needs a documented host cap, rejected '
+               'simultaneous dispatch or another observed constraint. Record each judgment with the '
+               'source location and why it supports the scope. '
                f'Write your observations to {evidence}. Use this literal project-relative evidence path. '
                'Record fail if a required scope, source or justification is missing. '
-               'Replace VERDICT with pass or fail based on the observations:\n'
+               'Run the following review command by itself after saving evidence. Replace VERDICT '
+               'with pass or fail based on the observations:\n'
                f'{command} --evidence {evidence} --verdict VERDICT')
     packet = {'task_name': 'plan_review', 'fork_turns': 'none', 'message': message}
     if plan.get('host', {}).get('kind') == 'copilot':
         packet['dispatch_note'] = ('Select a Copilot reviewer that can run commands and write private evidence. '
-                                   'Use an available general-purpose agent if the built-in task worker restricts writes.')
+                                   'Use an available general-purpose agent if the built-in task worker restricts writes. '
+                                   'Where independent owner scopes are planned, available task background dispatch can '
+                                   'support the planned width. Verify actual overlap after implementation.')
     return packet
 
 
@@ -652,10 +660,10 @@ def codex_adapter(project, state, parent, sessions, require_qa):
     reviewed = state['plan'].get('decomposition') == 'reviewed-v1'
     for role, (meta, path) in logs.items():
         window = NativeWindow(path, created, 'codex')
-        action = 'review-plan' if reviewed and role == 'plan_review' else None
+        review_team = state['plan']['id'] if reviewed and role == 'plan_review' else None
         try:
             rows[role] = t.read_trace(project, meta, path, created, events=window,
-                                      lifecycle_limit=MAX_NATIVE_PENDING_CALLS, receipt_action=action)
+                                      lifecycle_limit=MAX_NATIVE_PENDING_CALLS, review_team=review_team)
         except ValueError as exc:
             if 'pending lifecycle limit exceeded' in str(exc):
                 raise HostEvidenceUnavailable(str(exc)) from exc
@@ -738,7 +746,7 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
     del worker['resume']
 
 
-def read_copilot_traces(project, parent, sessions, since, *, reviewed=False):
+def read_copilot_traces(project, parent, sessions, since, *, review_team=None):
     """Read Copilot's persisted session-events v1, not model-authored summaries.
 
     Format: CLI1.0.104 live native probe and the installed official SDK's
@@ -917,9 +925,14 @@ def read_copilot_traces(project, parent, sessions, since, *, reviewed=False):
             if not agent and started >= since:
                 copilot_followup_result(by_agent, call.get('toolName'), args, payload, started, when)
             command = args.get('command') if isinstance(args, dict) else None
-            action = 'review-plan' if reviewed and current is rows.get('plan_review') else None
             if (started >= since and call.get('toolName') in {'powershell', 'bash'} and isinstance(command, str)
-                    and t.team_command(command, action=action) and payload.get('shellExecution', {}).get('exitCode') == 0):
+                    and payload.get('shellExecution', {}).get('exitCode') == 0):
+                if review_team is not None and current is rows.get('plan_review'):
+                    matches = t.plan_review_command(command, project, review_team)
+                else:
+                    matches = t.team_command(command)
+                if not matches:
+                    continue
                 result = payload.get('result', {})
                 # Never search assistant prose, call arguments, or partial stdout for receipts.
                 content = result.get('content', '') if isinstance(result, dict) else ''
@@ -932,8 +945,9 @@ def read_copilot_traces(project, parent, sessions, since, *, reviewed=False):
 
 
 def copilot_adapter(project, state, parent, sessions, require_qa):
-    rows = read_copilot_traces(project, parent, sessions, common().instant(state['created']),
-                               reviewed=state['plan'].get('decomposition') == 'reviewed-v1')
+    plan = state['plan']
+    review_team = plan['id'] if plan.get('decomposition') == 'reviewed-v1' else None
+    rows = read_copilot_traces(project, parent, sessions, common().instant(state['created']), review_team=review_team)
     return verify_native_rows(project, state, parent, rows, require_qa, 'copilot-session-events-v1')
 
 

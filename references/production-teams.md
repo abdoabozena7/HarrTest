@@ -9,9 +9,11 @@ Schema2 permits one owner, sequential dependencies and empty integration.outputs
 for validation-only assembly. Optional task deletions/renames bind removed paths
 and before/after names. Current manifests retain absence evidence.
 
-Declare actual max_parallel_workers. A serial schedule of independent scopes
-needs execution_rationale; do not invent an extra worker or glue edit. Scope and
-receipt checks remain distinct from host identity/provenance.
+Set `max_parallel_workers` to the planned width supported by the host's native
+dispatch and known limits. Serial independent scopes need `execution_rationale`
+with a documented host cap, rejected simultaneous dispatch or another observed
+constraint. Native overlap is checked after dispatch. A narrow one-owner change
+can integrate with no coordinator-owned output.
 
 host.kind declares codex, copilot or unverified. Unsupported/unobserved native
 formats remain UNVERIFIED and cannot pass full native-Team acceptance. Installation
@@ -70,10 +72,11 @@ separate from implementation and QA. It needs command execution and private
 evidence writes. In Copilot, use an available `general-purpose` agent if the
 built-in `task` worker restricts writes. The reviewer inspects the source,
 checks the owner boundaries and records the verdict with the packet's exact
-`review-plan` command and evidence path. Wait for the native reviewer to finish.
-A failed review stays with the sealed plan. Review a corrected plan under a new
-team ID before editing product files. After a passing review, retrieve the
-implementation packets:
+`review-plan` command and evidence path. Run the review command on its own once
+the evidence is saved. Wait for the native reviewer to finish. A failed review
+stays with the sealed plan. Use a new team ID and a fresh native `plan_review`
+actor for the corrected plan before editing product files. After a passing
+review, retrieve the packets:
 
 ```text
 python <skill>/scripts/team.py --project . packets --team mission

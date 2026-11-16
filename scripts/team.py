@@ -694,7 +694,7 @@ def command_call(call):
         return None, {}
 
 
-def team_command(command, *, action=None):
+def team_command(command):
     if not isinstance(command, str):
         return False
     # Preserve literal quoted newlines; only shell line boundaries delimit commands.
@@ -755,15 +755,58 @@ def team_command(command, *, action=None):
         args = words[1:]
         while args and re.fullmatch(r'-(?:B|u|3(?:\.\d+)?)', args[0]):
             args = args[1:]
-        if not args or args[0].replace('\\', '/').rsplit('/', 1)[-1] != 'team.py':
-            continue
-        arguments = args[1:]
-        if arguments[:1] == ['--project']:
-            arguments = arguments[2:]
-        elif arguments and arguments[0].startswith('--project='):
-            arguments = arguments[1:]
-        actual |= action is None or arguments[:1] == [action]
+        actual |= bool(args and args[0].replace('\\', '/').rsplit('/', 1)[-1] == 'team.py')
     return actual
+
+
+def plan_review_command(command, project, team_id, *, cwd=None, engine=None):
+    """Match the pinned review invocation and its observed literal evidence-write prefix."""
+    if not isinstance(command, str):
+        return False
+    command = command.strip()
+    prefix = command.startswith(("@'\n", "@'\r\n"))
+    if prefix:
+        terminator = re.search(r"(?m)^'@(?=[ \t|])", command)
+        if not terminator or RECEIPT.strip() in command[:terminator.start()]:
+            return False
+        command = command[terminator.end():]
+    if any(character in command for character in '\r\n`$<>'):
+        return False
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|')
+    lexer.whitespace_split, lexer.commenters, lexer.escape = True, '', ''
+    try:
+        words = list(lexer)
+        evidence = f'{proof.STATE}/teams/{team_id}/plan-review.txt'
+        if prefix:
+            if (len(words) < 7 or [word.lower() for word in words[:4]] != ['|', 'set-content', '-encoding', 'utf8']
+                    or words[4].replace('\\', '/') != evidence or words[5] != ';'):
+                return False
+            words = words[6:]
+        if words[:1] == ['&']:
+            words = words[1:]
+        if not words:
+            return False
+        interpreter, *args = words
+        executable = Path(interpreter)
+        if not re.fullmatch(r'(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?', executable.name.lower()):
+            return False
+        if executable.is_absolute():
+            if executable.resolve() != Path(sys.executable).resolve():
+                return False
+        elif executable.name != interpreter:
+            return False
+        if args[:1] == ['-B']:
+            args = args[1:]
+        if (len(args) != 10 or args[1] != '--project' or args[3:] !=
+                ['review-plan', '--team', team_id, '--evidence', evidence, '--verdict', 'pass']):
+            return False
+        root = Path(project).resolve()
+        actual_cwd = Path(cwd).resolve() if cwd else root
+        return ((actual_cwd / args[0]).resolve() == Path(engine or __file__).resolve()
+                and (actual_cwd / args[2]).resolve() == root
+                and (not prefix or actual_cwd == root))
+    except (ValueError, OSError, RuntimeError):
+        return False
 
 
 def command_result(value):
@@ -868,7 +911,7 @@ def patch_paths(project, call, output):
     return paths
 
 
-def native_completed_command(project, payload, *, receipt_action=None):
+def native_completed_command(project, payload, *, review_team=None):
     """Read host command completion, including stdout omitted by display budgets."""
     item = payload.get('item', {})
     if (payload.get('type') != 'item_completed' or not isinstance(item, dict)
@@ -884,9 +927,7 @@ def native_completed_command(project, payload, *, receipt_action=None):
                 and all(isinstance(part, str) for part in command), 'Missing actual command')
         executable = command[0].replace('\\', '/').rsplit('/', 1)[-1].lower().removesuffix('.exe')
         require(executable in {'powershell', 'pwsh', 'sh', 'bash', 'zsh'}
-                and command[-2].lower() in {'-command', '-c', '-lc'}
-                and team_command(command[-1], action=receipt_action), 'Not a literal native Team command')
-        require(receipt_action is None or item['exit_code'] == 0, 'Plan review command failed')
+                and command[-2].lower() in {'-command', '-c', '-lc'}, 'Not a native shell command')
         uri = urlsplit(item['cwd'])
         require(uri.scheme == 'file' and uri.netloc in {'', 'localhost'}
                 and not uri.query and not uri.fragment, 'Unsupported command workspace')
@@ -895,15 +936,25 @@ def native_completed_command(project, payload, *, receipt_action=None):
             local = local[1:]
         cwd = Path(local).resolve()
         require(cwd == project or cwd.is_relative_to(project), 'Command used a different project')
+        if review_team is None:
+            require(team_command(command[-1]), 'Not a literal native Team command')
+        else:
+            require(item['exit_code'] == 0 and plan_review_command(command[-1], project, review_team, cwd=cwd),
+                    'Not a successful pinned plan review command')
         require(len(item['aggregated_output']) <= MAX_ROLLOUT_BYTES, 'Native stdout too large')
         return item['aggregated_output']
     except (ValueError, TypeError, KeyError, AttributeError, OSError):
         return None
 
 
-def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None, receipt_action=None):
+def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None, review_team=None):
     if events is None:
         require(path.stat().st_size <= MAX_ROLLOUT_BYTES, 'Native rollout exceeds the supported size')
+    def matches(args):
+        if review_team is None:
+            return team_command(args.get('cmd'))
+        return plan_review_command(args.get('cmd'), project, review_team, cwd=args.get('workdir') or meta['cwd'])
+
     writes, markers, calls, running_commands, running_cells = [], {}, {}, {}, {}
     finished, context = None, {}
     turn_starts = []
@@ -927,7 +978,7 @@ def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None,
             if when < since:
                 continue
             if event['type'] == 'event_msg':
-                actual = native_completed_command(project, payload, receipt_action=receipt_action)
+                actual = native_completed_command(project, payload, review_team=review_team)
                 if actual is not None:
                     for digest in re.findall(r'^' + RECEIPT + r'([0-9a-f]{64})\s*$', actual, re.M):
                         markers.setdefault(digest, when)
@@ -971,7 +1022,7 @@ def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None,
                 if yielded:
                     if waited_cell is not None and yielded[1] != waited_cell:
                         continue
-                    if operation and (operation == 'write_stdin' or team_command(args.get('cmd'), action=receipt_action)):
+                    if operation and (operation == 'write_stdin' or matches(args)):
                         running_cells[yielded[1]] = (operation, args)
                     continue
                 result = command_result(payload.get('output')) if operation else None
@@ -981,7 +1032,7 @@ def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None,
                 if operation == 'exec_command':
                     if sid is not None:
                         running_commands.pop(sid, None)
-                    if not team_command(args.get('cmd'), action=receipt_action):
+                    if not matches(args):
                         continue
                     pending = set()
                 else:
@@ -993,7 +1044,7 @@ def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None,
                     sid = requested
                 pending.update(re.findall(r'^' + RECEIPT + r'([0-9a-f]{64})\s*$', result['output'], re.M))
                 if result['complete']:
-                    if receipt_action is None or type(result['exit_code']) is int and result['exit_code'] == 0:
+                    if review_team is None or type(result['exit_code']) is int and result['exit_code'] == 0:
                         for digest in pending:
                             markers.setdefault(digest, when)
                     if sid is not None:
