@@ -138,6 +138,31 @@ The dispatch check ties the reviewed Team state and actual pre-edit source to
 the immutable root, including the proof check and verifier hashes. If the
 check rejects the inputs, resolve the reported discrepancy before dispatch.
 
+### Optional Copilot CLI readiness guard
+
+For a session explicitly designated for a substantive Corporate change, generate
+a local hook fragment using the checkout, goal ID and Copilot session UUID.
+
+```text
+python <skill>/scripts/copilot_guard.py config --project . --goal mission --session SESSION_UUID
+```
+
+Save the generated JSON as `.github/hooks/harrtest-corporate-local.json` in
+the local checkout through its existing workspace approval process. Start
+Copilot CLI with the same UUID via `--session-id`. Keep the fragment local and
+remove it when the session ends. Existing hook files and both legacy and narrow
+Team workflows use their existing configuration.
+
+For that checkout and session, the hook denies supported native editor actions
+on product files until `team.py packets` admits the reviewed Corporate root. It
+compares fixed admission documents and permits normal Copilot permission handling
+for other calls, including inspection and writing private `.runtime-proof`
+artifacts. The Team and root commands still verify full source, selected checks,
+real ownership and QA. Shell, MCP and manual writes remain under their own host
+permissions. The hook depends on Copilot loading the local fragment and returning
+a decision before its timeout. Copilot timeouts proceed through the normal
+permission flow. [GitHub Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)
+
 ## Execute, review and verify
 
 Use [Team schema2](production-teams.md) for bounded owners and actual host capacity.
