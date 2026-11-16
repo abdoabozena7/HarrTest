@@ -37,7 +37,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.experiment = self.root / "experiment"
         self.fake_probe = {"tools": {"python":sys.executable,"node":shutil.which("node"),"copilot":"fixture-only"},
                            "blocked":[], "assurance":"unit-test substitution, not a capability observation"}
-        tools_path=ROOT/'output/v5-corporate/evaluation-tools.json'
+        tools_path=Path(os.environ.get('HARRTEST_BENCH_TOOLS') or ROOT/'output/v5-corporate/evaluation-tools.json')
         if tools_path.is_file():
             tools=bench.load(tools_path)
             for key in ['tsc','node_types']:
@@ -64,6 +64,12 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(splits['cs-credit-validation'], 'development')
         self.assertEqual(splits['cs-build-dependency-plan'], 'acceptance')
         self.assertNotIn('cs-refund-boundary', splits)
+        self.assertEqual(splits['cs-atomic-transfer'], 'development')
+        self.assertEqual(splits['ts-explicit-config'], 'development')
+        self.assertEqual(splits['cs-stock-snapshot'], 'acceptance')
+        self.assertEqual(splits['ts-triage-queue'], 'acceptance')
+        self.assertNotIn('cs-tenant-lookup', splits)
+        self.assertNotIn('ts-explicit-limit', splits)
 
     def test_pin_does_not_expose_evaluator_or_corpus(self):
         self.freeze()
@@ -553,8 +559,10 @@ assert.ok(!JSON.stringify(rows).includes('credential'));
 
     @unittest.skipUnless(shutil.which('node'),'Node required for actual TypeScript runtime')
     def test_typescript_oracle_accepts_positive_control(self):
-        p=self.attempt('ts-explicit-limit');core=p/'work/rules.ts'
-        core.write_text(core.read_text().replace(' || ', ' ?? '))
+        p=self.attempt('ts-record-framing');core=p/'work/rules.ts'
+        original = core.read_text()
+        old = next(line for line in original.splitlines() if "x.op === 'framing'" in line)
+        core.write_text(original.replace(old, "  if (x.op === 'framing') return JSON.stringify({message: x.message}) + '\\n';"))
         result=bench.evaluate_attempt(p)
         self.assertTrue(result['functional_passed'])
 
@@ -621,6 +629,96 @@ assert.ok(!JSON.stringify(rows).includes('credential'));
         self.assertEqual(len(failures), 2)
         self.assertTrue(all(row['observed'] == {'order': ['first'], 'error': 'cycle'} for row in failures))
         self.assertEqual(partial_result['automated_artifact_layers']['resilience']['status'], 'FAIL')
+
+    def test_stock_components_have_independent_dotnet_oracles_and_real_cli_composition(self):
+        dotnet = Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
+        if not dotnet.is_file():
+            self.skipTest('Pinned local .NET10 SDK unavailable')
+        self.fake_probe['tools']['dotnet'] = str(dotnet)
+        attempt = self.attempt('cs-stock-snapshot')
+        workspace = attempt / 'work'
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertTrue(all(passed for name, passed in checks.items() if name.startswith('preservation')))
+        self.assertFalse(checks['stock-csv-quoted-fields'])
+        self.assertFalse(checks['stock-projection-latest-case-sensitive-wide-total'])
+        self.assertFalse(checks['public-composed-report'])
+        # Disposable evaluator controls, never copied into the model workspace templates.
+        (workspace/'StockCsv.cs').write_text('''using Microsoft.VisualBasic.FileIO;
+
+public static class StockCsv
+{
+    public static StockRow[] Parse(string csv)
+    {
+        using var parser = new TextFieldParser(new System.IO.StringReader(csv));
+        parser.SetDelimiters(",");
+        parser.TrimWhiteSpace = false;
+        var rows = new System.Collections.Generic.List<StockRow>();
+        while (!parser.EndOfData)
+        {
+            var fields = parser.ReadFields()!;
+            rows.Add(new StockRow(fields[0], fields[1], int.Parse(fields[2])));
+        }
+        return rows.ToArray();
+    }
+}
+''', encoding='utf-8')
+        isolated = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in isolated['checks']}
+        self.assertTrue(checks['stock-csv-quoted-fields'])
+        self.assertTrue(checks['stock-csv-retains-field-values'])
+        self.assertFalse(checks['stock-projection-latest-case-sensitive-wide-total'])
+        self.assertFalse(checks['public-composed-report'])
+        projection = workspace/'StockProjection.cs'
+        old = projection.read_text(encoding='utf-8')
+        projection.write_text(old.replace('.Sum(row => (long)row.Units)',
+            '.GroupBy(row => row.Sku, StringComparer.Ordinal).Sum(group => (long)group.Last().Units)'), encoding='utf-8')
+        passed = bench.evaluate_attempt(attempt)
+        self.assertTrue(passed['automated_artifact_passed'], str([row['check'] for row in passed['checks'] if not row['passed']]))
+        self.assertTrue(passed['unchanged_by_evaluator'])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for TypeScript runtime')
+    def test_triage_components_have_independent_typed_oracles_and_real_cli_composition(self):
+        if not self.fake_probe['tools'].get('tsc'):
+            self.skipTest('Pinned TypeScript compiler unavailable')
+        attempt = self.attempt('ts-triage-queue')
+        workspace = attempt / 'work'
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertTrue(all(passed for name, passed in checks.items() if name.startswith('preservation')))
+        self.assertEqual(baseline['type_correctness'], 'PASS', str(baseline['builds']))
+        self.assertFalse(checks['triage-rank-stable-and-nonmutating'])
+        self.assertFalse(checks['triage-group-owner-normalization'])
+        self.assertFalse(checks['public-composed-report'])
+        group = workspace/'group.ts'
+        group_control = group.read_text(encoding='utf-8').replace('    if (ticket.owner === null) {',
+            "    const name = ticket.owner?.trim() ?? '';\n    if (!name) {")
+        group_control = group_control.replace('      const group = owners.get(ticket.owner)',
+            '      const key = name.toLowerCase();\n      const group = owners.get(key)')
+        group_control = group_control.replace('{name: ticket.owner,', '{name,').replace('owners.set(ticket.owner, group)', 'owners.set(key, group)')
+        group.write_text(group_control, encoding='utf-8')
+        isolated = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in isolated['checks']}
+        self.assertTrue(checks['triage-group-owner-normalization'])
+        self.assertFalse(checks['triage-rank-stable-and-nonmutating'])
+        self.assertFalse(checks['public-composed-report'])
+        rank = workspace/'rank.ts'
+        original = rank.read_text(encoding='utf-8')
+        rank.write_text(original.replace('  return tickets.sort((left, right) => left.severity.localeCompare(right.severity));',
+            "  const names = ['critical', 'high', 'normal', 'low'];\n"
+            '  const rank = (ticket: Ticket) => {\n'
+            '    const position = names.indexOf(ticket.severity.trim().toLowerCase());\n'
+            '    return position < 0 ? names.length : position;\n'
+            '  };\n'
+            '  return [...tickets].sort((left, right) => rank(left) - rank(right));'), encoding='utf-8')
+        passed = bench.evaluate_attempt(attempt)
+        self.assertTrue(passed['automated_artifact_passed'], str([row['check'] for row in passed['checks'] if not row['passed']]))
+        self.assertEqual(passed['type_correctness'], 'PASS')
+        types = workspace/'tickets.ts'
+        types.write_text(types.read_text(encoding='utf-8') + '\n// Candidate edited the frozen interface file.\n', encoding='utf-8')
+        changed = bench.evaluate_attempt(attempt)
+        self.assertTrue(changed['functional_passed'])
+        self.assertFalse(changed['documented_contract_and_adapter_preserved'])
 
     def test_cpp_actual_compiler_negative_and_positive_controls(self):
         if sys.platform!='win32':
@@ -777,8 +875,11 @@ assert.ok(!JSON.stringify(rows).includes('credential'));
     @unittest.skipUnless(shutil.which('node'),'Node required')
     def test_runtime_success_does_not_hide_typescript_type_error(self):
         if not self.fake_probe['tools'].get('tsc'):self.skipTest('Pinned TypeScript compiler unavailable')
-        p=self.attempt('ts-explicit-limit');core=p/'work/rules.ts'
-        core.write_text(core.read_text().replace(' || ',' ?? ')+'\nconst typeOnlyDefect: number = "wrong type";\n')
+        p=self.attempt('ts-record-framing');core=p/'work/rules.ts'
+        original = core.read_text()
+        old = next(line for line in original.splitlines() if "x.op === 'framing'" in line)
+        core.write_text(original.replace(old, "  if (x.op === 'framing') return JSON.stringify({message: x.message}) + '\\n';")
+                        + '\nconst typeOnlyDefect: number = "wrong type";\n')
         result=bench.evaluate_attempt(p)
         self.assertTrue(result['functional_passed'])
         self.assertEqual(result['type_correctness'],'FAIL')

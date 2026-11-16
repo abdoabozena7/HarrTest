@@ -207,6 +207,7 @@ def generation_environment(workspace, tools):
         environment['DOTNET_ROOT'] = str(Path(tools['dotnet']).parent)
         environment['DOTNET_NOLOGO'] = '1'
         environment['DOTNET_CLI_TELEMETRY_OPTOUT'] = '1'
+        environment['DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE'] = 'true'
     return environment
 
 
@@ -279,7 +280,7 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
             "limits": ["Same wall/credit caps are not equal realized generation cost.",
                        "All task product modifications must come from actual Copilot tools.",
                        "Local source provenance is cooperative, not a hostile-writer sandbox.",
-                       "Mixed complexity: two multi-component SDK/domain and CLI additions, six bounded acceptance changes. Related synthetic codebase families share existing APIs across development and acceptance; no unseen-family or enterprise-scale claim.",
+                       "Mixed complexity: two changes across independent existing components and six bounded acceptance changes. Synthetic projects exercise defined contracts and consumers at fixture scale.",
                        "Any acceptance case used to tune the harness becomes development data and requires a fresh declared comparison."]}
     runtime_files = {}
     declared=[]
@@ -399,6 +400,91 @@ def evaluate(text):
 '''
 
 
+STOCK_CONTRACT = '''StockCsv.Parse(string csv) -> StockRow[] retains row order from headerless sku,warehouse,units CSV. Documents use LF or CRLF, may end with one newline, and can be empty. The first two fields may be quoted and contain commas or escaped double quotes written as two double quotes. Do not trim values or casing; fields contain no line breaks. Units are an unquoted nonnegative Int32.
+StockProjection.Balance(StockRow[] rows, string warehouse) -> long sums the latest row for each distinct SKU in the chosen warehouse. The last row in input order wins, including zero. SKU and warehouse comparisons are case-sensitive. An absent warehouse or empty rows returns 0. Input arrays are unchanged.
+Rules.Evaluate and the positional JSON CLI accept {"op":"balance","warehouse":"west","csv":"A,west,5"} and return {"total":5}. The Rules adapter composes the existing reader and projection. Keep both module exports and the StockRow record constructor and fields.
+'''
+
+STOCK_FILES = {
+    'StockRow.cs': 'public sealed record StockRow(string Sku, string Warehouse, int Units);\n',
+    'StockCsv.cs': r'''public static class StockCsv
+{
+    public static StockRow[] Parse(string csv) => csv.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        .Select(line => line.TrimEnd('\r').Split(','))
+        .Select(fields => new StockRow(fields[0], fields[1], int.Parse(fields[2])))
+        .ToArray();
+}
+''',
+    'StockProjection.cs': '''public static class StockProjection
+{
+    public static long Balance(StockRow[] rows, string warehouse) =>
+        rows.Where(row => row.Warehouse == warehouse).Sum(row => (long)row.Units);
+}
+''',
+    'Rules.cs': '''using System.Text.Json;
+
+public static class Rules
+{
+    public static string Evaluate(string text)
+    {
+        using var request = JsonDocument.Parse(text);
+        var root = request.RootElement;
+        var rows = StockCsv.Parse(root.GetProperty("csv").GetString()!);
+        return JsonSerializer.Serialize(new { total = StockProjection.Balance(rows, root.GetProperty("warehouse").GetString()!) });
+    }
+}
+''',
+}
+
+TRIAGE_CONTRACT = '''rankTickets(tickets: Ticket[]): Ticket[] returns a new array ranked critical, high, normal, low, and then all other severities. Compare severity after trim().toLowerCase(). Keep input order within each rank and preserve every Ticket field. Do not mutate the original array or ticket objects.
+groupTickets(tickets: Ticket[]): QueueSummary preserves input order of ticket IDs within an owner and owner groups in first occurrence order. Trim owner whitespace and compare names with toLowerCase(), preserving the first trimmed spelling for display. Null or blank owners go into unassigned in input order. Do not change input.
+QueueSummary has {owners: [{name: string, ids: string[]}], unassigned: string[]}. The existing evaluate(text: string): string SDK and positional JSON CLI accept {"op":"queue","tickets":[{"id":"one","severity":"high","owner":"Lee"}]} -> {"owners":[{"name":"Lee","ids":["one"]}],"unassigned":[]}. Composition ranks then groups. Empty input returns two empty arrays. Keep both module exports and shared type declarations.
+'''
+
+TRIAGE_FILES = {
+    'tickets.ts': '''export interface Ticket { id: string; severity: string; owner: string | null }
+export interface QueueSummary { owners: {name: string; ids: string[]}[]; unassigned: string[] }
+''',
+    'rank.ts': '''import type { Ticket } from './tickets.ts';
+
+export function rankTickets(tickets: Ticket[]): Ticket[] {
+  return tickets.sort((left, right) => left.severity.localeCompare(right.severity));
+}
+''',
+    'group.ts': '''import type { QueueSummary, Ticket } from './tickets.ts';
+
+export function groupTickets(tickets: Ticket[]): QueueSummary {
+  const owners = new Map<string, {name: string; ids: string[]}>();
+  const unassigned: string[] = [];
+  for (const ticket of tickets) {
+    if (ticket.owner === null) {
+      unassigned.push(ticket.id);
+    } else {
+      const group = owners.get(ticket.owner) ?? {name: ticket.owner, ids: []};
+      group.ids.push(ticket.id);
+      owners.set(ticket.owner, group);
+    }
+  }
+  return {owners: [...owners.values()], unassigned};
+}
+''',
+    'rules.ts': '''import { rankTickets } from './rank.ts';
+import { groupTickets } from './group.ts';
+import type { Ticket } from './tickets.ts';
+
+export function evaluate(text: string): string {
+  const request: {tickets: Ticket[]} = JSON.parse(text);
+  return JSON.stringify(groupTickets(rankTickets(request.tickets)));
+}
+''',
+}
+
+COMPONENT_SOURCE_FILES = {
+    'stock-snapshot': {'StockCsv.cs', 'StockProjection.cs'},
+    'triage-queue': {'rank.ts', 'group.ts'},
+}
+
+
 def fixture(case, tools=None):
     """Pre-existing defective project and ordinary public contract; no target fixes."""
     tools = tools or {}
@@ -447,6 +533,14 @@ The original CLI takes the operation string as its first argument and prints ret
         common['CONTRACT.md'] = MONTHLY_REPORT_CONTRACT
     if scenario == 'build-plan':
         common['CONTRACT.md'] = BUILD_PLAN_CONTRACT
+    if scenario == 'stock-snapshot':
+        common['CONTRACT.md'] = STOCK_CONTRACT
+        common['ARCHITECTURE.md'] = ('StockCsv.cs reads CSV into StockRow records. StockProjection.cs consumes those records and owns stock calculations. '
+                                      'Keep the existing Rules.cs and Program.cs adapters and the shared StockRow.cs contract unchanged.\n')
+    if scenario == 'triage-queue':
+        common['CONTRACT.md'] = TRIAGE_CONTRACT
+        common['ARCHITECTURE.md'] = ('rank.ts ranks Ticket records. group.ts groups Ticket records into QueueSummary. '
+                                      'Keep the shared tickets.ts contracts and existing rules.ts and cli.ts adapters unchanged.\n')
     if tools:
         common['RUNTIME.md']+='Pinned executable paths: '+json.dumps({key:tools[key] for key in ['python','node','dotnet','cxx'] if tools.get(key)},sort_keys=True)+'\n'
     smoke = {
@@ -466,6 +560,14 @@ The original CLI takes the operation string as its first argument and prints ret
         smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
                  f"'--verbosity','quiet','--',json.dumps({ordinary_plan!r})]; "
                  "expected={'order':['compile','pack'],'error':None}")
+    if scenario == 'stock-snapshot':
+        request = {'op': 'balance', 'warehouse': 'west', 'csv': 'A,west,5\nB,west,3'}
+        smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
+                 f"'--verbosity','quiet','--',json.dumps({request!r})]; expected={{'total':8}}")
+    if scenario == 'triage-queue':
+        smoke = (f"args=[{str(tools.get('node') or 'node')!r},'--experimental-strip-types','cli.ts',"
+                 "json.dumps({'op':'queue','tickets':[{'id':'old','severity':'high','owner':'Lee'}]})]; "
+                 "expected={'owners':[{'name':'Lee','ids':['old']}],'unassigned':[]}")
     common['check_existing.py']='import json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nscratch = Path(".runtime-proof/scratch")\nscratch.mkdir(parents=True, exist_ok=True)\nwith tempfile.TemporaryDirectory(dir=scratch) as temp:\n    '+smoke+'\n    result=subprocess.run(args,capture_output=True,text=True,check=True);lines=result.stdout.strip().splitlines();actual=json.loads(lines[-1]);assert actual==expected,(actual,expected);print("Existing public behavior checked")\n'
     if case.get('scenario')=='lookup':
         common['PERFORMANCE.md']='For lookup30000 sorted keys and20000 queries, preserve exact results and reduce median command wall time to at most70% of the unchanged baseline on the same machine/compiler/options. Use one warmup and five measurements per version; retain raw values and noise.\n'
@@ -477,13 +579,20 @@ The original CLI takes the operation string as its first argument and prints ret
         return {**common, "rules.py": core, "cli.py": "from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n"}
     if lang == "typescript":
         core = '''import path from 'node:path';\nexport function evaluate(text: string): string {\n  const x = JSON.parse(text);\n  if (x.op === 'limit') return JSON.stringify({limit: x.limit || 10});\n  if (x.op === 'config') return JSON.stringify({enabled: x.enabled || true, limit: x.limit || 10, label: x.label || 'default'});\n  if (x.op === 'path') {\n    const p = path.resolve(x.root, x.name);\n    if (!p.startsWith(path.resolve(x.root))) throw new Error('outside root');\n    return p;\n  }\n  if (x.op === 'framing') return '{"message":"' + x.message + '"}\\n';\n  throw new Error('unsupported operation');\n}\n'''
-        return {**common, "rules.ts": core, "cli.ts": "import { evaluate } from './rules.ts';\nconsole.log(evaluate(process.argv[2]));\n", "package.json": '{"type":"module","private":true}\n'}
+        project = {**common, "rules.ts": core, "cli.ts": "import { evaluate } from './rules.ts';\nconsole.log(evaluate(process.argv[2]));\n",
+                   "package.json": '{"type":"module","private":true}\n'}
+        if scenario == 'triage-queue':
+            project.update(TRIAGE_FILES)
+        return project
     if lang == "csharp":
         core = '''using System;\nusing System.Text.Json;\npublic static class Rules {\n public static string Evaluate(string text) {\n  using var d = JsonDocument.Parse(text); var x = d.RootElement; string op=x.GetProperty("op").GetString()!;\n  if(op=="refund") return (x.GetProperty("age").GetInt32()<x.GetProperty("window").GetInt32()).ToString().ToLowerInvariant();\n  if(op=="tenant") { foreach(var a in x.GetProperty("accounts").EnumerateArray()) if(a.GetProperty("id").GetString()==x.GetProperty("id").GetString()) return a.GetProperty("balance").GetRawText(); return "null"; }\n  long left=x.GetProperty("left").GetInt64(), amount=x.GetProperty("amount").GetInt64();\n  if(op=="credit") return JsonSerializer.Serialize(new {balance=left+amount,accepted=true});\n  long right=x.GetProperty("right").GetInt64(); left-=amount;\n  if(left<0) return JsonSerializer.Serialize(new {left,right,accepted=false});\n  return JsonSerializer.Serialize(new {left,right=right+amount,accepted=true});\n }\n}\n'''
         project = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>\n'
         if scenario == 'build-plan':
             core = BUILD_PLAN_SOURCE
-        return {**common, "Rules.cs": core, "Program.cs": "Console.WriteLine(Rules.Evaluate(args[0]));\n", "Existing.csproj": project}
+        files = {**common, "Rules.cs": core, "Program.cs": "Console.WriteLine(Rules.Evaluate(args[0]));\n", "Existing.csproj": project}
+        if scenario == 'stock-snapshot':
+            files.update(STOCK_FILES)
+        return files
     core = r'''#pragma once
 #include <algorithm>
 #include <cstdint>
@@ -691,12 +800,67 @@ def toolchain(plan):
 PYTHON_EXCEPTION_EXITS = {'VALUE_ERROR': 65, 'RUNTIME_ERROR': 66}
 
 
-def build_program(workspace, output, lang, tools, *, python_typed_errors=False):
+STOCK_CONSUMER = '''using System.Text.Json;
+
+try
+{
+    using var request = JsonDocument.Parse(args[0]);
+    var input = request.RootElement;
+    Func<string, StockRow[]> parse = StockCsv.Parse;
+    Func<StockRow[], string, long> balance = StockProjection.Balance;
+    switch (input.GetProperty("op").GetString())
+    {
+        case "external-parse":
+            Console.WriteLine(JsonSerializer.Serialize(parse(input.GetProperty("csv").GetString()!)));
+            break;
+        case "external-balance":
+            var rows = JsonSerializer.Deserialize<StockRow[]>(input.GetProperty("rows").GetRawText())!;
+            var original = JsonSerializer.Serialize(rows);
+            var total = balance(rows, input.GetProperty("warehouse").GetString()!);
+            Console.WriteLine(JsonSerializer.Serialize(new { total, unchanged = original == JsonSerializer.Serialize(rows) }));
+            break;
+        default:
+            Console.WriteLine(Rules.Evaluate(args[0]));
+            break;
+    }
+}
+catch { Console.WriteLine("ERROR"); }
+'''
+
+
+def triage_consumer(workspace, output):
+    imports = []
+    for names, module in [('evaluate', 'rules'), ('rankTickets', 'rank'), ('groupTickets', 'group'),
+                          ('type Ticket, type QueueSummary', 'tickets')]:
+        relative = os.path.relpath(workspace/f'{module}.ts', output).replace(os.sep, '/')
+        imports.append(f'import {{ {names} }} from {json.dumps(relative)};')
+    return '\n'.join(imports) + '''
+const rank: (tickets: Ticket[]) => Ticket[] = rankTickets;
+const group: (tickets: Ticket[]) => QueueSummary = groupTickets;
+try {
+  const text = process.argv[2];
+  const input: {op: string; tickets: Ticket[]} = JSON.parse(text);
+  const original = JSON.stringify(input.tickets);
+  if (input.op === 'external-rank') {
+    const ranked = rank(input.tickets);
+    console.log(JSON.stringify({ranked, fresh: ranked !== input.tickets,
+                                unchanged: original === JSON.stringify(input.tickets)}));
+  } else if (input.op === 'external-group') {
+    const summary = group(input.tickets);
+    console.log(JSON.stringify({summary, unchanged: original === JSON.stringify(input.tickets)}));
+  } else {
+    console.log(evaluate(text));
+  }
+} catch { console.log('ERROR'); }
+'''
+
+
+def build_program(workspace, output, lang, tools, *, scenario=None):
     output.mkdir(parents=True, exist_ok=False)
     if lang == "python":
         driver = output / "driver.py"
         error_handlers = "except Exception: print('ERROR')\n"
-        if python_typed_errors:
+        if scenario in {'atomic', 'month-report'}:
             error_handlers = (
                 f"except ValueError: print('VALUE_ERROR'); sys.exit({PYTHON_EXCEPTION_EXITS['VALUE_ERROR']})\n"
                 f"except RuntimeError: print('RUNTIME_ERROR'); sys.exit({PYTHON_EXCEPTION_EXITS['RUNTIME_ERROR']})\n"
@@ -705,12 +869,18 @@ def build_program(workspace, output, lang, tools, *, python_typed_errors=False):
         driver.write_text("import sys\nsys.path.insert(0, " + repr(str(workspace)) + ")\nfrom rules import evaluate\ntry: print(evaluate(sys.argv[1]))\n" + error_handlers, encoding="utf-8")
         return [tools["python"], str(driver)], []
     if lang == "typescript":
-        driver = output / "driver.mjs"
-        driver.write_text("import {evaluate} from " + json.dumps((workspace / "rules.ts").as_uri()) + ";\ntry {console.log(evaluate(process.argv[2]));} catch {console.log('ERROR');}\n", encoding="utf-8")
+        if scenario == 'triage-queue':
+            driver = output / 'driver.mts'
+            driver.write_text(triage_consumer(workspace, output), encoding='utf-8')
+        else:
+            driver = output / 'driver.mjs'
+            driver.write_text("import {evaluate} from " + json.dumps((workspace / "rules.ts").as_uri()) + ";\ntry {console.log(evaluate(process.argv[2]));} catch {console.log('ERROR');}\n", encoding="utf-8")
         typing={'role':'typecheck','exit_code':None,'stdout':'','stderr':'Pinned TypeScript compiler and Node declaration files unavailable','timed_out':False,'status':'UNVERIFIED'}
         if tools.get('tsc') and tools.get('node_types'):
             compiler=[tools['node'],tools['tsc']] if str(tools['tsc']).endswith('.js') else [tools['tsc']]
             sources=[str(p) for p in workspace.rglob('*.ts') if not any(part in SKIP for part in p.relative_to(workspace).parts)]
+            if scenario == 'triage-queue':
+                sources.append(str(driver))
             typing=command([*compiler,'--noEmit','--strict','--skipLibCheck','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','--allowImportingTsExtensions','--typeRoots',tools['node_types'],*sources],workspace,90)
             typing['role']='typecheck';typing['status']='PASS' if typing['exit_code']==0 else 'FAIL'
         return [tools["node"], "--experimental-strip-types", str(driver)], [typing]
@@ -718,7 +888,8 @@ def build_program(workspace, output, lang, tools, *, python_typed_errors=False):
         for src in workspace.rglob('*.cs'):
             if src.name=='Program.cs' or any(part in SKIP for part in src.relative_to(workspace).parts):continue
             target=output/src.relative_to(workspace);target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(src,target)
-        (output / "Program.cs").write_text('try {Console.WriteLine(Rules.Evaluate(args[0]));} catch {Console.WriteLine("ERROR");}\n', encoding="utf-8")
+        driver = STOCK_CONSUMER if scenario == 'stock-snapshot' else 'try {Console.WriteLine(Rules.Evaluate(args[0]));} catch {Console.WriteLine("ERROR");}\n'
+        (output / "Program.cs").write_text(driver, encoding="utf-8")
         (output / "Evaluator.csproj").write_text(fixture({"language": "csharp"})["Existing.csproj"], encoding="utf-8")
         built = command([tools["dotnet"], "build", "--nologo", "-v:q", "-o", str(output / "app")], output, 150)
         return [tools["dotnet"], str(output / "app/Evaluator.dll")], [built]
@@ -742,7 +913,13 @@ def build_public_cli(workspace, output, lang, tools):
     """Exercise the real adapter in addition to the independently compiled API consumer."""
     if lang=='typescript':return [tools['node'],'--experimental-strip-types',str(workspace/'cli.ts')],[]
     output.mkdir(parents=True)
-    for src in workspace.glob('*.cs'):shutil.copy2(src,output/src.name)
+    for src in workspace.rglob('*.cs'):
+        relative = src.relative_to(workspace)
+        if any(part in SKIP for part in relative.parts):
+            continue
+        target = output / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)
     shutil.copy2(workspace/'Existing.csproj',output/'Existing.csproj')
     built=command([tools['dotnet'],'build','--nologo','-v:q','-o',str(output/'app')],output,150)
     return [tools['dotnet'],str(output/'app/Existing.dll')],[built]
@@ -775,6 +952,58 @@ def build_plan_vectors():
         plan([('first', []), ('self', ['self'])], error='cycle'),
     ]
     return ordinary, target
+
+
+def stock_component_vectors():
+    quoted = '"A,1","South ""West""",5\r\n"A,1","South ""West""",0\r\nB,"South ""West""",8\r\n'
+    ledger = [{'Sku': sku, 'Warehouse': warehouse, 'Units': units} for sku, warehouse, units in [
+        ('A', 'west', 9), ('A', 'east', 11), ('B', 'west', 2147483647),
+        ('A', 'west', 0), ('a', 'west', 7), ('C', 'west', 2), ('B', 'West', 1),
+    ]]
+    return [
+        ('preservation-stock-parse-empty', {'op': 'external-parse', 'csv': ''}, []),
+        ('preservation-stock-absent-warehouse', {'op': 'external-balance', 'rows': ledger, 'warehouse': 'none'},
+         {'total': 0, 'unchanged': True}),
+        ('stock-csv-quoted-fields', {'op': 'external-parse', 'csv': quoted}, [
+            {'Sku': 'A,1', 'Warehouse': 'South "West"', 'Units': 5},
+            {'Sku': 'A,1', 'Warehouse': 'South "West"', 'Units': 0},
+            {'Sku': 'B', 'Warehouse': 'South "West"', 'Units': 8},
+        ]),
+        ('stock-csv-retains-field-values', {'op': 'external-parse', 'csv': '" SKU ",East,2\n"q""r",East,7'}, [
+            {'Sku': ' SKU ', 'Warehouse': 'East', 'Units': 2}, {'Sku': 'q"r', 'Warehouse': 'East', 'Units': 7},
+        ]),
+        ('stock-projection-latest-case-sensitive-wide-total', {'op': 'external-balance', 'rows': ledger, 'warehouse': 'west'},
+         {'total': 2147483656, 'unchanged': True}),
+        ('stock-composed-report', {'op': 'balance', 'warehouse': 'South "West"', 'csv': quoted}, {'total': 8}),
+    ]
+
+
+def triage_component_vectors():
+    def tickets(names):
+        return [{'id': ticket, 'severity': severity, 'owner': owner} for ticket, severity, owner in names]
+
+    rank = tickets([('low', 'low', 'Lee'), ('unknown1', 'none', None), ('high1', ' HIGH ', 'Jo'),
+                    ('critical', 'Critical', 'Lee'), ('high2', 'high', 'Jo'), ('normal', ' normal ', None),
+                    ('unknown2', '', None)])
+    group = tickets([('first', 'low', ' Dan '), ('second', 'high', 'dan'), ('third', 'normal', ' DANA'),
+                     ('blank', 'low', ''), ('null', 'low', None), ('space', 'low', '\t'),
+                     ('last', 'low', 'DaNa  '), ('safe-key', 'low', '__proto__')])
+    composed = tickets([('low', 'low', ' Lee '), ('middle', 'high', 'Jo'), ('blank', 'low', ' '),
+                        ('urgent', ' CRITICAL ', 'lee'), ('unassigned', 'HIGH', None), ('standard', 'normal', 'Lee')])
+    return [
+        ('preservation-triage-empty', {'op': 'queue', 'tickets': []}, {'owners': [], 'unassigned': []}),
+        ('triage-rank-stable-and-nonmutating', {'op': 'external-rank', 'tickets': rank},
+         {'ranked': [rank[i] for i in [3, 2, 4, 5, 0, 1, 6]], 'fresh': True, 'unchanged': True}),
+        ('triage-rank-empty-new-array', {'op': 'external-rank', 'tickets': []},
+         {'ranked': [], 'fresh': True, 'unchanged': True}),
+        ('triage-group-owner-normalization', {'op': 'external-group', 'tickets': group},
+         {'summary': {'owners': [{'name': 'Dan', 'ids': ['first', 'second']},
+                                  {'name': 'DANA', 'ids': ['third', 'last']}, {'name': '__proto__', 'ids': ['safe-key']}],
+                      'unassigned': ['blank', 'null', 'space']}, 'unchanged': True}),
+        ('triage-composed-report', {'op': 'queue', 'tickets': composed},
+         {'owners': [{'name': 'lee', 'ids': ['urgent', 'standard', 'low']}, {'name': 'Jo', 'ids': ['middle']}],
+          'unassigned': ['unassigned', 'blank']}),
+    ]
 
 
 def test_vectors(case, sandbox):
@@ -954,13 +1183,13 @@ def _evaluate_attempt(attempt):
     case = meta['case']
     scenario = case['scenario']
     invocation, builds = build_program(workspace, evidence / "build", case['language'], toolchain(plan),
-                                       python_typed_errors=scenario in {'atomic', 'month-report'})
+                                       scenario=scenario)
     checks = []
     performance = {'status':'UNVERIFIED','reason':'Independent applicability review/measurement required for non-benchmark-critical performance.'}
     build_ok = all(x["exit_code"] == 0 and not x["timed_out"] for x in builds if x.get('role')!='typecheck')
     typecheck=next((x for x in builds if x.get('role')=='typecheck'),None)
-    def exercise(label, text, expected):
-        raw = command([*invocation,text], evidence, 20)
+    def exercise(label, text, expected, *, program=invocation):
+        raw = command([*program,text], evidence, 20)
         observed = raw["stdout"].strip() if isinstance(expected, str) else parse_output(raw["stdout"])
         exit_code = PYTHON_EXCEPTION_EXITS.get(expected, 0) if isinstance(expected, str) else 0
         check = {"check":label,"input":text,"expected":expected,"observed":observed,"execution":raw,
@@ -970,6 +1199,17 @@ def _evaluate_attempt(attempt):
     if build_ok:
         if scenario == 'month-report':
             check_monthly_report(exercise, evidence)
+        elif scenario in COMPONENT_SOURCE_FILES:
+            vectors = stock_component_vectors() if scenario == 'stock-snapshot' else triage_component_vectors()
+            for label, request, expected in vectors:
+                exercise(label, json.dumps(request), expected)
+            public, public_builds = build_public_cli(workspace, evidence/'public-cli', case['language'], toolchain(plan))
+            builds.extend(public_builds)
+            if all(row['exit_code'] == 0 and not row['timed_out'] for row in public_builds):
+                _, request, expected = vectors[-1]
+                exercise('public-composed-report', json.dumps(request), expected, program=public)
+            else:
+                checks.append({'check': 'public-cli-build', 'passed': False})
         elif case["language"] == "python":
             store=evidence/'state.json'
             def event(events,expected,label): exercise(label,json.dumps({"op":"batch","store":str(store),"events":events}),expected)
@@ -1047,6 +1287,8 @@ def _evaluate_attempt(attempt):
     after=tree(workspace)
     baseline=meta['baseline']
     allowed={'rules.py','rules.ts','Rules.cs','rules.hpp'}
+    if scenario in COMPONENT_SOURCE_FILES:
+        allowed = set(COMPONENT_SOURCE_FILES[scenario])
     allowed.add('check_existing.py')
     if meta['case']['scenario']=='config':allowed.add('cli.ts')
     if meta['case']['scenario']=='transfer':allowed.add('Program.cs')
