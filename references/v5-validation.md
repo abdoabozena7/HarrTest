@@ -65,9 +65,10 @@ state before and after rejection, and asks reviewers to reproduce apparent
 inherited faults on the baseline. The consumed atomicity case is a development
 control with probes for malformed, false and true control values. The credit
 case that informed the transport change also moved to development. Two distinct
-existing-code cases replace them in the held set. The schedule still has eight
-development cases and 96 held slots, with 32 per arm. The replacement cases
-await live results.
+existing-code cases replace them in the held set. Two more replacements cover
+independent implementation scopes after the partitioning observation below.
+The schedule still has eight development cases and 96 held slots, with 32 per
+arm. The replacement cases await live results.
 At `ae28793`, the next candidate ran 477 tests in 259.549s with four skipped and
 zero failures. Independent review confirmed the new positive and adverse
 controls, the schedule, and the exclusion of the evaluator and corpus from the
@@ -95,6 +96,10 @@ multi-component existing-code cases. Copilot declared one implementation scope
 for both components in all seven. The retained schema2 plans and actual actor
 observations support this count. The two cases are now development evidence for
 scope planning. Later held comparisons must use distinct replacement cases.
+The replacement cases use distinct existing components with stable shared
+interfaces. Each component is checked independently, and the composed SDK and
+real CLI are checked after integration. The old-component tests replay on the
+baseline and candidate.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
