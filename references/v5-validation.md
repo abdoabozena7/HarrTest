@@ -145,6 +145,15 @@ that the TypeScript CLI accepted malformed UTF-8 bytes, and the C# repair also
 changed an unrelated inherited tenant lookup. These are retained development
 limitations, including where the narrower native Team gate passed.
 
+The next implementation added a draft scaffold from real baseline receipts and
+checks the exact Corporate root seal at first implementation admission when the
+Team plan opts in. A local schema-4 CLI control refused early dispatch, then
+admitted it on the original baseline and bound the handoff to the seal. The
+first live trial invoked the pinned project skill and passed the executable
+checks. Its coordinator nevertheless edited the project directly and created
+no Team or root. The admission check was never reached in that trial. The result
+documents a workflow bypass, rather than a Team or Corporate pass.
+
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
 Record source/current-config identities, raw tool results, model/subagent usage,

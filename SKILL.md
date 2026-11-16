@@ -5,6 +5,14 @@ description: Change software with evidence-based planning, scoped implementation
 
 # HarrTest V5 Corporate
 
+For an implementation request, start as coordinator. Record the baseline and
+open the [Team plan](references/production-teams.md) before the first product
+edit. Dispatch the actual implementation handoffs to native owners and keep
+the coordinator within its integration scope. For substantial work, complete
+the [Corporate pre-dispatch seal](references/corporate-workflow.md) first.
+When the plan, seal, or native worker capability is missing, keep that work
+unverified and continue with authorized discovery and setup.
+
 ## Start from the project
 
 Read VERSION and pin the local package for the task. Check upstream only when
@@ -49,10 +57,7 @@ testing/review worker through Team schema2. Record why the scope cannot usefully
 split. Keep its scope, baseline, checks and six layer verdicts in the QA evidence.
 Two separately testable responsibility changes require separate implementation
 owners and the corporate-v1 root, even when they fit one feature or share an API.
-Small size removes unnecessary implementation splits, not independent testing.
-The coordinator must not implement the narrow change itself and substitute its
-own tests for the independent worker. If delegation is actually unavailable,
-record that capability gap and leave native acceptance UNVERIFIED.
+Small changes still require independent testing on the integrated source.
 
 Split along existing component/interface boundaries. Agree on the interface first
 so matching implementation scopes can run in parallel. A real dependency waits
