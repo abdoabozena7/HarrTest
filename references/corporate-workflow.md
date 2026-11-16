@@ -154,14 +154,21 @@ remove it when the session ends. Existing hook files and both legacy and narrow
 Team workflows use their existing configuration.
 
 For that checkout and session, the hook denies supported native editor actions
-on product files until `team.py packets` admits the reviewed Corporate root. It
-compares fixed admission documents and permits normal Copilot permission handling
-for other calls, including inspection and writing private `.runtime-proof`
-artifacts. The Team and root commands still verify full source, selected checks,
-real ownership and QA. Shell, MCP and manual writes remain under their own host
-permissions. The hook depends on Copilot loading the local fragment and returning
-a decision before its timeout. Copilot timeouts proceed through the normal
-permission flow. [GitHub Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)
+on product files and parent `task` dispatch until `team.py packets` admits the
+reviewed Corporate root. Use the same pinned HarrTest package for the hook and
+the Team commands. Before sealing, pass the exact returned `plan_review` name
+and message as the reviewer task's `name` and `prompt`. Use a supported built-in
+review worker (`general-purpose` or `task`) that can save private evidence. The
+coordinator's direct inspection and private `.runtime-proof` writes continue
+through normal permissions. The installed Copilot CLI 1.0.104 Explore profile
+also exposes shell tools, so it needs the same admission as other worker tasks.
+
+The hook compares fixed admission documents in the enrolled parent session.
+Child sessions have separate native identities. The Team and root commands
+verify child work, source, selected checks, real ownership and QA. Shell, MCP and
+manual writes follow their host permissions. The hook depends on Copilot loading
+the local fragment and returning a decision before its timeout. Copilot timeouts
+proceed through the normal permission flow. [GitHub Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)
 
 ## Execute, review and verify
 

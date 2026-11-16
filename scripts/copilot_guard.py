@@ -1,4 +1,4 @@
-"""Optional Copilot CLI preToolUse check for admitted Corporate edits."""
+"""Optional Copilot CLI preToolUse check for Corporate edits and dispatch."""
 from __future__ import annotations
 
 import argparse
@@ -14,6 +14,8 @@ import strict_io
 
 
 WRITERS = ('create', 'edit', 'apply_patch', 'str_replace_editor')
+GUARDED_TOOLS = (*WRITERS, 'task')
+TASK_FIELDS = {'name', 'agent_type', 'mode', 'prompt', 'description', 'model', 'reasoning_effort'}
 PATCH_DIRECTIVES = ('*** Add File: ', '*** Update File: ', '*** Delete File: ', '*** Move to: ')
 MAX_EVENT_BYTES = 2_000_000
 
@@ -127,35 +129,80 @@ def deny(reason):
     return {'permissionDecision': 'deny', 'permissionDecisionReason': 'HarrTest: ' + reason}
 
 
+def exact_plan_review(project, goal, args):
+    """Allow the private review packet from the current registered Team."""
+    if (not isinstance(args, dict) or args.keys() - TASK_FIELDS or args.get('name') != 'plan_review'
+            or args.get('agent_type') not in ('general-purpose', 'task')
+            or args.get('mode', 'sync') not in ('sync', 'background')
+            or not all(isinstance(value, str) for value in args.values())):
+        return False
+    import team
+    import team_v2
+
+    state_path = corporate.path(project, f'{proof.STATE}/teams/{goal}/state.json')
+    if not state_path.is_file() or state_path.stat().st_size > corporate.MAX_DOCUMENT:
+        return False
+    state = team.load_state(project, goal)
+    plan = state['plan']
+    if (plan.get('schema') != 2 or plan.get('host', {}).get('kind') != 'copilot'
+            or plan.get('decomposition') != 'reviewed-v1' or plan.get('root_protocol') != corporate.PROTOCOL):
+        return False
+    original = corporate.path(project, f'{proof.STATE}/root-goals/{goal}/original-request.txt')
+    if not original.is_file() or original.stat().st_size > corporate.MAX_DOCUMENT:
+        return False
+    team.binding(project, goal, proof.file_hash(original))
+    packet = team_v2.plan_review_packet(project, state)
+    return args.get('prompt') == packet['message'] and team.snapshot(project, state['baseline']) == state['baseline']
+
+
+def ready(project, goal):
+    try:
+        return admission_is_current(project, goal)
+    except (ValueError, TypeError, KeyError, AttributeError, OSError, proof.ProofError):
+        return False
+
+
+def decide_task(project, goal, args):
+    if ready(project, goal):
+        return {}
+    try:
+        if isinstance(args, str):
+            args = strict_io.loads(args)
+        if exact_plan_review(project, goal, args):
+            return {}
+    except (ValueError, TypeError, KeyError, AttributeError, OSError, RecursionError, proof.ProofError):
+        pass
+    return deny(f'Before dispatching a worker for {goal}, seal the reviewed Corporate root and run '
+                f'team.py packets --team {goal}. Before sealing, dispatch only the exact plan_review '
+                'packet returned by Team init.')
+
+
 def decide(project, goal, session, event):
-    if not isinstance(event, dict) or event.get('sessionId') != session or event.get('toolName') not in WRITERS:
+    if not isinstance(event, dict) or event.get('sessionId') != session or event.get('toolName') not in GUARDED_TOOLS:
         return {}
     try:
         cwd = Path(event['cwd'])
         if not cwd.is_absolute():
-            return deny('The native edit did not report an absolute project directory.')
+            return deny('The native action did not report an absolute project directory.')
         cwd = cwd.resolve()
         if not cwd.is_relative_to(project):
             return {}
+        if event['toolName'] == 'task':
+            return decide_task(project, goal, event.get('toolArgs'))
         paths = targets(event['toolName'], event['toolArgs'])
         # Resolve every path before deciding, including patch move destinations.
         product_paths = [product_target(project, cwd, name) for name in paths]
     except (ValueError, TypeError, KeyError, OSError, RuntimeError):
         return deny('The native edit did not report usable file paths.')
-    if not any(product_paths):
+    if not any(product_paths) or ready(project, goal):
         return {}
-    try:
-        if admission_is_current(project, goal):
-            return {}
-    except (ValueError, TypeError, KeyError, AttributeError, OSError, proof.ProofError):
-        pass
     return deny(f'Seal the independently reviewed Corporate root for {goal} and run '
                 f'team.py packets --team {goal} before editing product files.')
 
 
 def config(project, goal, session):
     return {'version': 1, 'hooks': {'preToolUse': [{
-        'type': 'command', 'matcher': '|'.join(WRITERS), 'exec': sys.executable,
+        'type': 'command', 'matcher': '|'.join(GUARDED_TOOLS), 'exec': sys.executable,
         'args': ['-B', str(Path(__file__).resolve()), 'pre-tool', '--project', str(project),
                  '--goal', goal, '--session', session],
         'timeoutSec': 5,

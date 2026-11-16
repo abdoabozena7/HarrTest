@@ -37,7 +37,7 @@ class CopilotGuardTests(unittest.TestCase):
         self.denied(self.event('str_replace_editor', {'command': 'undo_edit', 'path': 'src/service.py'}))
 
     def test_normal_host_permissions_handle_passive_and_non_enrolled_calls(self):
-        for name in ('view', 'grep', 'glob', 'powershell', 'bash', 'task'):
+        for name in ('view', 'grep', 'glob', 'powershell', 'bash'):
             with self.subTest(tool=name):
                 self.assertEqual(self.decide(self.event(name)), {})
         self.assertEqual(self.decide(self.event('str_replace_editor', {'command': 'view', 'path': 'x'})), {})
@@ -50,6 +50,19 @@ class CopilotGuardTests(unittest.TestCase):
         self.assertEqual(self.decide(self.event('edit', {'path': str(self.project / '.runtime-proof/review.txt')})), {})
         self.denied(self.event('create', {'path': '.runtime-proof-other/file'}))
         self.denied(self.event('create', {'path': '.runtime-proof/../actual.py'}))
+
+    def test_parent_blocks_unauthorized_worker_dispatch_before_children_start(self):
+        dispatch = {'name': 'component', 'agent_type': 'general-purpose', 'mode': 'background',
+                    'description': 'Synthetic component', 'prompt': 'Change the fixture component.'}
+        for name in ('component', 'qa', 'plan_review', 'explore'):
+            with self.subTest(name=name):
+                args = {**dispatch, 'name': name,
+                        'agent_type': 'explore' if name == 'explore' else 'general-purpose'}
+                self.denied(self.event('task', args))
+                self.denied(self.event('task', json.dumps(args)))
+        self.denied(self.event('task', 'unstructured task'))
+        self.assertEqual(self.decide({**self.event('task', dispatch), 'sessionId': str(uuid4())}), {})
+        self.assertEqual(self.decide({**self.event('task', dispatch), 'cwd': str(self.project.parent)}), {})
 
     def test_raw_native_apply_patch_checks_all_files_and_move_destinations(self):
         # The input is a plain multiline string in the retained Copilot
@@ -80,6 +93,7 @@ class CopilotGuardTests(unittest.TestCase):
         generated = subprocess.run(command, capture_output=True, text=True, check=True)
         hook = json.loads(generated.stdout)['hooks']['preToolUse'][0]
         self.assertIn('apply_patch', hook['matcher'].split('|'))
+        self.assertIn('task', hook['matcher'].split('|'))
         self.assertEqual(hook['exec'], sys.executable)
         result = subprocess.run([hook['exec'], *hook['args']], input=json.dumps(self.event()),
                                 capture_output=True, text=True, check=True)
@@ -89,13 +103,38 @@ class CopilotGuardTests(unittest.TestCase):
                                   capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(inactive.stdout), {})
 
-    def test_current_real_team_admission_and_stale_records(self):
+    def registered_team(self):
         data = fixture.CorporateTests('test_actual_runtime_and_all_quality_rows_pass')
         self.addCleanup(data.tearDown)
         data.setUp()
         data.team_plan['host'] = {'kind': 'copilot'}
         goal, state, _ = data.reviewed_draft()
         self.project, self.goal = data.project, goal.name
+        return data, goal, state
+
+    def test_only_the_registered_review_packet_can_dispatch_before_sealing(self):
+        data, goal, state = self.registered_team()
+        packet = fixture.team_v2.plan_review_packet(self.project, state)
+        args = {'name': packet['task_name'], 'prompt': packet['message'], 'agent_type': 'general-purpose',
+                'description': 'Inspect the registered scope', 'mode': 'background',
+                'model': 'fixture-model', 'reasoning_effort': 'low'}
+        self.assertEqual(self.decide(self.event('task', args)), {})
+        self.assertEqual(self.decide(self.event('task', json.dumps(args))), {})
+        for changes in ({'prompt': args['prompt'] + '\nEdit the product.'}, {'name': 'reviewer'},
+                        {'agent_type': 'custom-reviewer'}, {'mode': 'resume'}, {'cwd': str(self.project.parent)},
+                        {'resume_agent_id': 'another-worker'}, {'model': None}):
+            with self.subTest(changes=list(changes)):
+                self.denied(self.event('task', {**args, **changes}))
+        original = goal / 'original-request.txt'
+        request_bytes = original.read_bytes()
+        original.write_text('A different request for the same fixture project.')
+        self.denied(self.event('task', args))
+        original.write_bytes(request_bytes)
+        data.source.write_text('New code appeared before Corporate admission.\n')
+        self.denied(self.event('task', args))
+
+    def test_current_real_team_admission_and_stale_records(self):
+        data, goal, state = self.registered_team()
         fixture.corporate.scaffold(goal, 'verify', ['baseline'], 'calculator-owner')
         data.fill_reviewed_draft(goal, state)
         root = subprocess.run([sys.executable, '-B', str(fixture.ROOT / 'scripts/root_gate.py'),
@@ -110,6 +149,11 @@ class CopilotGuardTests(unittest.TestCase):
         admission_path = self.project / f'.runtime-proof/teams/{self.goal}/corporate-dispatch.json'
         self.assertTrue(admission_path.is_file())
         self.assertEqual(self.decide(self.event()), {})
+        dispatch = self.event('task', {'name': 'component', 'agent_type': 'general-purpose',
+                                      'description': 'Fixture implementation task', 'mode': 'background',
+                                      'prompt': 'Implement the now admitted fixture change.'})
+        self.assertEqual(self.decide(dispatch), {})
+        self.assertEqual(self.decide(self.event('task', 'unsupported future task envelope')), {})
         checks = (admission_path, goal / 'root-seal.json', goal / 'corporate-plan.json',
                   self.project / f'.runtime-proof/teams/{self.goal}/receipts/plan_review.json')
         for location in checks:
@@ -119,8 +163,10 @@ class CopilotGuardTests(unittest.TestCase):
                 report['drift'] = 'changed after admission'
                 proof.save(location, report)
                 self.denied(self.event())
+                self.denied(dispatch)
                 location.write_bytes(old)
                 self.assertEqual(self.decide(self.event()), {})
+                self.assertEqual(self.decide(dispatch), {})
 
 
 if __name__ == '__main__':
