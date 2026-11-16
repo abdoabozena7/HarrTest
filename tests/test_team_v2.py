@@ -499,6 +499,85 @@ class ExistingCodeTeam(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'another request'):
             team.binding(self.project, 'fix', '0' * 64)
 
+    def root_request_fixture(self):
+        reviewed_plan(self.plan)
+        self.plan['root_protocol'] = 'corporate-v1'
+        self.plan.pop('request')
+        goal = self.project / '.runtime-proof/root-goals/fix'
+        goal.mkdir(parents=True)
+        original = goal / 'original-request.txt'
+        original.write_bytes('Repair addition while preserving the existing signed integer interface.\r\n'
+                             'Report the café example and preserve whitespace.\r\n'.encode('utf-8'))
+        return original
+
+    def cli_init(self, *, from_root):
+        draft = self.project / '.runtime-proof/team-plan.json'
+        proof.save(draft, self.plan)
+        command = [sys.executable, '-B', str(REPO / 'scripts/team.py'), '--project', str(self.project),
+                   'init', '--plan', draft.relative_to(self.project).as_posix()]
+        if from_root:
+            command.append('--request-from-root')
+        result = subprocess.run(command, capture_output=True, encoding='utf-8')
+        return result, draft
+
+    def test_root_request_option_preserves_the_exact_saved_request_and_binding(self):
+        original = self.root_request_fixture()
+        saved = original.read_bytes()
+        run, draft = self.cli_init(from_root=True)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        packets = json.loads(run.stdout)
+        state = team.load_state(self.project, 'fix')
+        self.assertEqual(state['plan']['request'].encode('utf-8'), saved)
+        self.assertEqual(original.read_bytes(), saved)
+        self.assertNotIn('request', proof.load(draft))
+        self.assertEqual(packets['plan_review'], team_v2.plan_review_packet(self.project, state))
+        self.assertEqual(packets['ready'], [])
+        self.assertEqual(team.binding(self.project, 'fix', proof.file_hash(original))['plan_sha256'],
+                         state['plan_sha256'])
+        with self.assertRaisesRegex(ValueError, 'another request'):
+            team.binding(self.project, 'fix', hashlib.sha256(saved.rstrip()).hexdigest())
+
+    def test_root_request_option_refuses_trim_equivalent_but_conflicting_text(self):
+        original = self.root_request_fixture()
+        self.plan['request'] = original.read_bytes().decode('utf-8').rstrip()
+        run, draft = self.cli_init(from_root=True)
+        self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+        self.assertIn('differs from the saved original request', run.stdout)
+        self.assertEqual(proof.load(draft), self.plan)
+        self.assertFalse(team.team_path(self.project, 'fix', must_exist=False).exists())
+
+    def test_root_request_option_requires_the_same_goal_and_an_unsealed_attempt(self):
+        original = self.root_request_fixture()
+        self.plan['id'] = 'other-goal'
+        missing, _ = self.cli_init(from_root=True)
+        self.assertEqual(missing.returncode, 2, missing.stdout + missing.stderr)
+        self.assertFalse(team.team_path(self.project, 'other-goal', must_exist=False).exists())
+        self.plan['id'] = 'fix'
+        seal = original.parent / 'root-seal.json'
+        proof.save(seal, {'root_hash': 'a' * 64})
+        sealed, _ = self.cli_init(from_root=True)
+        self.assertEqual(sealed.returncode, 2, sealed.stdout + sealed.stderr)
+        self.assertIn('already sealed', sealed.stdout)
+        self.assertFalse(team.team_path(self.project, 'fix', must_exist=False).exists())
+        seal.unlink()
+        initial, _ = self.cli_init(from_root=True)
+        self.assertEqual(initial.returncode, 0, initial.stdout + initial.stderr)
+        state_path = team.team_path(self.project, 'fix')
+        state = state_path.read_bytes()
+        duplicate, _ = self.cli_init(from_root=True)
+        self.assertEqual(duplicate.returncode, 2, duplicate.stdout + duplicate.stderr)
+        self.assertIn('already registered', duplicate.stdout)
+        self.assertEqual(state_path.read_bytes(), state)
+
+    def test_explicit_team_request_works_without_a_root_and_option_is_corporate_only(self):
+        rejected, _ = self.cli_init(from_root=True)
+        self.assertEqual(rejected.returncode, 2, rejected.stdout + rejected.stderr)
+        self.assertIn('requires a reviewed Corporate Team schema 2 plan', rejected.stdout)
+        explicit, _ = self.cli_init(from_root=False)
+        self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
+        state = team.load_state(self.project, 'fix')
+        self.assertEqual(state['plan']['request'], self.plan['request'])
+
 
 class CodexAdapter(unittest.TestCase):
     """Controlled durable host format tests on top of real subprocess checks."""

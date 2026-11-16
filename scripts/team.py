@@ -1214,13 +1214,38 @@ def verify_registered(project, team_id, *, require_qa=True, parent=None, session
         time.sleep(min(0.2, remaining))
 
 
+def request_from_root(project, plan):
+    """Bind an unregistered Corporate plan to its existing original request."""
+    from root_gate import ROOT_DIR
+
+    require(isinstance(plan, dict) and type(plan.get('schema')) is int and plan['schema'] == 2
+            and plan.get('root_protocol') == 'corporate-v1' and plan.get('decomposition') == 'reviewed-v1',
+            '--request-from-root requires a reviewed Corporate Team schema 2 plan')
+    team_id = plan.get('id')
+    proof.identifier(team_id, 'Corporate Team and root goal ID')
+    require(not team_path(project, team_id, must_exist=False).exists(),
+            'The Team plan is already registered. Continue with its existing state.')
+    root = strict_io.scoped_path(project, f'{proof.STATE}/{ROOT_DIR}/{team_id}')
+    seal = strict_io.scoped_path(root, 'root-seal.json', must_exist=False)
+    require(not seal.exists(), 'The Corporate root is already sealed. Keep its bound Team state.')
+    original = strict_io.scoped_path(root, 'original-request.txt')
+    require(original.is_file(), 'The matching Corporate root needs an original request file')
+    request = original.read_bytes().decode('utf-8')
+    require('request' not in plan or plan['request'] == request,
+            'The Team request differs from the saved original request. Omit request when using --request-from-root.')
+    return {**plan, 'request': request}
+
+
 def main(argv=None):
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project', type=Path, default=Path('.'))
     commands = parser.add_subparsers(dest='command', required=True)
-    commands.add_parser('init').add_argument('--plan', required=True)
+    initialize = commands.add_parser('init')
+    initialize.add_argument('--plan', required=True)
+    initialize.add_argument('--request-from-root', action='store_true',
+                            help='Copy the saved original request into a new reviewed Corporate Team plan')
     for action in ('packets', 'handoff', 'integrate', 'check', 'review', 'repair', 'verify', 'review-plan'):
         command = commands.add_parser(action)
         command.add_argument('--team', required=True)
@@ -1244,7 +1269,10 @@ def main(argv=None):
     project = args.project.resolve()
     try:
         if args.command == 'init':
-            result = init(project, proof.load(strict_io.scoped_path(project, args.plan)))
+            plan = proof.load(strict_io.scoped_path(project, args.plan))
+            if args.request_from_root:
+                plan = request_from_root(project, plan)
+            result = init(project, plan)
         elif args.command == 'verify':
             result = verify_registered(project, args.team, require_qa=not args.production_only,
                                        parent=args.parent, sessions=args.sessions, wait_seconds=args.wait_seconds)

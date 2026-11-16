@@ -39,8 +39,17 @@ a post-change snapshot must never be relabeled baseline.
 
 Register Team schema 2 with `decomposition: "reviewed-v1"` and
 `root_protocol: "corporate-v1"` on this substantive route. Use the same Team
-ID and root goal ID. After the integration proof contract is sealed and the
-actual baseline checks have run, create the drafts from those records.
+ID and root goal ID. Omit `request` from the Team plan and initialize it from
+the saved original request.
+
+```text
+python <skill>/scripts/team.py --project . init --plan .runtime-proof/team-plan.json --request-from-root
+```
+
+The registered Team state retains the saved request, including trailing whitespace.
+The input plan file remains available as the draft. When the integration proof
+contract is sealed and the actual baseline checks have run, create the Corporate
+drafts from those records.
 
 ```text
 python <skill>/scripts/corporate.py scaffold --goal .runtime-proof/root-goals/mission --proof-task verify --baseline-check preserved-behavior --author coordinating-planner
