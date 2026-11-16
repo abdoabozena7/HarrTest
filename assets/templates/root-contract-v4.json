@@ -33,7 +33,7 @@
     "scope": "REPLACE_ME full current-source changed and preserved behavior"
   },
   "corporate": {
-    "plan": ".runtime-proof/corporate-plan.json",
-    "report": ".runtime-proof/corporate-report.json"
+    "plan": ".runtime-proof/root-goals/mission/corporate-plan.json",
+    "report": ".runtime-proof/root-goals/mission/corporate-report.json"
   }
 }

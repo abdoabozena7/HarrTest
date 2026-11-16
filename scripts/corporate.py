@@ -564,6 +564,128 @@ def check(project, goal, contract):
         return {'passed': False, 'status': 'UNVERIFIED', 'layers': outcomes, 'errors': [str(exc)]}
 
 
+def goal_project(goal):
+    from root_gate import ROOT_DIR
+
+    goal = Path(goal).absolute()
+    require(goal.parent.name == ROOT_DIR and goal.parent.parent.name == proof.STATE,
+            'Use a root goal under the project .runtime-proof/root-goals directory')
+    project = goal.parents[2].resolve()
+    proof.identifier(goal.name, 'Root goal ID')
+    return project, path(project, f'{proof.STATE}/{ROOT_DIR}/{goal.name}')
+
+
+def scaffold(goal, proof_task, baseline_checks, author):
+    """Create draft documents from actual registered inputs and execution evidence."""
+    import coverage
+    import root_gate
+    import team
+
+    project, goal = goal_project(goal)
+    require(not any((goal / name).exists() for name in ('root-contract.json', 'corporate-plan.json', 'root-seal.json')),
+            'A Corporate draft or seal already exists. Continue with that attempt.')
+    text(author, 'Actual planner identity')
+    original = path(goal, 'original-request.txt')
+    request_sha256 = proof.file_hash(original)
+    state = team.load_state(project, goal.name)
+    team_plan = state['plan']
+    require(team_plan.get('schema') == 2 and team_plan.get('root_protocol') == PROTOCOL
+            and team_plan.get('decomposition') == root_gate.REVIEWED_TEAM,
+            'Register a reviewed Team schema 2 with root_protocol corporate-v1 first')
+    binding = team.binding(project, goal.name, request_sha256)
+    proof.identifier(proof_task, 'Integration proof task')
+    require(proof_task != goal.name, 'Use a separate proof task for integration')
+    task = path(project, f'{proof.STATE}/{proof_task}')
+    _, actual_project, child = proof.task_context(task)
+    require(actual_project == project and child['task_id'] == proof_task, 'Proof task does not belong to this project')
+    root_gate.require_team_sources(project, child, root_gate.team_outputs(binding))
+    source_paths = child['source_paths']
+    baseline_source = source_snapshot(project, source_paths)
+    require(all(baseline_source['files'].get(rel) == digest for rel, digest in state['baseline'].items()),
+            'Current source differs from the registered Team baseline')
+    require(baseline_checks and len(baseline_checks) == len(set(baseline_checks)),
+            'Select distinct actual baseline checks')
+    refs, known_failures, ended = [], [], []
+    for check_id in baseline_checks:
+        proof.identifier(check_id, 'Baseline check ID')
+        proof.get_check(child, check_id)
+        latest = document(path(task, f'latest/{check_id}.json'))
+        run = path(task, latest['run'])
+        receipt = (run / 'receipt.json').relative_to(project).as_posix()
+        ref = execution_reference(project, receipt)
+        observed = execution(project, ref, baseline_source, latest=True)
+        require(observed['selector'] == (proof_task, check_id), 'Baseline selection resolves to another check')
+        refs.append(ref)
+        ended.append(instant(observed['receipt']['ended_at']))
+        if not observed['passed']:
+            known_failures.append({'receipt_sha256': ref['sha256'], 'reason': None, 'review': None})
+    requirements = [{'id': rid, 'impacts': [], 'tasks': [owner['id'] for owner in team_plan['tasks']
+                     if rid in owner['outcomes']]} for rid in team_plan['outcomes']]
+    contract = proof.load(proof.SKILL / 'assets/templates/root-contract-v4.json')
+    contract.update({'goal_id': goal.name, 'production_team': goal.name, 'request_sha256': request_sha256,
+                     'scope_statement': None, 'coverage_review': None,
+                     'request_segments': coverage.inventory(original.read_text(encoding='utf-8')),
+                     'coverage_challenge': {'file': 'coverage-review.json', 'sha256': None},
+                     'requirements': [{'id': row['id'], 'claim': None, 'oracle': None, 'source': None,
+                                       'source_excerpt': None, 'evidence_mode': None, 'satisfiers': []}
+                                      for row in requirements],
+                     'integration': {'task_id': proof_task, 'requirement_id': None, 'scope': None},
+                     'corporate': {field: (goal / f'corporate-{field}.json').relative_to(project).as_posix()
+                                   for field in ('plan', 'report')}})
+    plan = {'schema': 1, 'request_sha256': request_sha256, 'author': author,
+            'created_at': proof.now(), 'source_paths': source_paths, 'context': [],
+            'requirements': requirements, 'decisions': [], 'edge_cases': [],
+            'tasks': [{key: owner[key] for key in ('id', 'outputs', 'depends_on')}
+                      for owner in team_plan['tasks']],
+            'baseline': {'source': baseline_source, 'checks': refs,
+                         'captured_at': max(ended).isoformat(), 'known_failures': known_failures},
+            'layers': [{'id': name, 'applicable': True if name in CORE_LAYERS else None,
+                        'rationale': None, 'evidence': [], 'criteria': [], 'metrics': []} for name in LAYERS]}
+    root_path, plan_path = goal / 'root-contract.json', goal / 'corporate-plan.json'
+    proof.save(plan_path, plan, exclusive=True)
+    proof.save(root_path, contract, exclusive=True)
+    return {'status': 'DRAFT_UNVERIFIED', 'root': str(root_path), 'plan': str(plan_path),
+            'proof_requirements': [row['id'] for row in child['requirements']],
+            'proof_checks': [row['id'] for row in child['checks']],
+            'unfilled': ['Root scope, requirement meaning and proof links, request-span mapping',
+                         'Cited context, impacted paths, decisions, and resolved edge cases',
+                         'Layer applicability, rationale, criteria, and applicable performance limits',
+                         'Independent request coverage and Team review']
+                        + (['Independent review of recorded baseline failures'] if known_failures else [])}
+
+
+def coverage_input(goal):
+    _, goal = goal_project(goal)
+    root = document(path(goal, 'root-contract.json'))
+    return {'request_sha256': proof.file_hash(path(goal, 'original-request.txt')),
+            'segments_sha256': proof.digest(root['request_segments']),
+            'acceptance_sha256': proof.digest({key: root[key] for key in ('requirements', 'integration')})}
+
+
+def bind_coverage(goal):
+    """Link a reviewer-authored artifact after validating it against the draft."""
+    import coverage
+
+    project, goal = goal_project(goal)
+    require(not (goal / 'root-seal.json').exists(), 'The root is already sealed')
+    root_path = path(goal, 'root-contract.json')
+    root = document(root_path)
+    require(root.get('schema') == 4 and root.get('protocol') == PROTOCOL,
+            'Use a Corporate root draft')
+    review_file = path(goal, 'coverage-review.json')
+    review = document(review_file)
+    expected = coverage_input(goal)
+    require(root.get('request_sha256') == expected['request_sha256'], 'Original request differs from the draft')
+    require(all(review.get(key) == value for key, value in expected.items()),
+            'Coverage review does not match the current request, span mapping and acceptance scope')
+    root['coverage_challenge'] = {'file': review_file.name, 'sha256': proof.file_hash(review_file)}
+    coverage.validate(path(goal, 'original-request.txt').read_text(encoding='utf-8'), root, goal)
+    root['coverage_review'] = {'method': review['method'], 'rationale': review['observations'],
+                               'unmapped_segments': []}
+    proof.save(root_path, root)
+    return {'status': 'COVERAGE_LINKED', 'root': str(root_path), 'root_sealed': False}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -573,14 +695,28 @@ def main():
     receipt = sub.add_parser('execution-ref')
     receipt.add_argument('--project', type=Path, required=True)
     receipt.add_argument('--receipt', required=True)
+    draft = sub.add_parser('scaffold')
+    draft.add_argument('--goal', type=Path, required=True)
+    draft.add_argument('--proof-task', required=True)
+    draft.add_argument('--baseline-check', action='append', required=True)
+    draft.add_argument('--author', required=True)
+    for command in ('coverage-input', 'bind-coverage'):
+        sub.add_parser(command).add_argument('--goal', type=Path, required=True)
     args = parser.parse_args()
     try:
-        project = args.project.resolve()
-        result = (source_snapshot(project, args.source) if args.command == 'snapshot'
-                  else execution_reference(project, args.receipt))
+        if args.command == 'scaffold':
+            result = scaffold(args.goal, args.proof_task, args.baseline_check, args.author)
+        elif args.command == 'coverage-input':
+            result = coverage_input(args.goal)
+        elif args.command == 'bind-coverage':
+            result = bind_coverage(args.goal)
+        elif args.command == 'snapshot':
+            result = source_snapshot(args.project.resolve(), args.source)
+        else:
+            result = execution_reference(args.project.resolve(), args.receipt)
         print(json.dumps(result, indent=2))
         return 0
-    except (ValueError, OSError, proof.ProofError) as exc:
+    except (ValueError, OSError, KeyError, TypeError, proof.ProofError) as exc:
         print(str(exc))
         return 2
 

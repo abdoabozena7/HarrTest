@@ -20,7 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import corporate
 import proof
+import root_gate
 import team
+import team_v2
 
 
 class CorporateTests(unittest.TestCase):
@@ -651,6 +653,120 @@ class CorporateTests(unittest.TestCase):
         (self.project / 'src/obsolete.py').write_text('unexpected resurrection = 1\n')
         with self.assertRaisesRegex(ValueError, 'source scope'):
             corporate.execution(self.project, after_ref, corporate.source_snapshot(self.project, sources))
+
+    def reviewed_draft(self):
+        """Real baseline subprocess plus a distinct, unimplemented Team plan."""
+        self.source.write_text(self.source.read_text().replace('total(a, b=0)', 'total(a, b)'), encoding='utf-8')
+        baseline = self.run_check('baseline')
+        goal = self.project / '.runtime-proof/root-goals/reviewed-change'
+        goal.mkdir()
+        shutil.copyfile(self.goal / 'original-request.txt', goal / 'original-request.txt')
+        reviewed = copy.deepcopy(self.team_plan)
+        reviewed.update(id=goal.name, decomposition='reviewed-v1', root_protocol='corporate-v1',
+                        scope_rationale='One owner is necessary because the callable signature and default share a file.')
+        reviewed['tasks'][0].update(responsibility='Preserve the existing calculator and add its default operand.',
+            interface='The public total function accepts one or two operands and returns their integer sum.',
+            check='Execute the actual calculator for both old and new call signatures.',
+            scope_evidence=['src/calc.py'], dependency_rationale={})
+        team.init(self.project, reviewed)
+        state = team.load_state(self.project, goal.name)
+        return goal, state, baseline
+
+    def fill_reviewed_draft(self, goal, state):
+        root_path = goal / 'root-contract.json'
+        root = proof.load(root_path)
+        for key in ('scope_statement', 'request_segments', 'requirements', 'integration'):
+            root[key] = self.root[key]
+        proof.save(root_path, root)
+        plan_path = goal / 'corporate-plan.json'
+        plan = proof.load(plan_path)
+        for key in ('context', 'requirements', 'decisions', 'edge_cases', 'layers'):
+            plan[key] = self.plan[key]
+        proof.save(plan_path, plan)
+        review = {**corporate.coverage_input(goal), 'method': 'fresh-context-agent',
+                  'planner': plan['author'], 'reviewer': 'controlled-coverage-reviewer',
+                  'unresolved_findings': [], 'verdict': 'covered',
+                  'observations': 'Controlled review inspected the complete request and preserved arithmetic contract.'}
+        proof.save(goal / 'coverage-review.json', review)
+        bound = corporate.bind_coverage(goal)
+        self.assertFalse(bound['root_sealed'])
+        evidence = f'.runtime-proof/teams/{goal.name}/controlled-plan-review.txt'
+        (self.project / evidence).write_text(
+            'Controlled fixture reviewed the actual calculator file, its preserved signature and sole file ownership.',
+            encoding='utf-8')
+        team_v2.review_plan(self.project, state, evidence, 'pass')
+
+    def test_scaffold_uses_real_baseline_and_requires_semantic_and_team_review_before_dispatch(self):
+        goal, state, baseline = self.reviewed_draft()
+        cmd = [sys.executable, '-B', str(ROOT / 'scripts/corporate.py'), 'scaffold',
+               '--goal', str(goal), '--proof-task', 'verify', '--baseline-check', 'baseline',
+               '--author', 'calculator-owner']
+        report = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(report.returncode, 0, report.stderr + report.stdout)
+        self.assertEqual(json.loads(report.stdout)['status'], 'DRAFT_UNVERIFIED')
+        draft = proof.load(goal / 'corporate-plan.json')
+        self.assertEqual(draft['baseline']['checks'], [self.ref(baseline)])
+        self.assertEqual(draft['baseline']['source'], baseline['source_before'])
+        self.assertEqual(draft['tasks'], [{'id': 'calculator', 'outputs': ['src/calc.py'], 'depends_on': []}])
+        self.assertEqual({row['id'] for row in draft['layers']}, set(corporate.LAYERS))
+        self.assertIsNone(draft['layers'][3]['applicable'])
+        self.assertFalse((goal / 'root-seal.json').exists())
+        self.assertFalse((goal / 'coverage-review.json').exists())
+        with self.assertRaisesRegex(proof.ProofError, 'needs a sealed schema-4 root'):
+            root_gate.require_corporate_dispatch(self.project, state, baseline_current=True)
+        seal = [sys.executable, '-B', str(ROOT / 'scripts/root_gate.py'), 'seal', '--goal', str(goal)]
+        rejected = subprocess.run(seal, capture_output=True, text=True)
+        self.assertEqual(rejected.returncode, 2, rejected.stdout + rejected.stderr)
+        repeated = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(repeated.returncode, 2, repeated.stdout + repeated.stderr)
+        self.assertEqual(proof.load(goal / 'corporate-plan.json'), draft)
+        self.fill_reviewed_draft(goal, state)
+        accepted = subprocess.run(seal, capture_output=True, text=True)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        bound = root_gate.require_corporate_dispatch(self.project, state, baseline_current=True)
+        self.assertEqual(bound['team_state_sha256'], state['state_sha256'])
+        self.assertEqual(bound['sealed_at'], proof.load(goal / 'root-seal.json')['sealed_at'])
+        # A later owner can use the frozen plan after another owner changed files.
+        self.source.write_text(self.source.read_text().replace('total(a, b)', 'total(a, b=0)'), encoding='utf-8')
+        self.assertEqual(root_gate.require_corporate_dispatch(self.project, state, baseline_current=False), bound)
+        with self.assertRaisesRegex(proof.ProofError, 'Source changed before Corporate dispatch'):
+            root_gate.require_corporate_dispatch(self.project, state, baseline_current=True)
+
+    def test_dispatch_refuses_changed_review_binding_and_changed_checker(self):
+        goal, state, _ = self.reviewed_draft()
+        corporate.scaffold(goal, 'verify', ['baseline'], 'calculator-owner')
+        self.fill_reviewed_draft(goal, state)
+        sealed = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/root_gate.py'),
+                                 'seal', '--goal', str(goal)], capture_output=True, text=True)
+        self.assertEqual(sealed.returncode, 0, sealed.stdout + sealed.stderr)
+        seal_path = goal / 'root-seal.json'
+        original = proof.load(seal_path)
+        tampered = copy.deepcopy(original)
+        tampered['reviewed_team']['review_sha256'] = '0' * 64
+        proof.save(seal_path, tampered)
+        with self.assertRaisesRegex(proof.ProofError, 'review differs'):
+            root_gate.require_corporate_dispatch(self.project, state, baseline_current=True)
+        proof.save(seal_path, original)
+        child = proof.load(self.task / 'contract.json')
+        child['checks'][1]['assertions'][0]['value'] = 999
+        proof.save(self.task / 'contract.json', child)
+        proof.save(self.task / 'seal.json', {'contract_hash': proof.digest(child), 'engine_hash': proof.engine_hash(child)})
+        with self.assertRaisesRegex(ValueError, 'Execution does not match sealed task/check'):
+            root_gate.require_corporate_dispatch(self.project, state, baseline_current=True)
+
+    def test_seal_refuses_mismatched_corporate_ownership_before_dispatch(self):
+        goal, state, _ = self.reviewed_draft()
+        corporate.scaffold(goal, 'verify', ['baseline'], 'calculator-owner')
+        self.fill_reviewed_draft(goal, state)
+        plan_path = goal / 'corporate-plan.json'
+        plan = proof.load(plan_path)
+        plan['tasks'][0]['outputs'].append('src/unowned.py')
+        proof.save(plan_path, plan)
+        sealed = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/root_gate.py'),
+                                 'seal', '--goal', str(goal)], capture_output=True, text=True)
+        self.assertEqual(sealed.returncode, 2, sealed.stdout + sealed.stderr)
+        self.assertIn('ownership/dependencies differ', sealed.stderr)
+        self.assertFalse((goal / 'root-seal.json').exists())
 
 
 if __name__ == '__main__':

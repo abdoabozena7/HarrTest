@@ -37,15 +37,36 @@ a post-change snapshot must never be relabeled baseline.
 
 ## Root and plan
 
-Use [the schema4 template](../assets/templates/root-contract-v4.json). Keep root
-coverage, request spans, separate coverage challenge and integration child from
-schema3. Register the Team and complete its scope review before sealing the
-Corporate root. The root seal pins the Team plan, baseline and accepted review.
-Set `schema:4`, `protocol:"corporate-v1"` and the
-following fields.
+Register Team schema 2 with `decomposition: "reviewed-v1"` and
+`root_protocol: "corporate-v1"` on this substantive route. Use the same Team
+ID and root goal ID. After the integration proof contract is sealed and the
+actual baseline checks have run, create the drafts from those records.
+
+```text
+python <skill>/scripts/corporate.py scaffold --goal .runtime-proof/root-goals/mission --proof-task verify --baseline-check preserved-behavior --author coordinating-planner
+```
+
+Repeat `--baseline-check` for each retained baseline run in that proof task,
+including applicable measurements. The command copies the exact source scope,
+actual receipt references, known task ownership and all six layer names. Fill
+the printed missing fields in `root-contract.json` and `corporate-plan.json`.
+The scaffold begins with one root requirement ID per Team outcome. Adjust the
+mapping if the independently reviewed request requires additional requirements.
+The [schema4 template](../assets/templates/root-contract-v4.json) also supports
+manual authoring. Each attempt keeps its own original request and artifacts.
+
+After completing the draft, use `corporate.py coverage-input --goal` to obtain
+the request, span and acceptance hashes for the independent reviewer. Have the
+reviewer inspect the actual request, scope and span mapping and write
+`coverage-review.json` in the goal directory. The artifact includes those
+hashes, `method`, `planner`, `reviewer`, `unresolved_findings`, `verdict` and
+concrete `observations`. Then run `corporate.py bind-coverage --goal` to link
+that artifact. Run the returned Team plan review packet before sealing too.
+
+The root and Team bindings have the following shape.
 
 ```json
-{"production_team":"mission","team_decomposition":"reviewed-v1","corporate":{"plan":".runtime-proof/corporate-plan.json","report":".runtime-proof/corporate-report.json"}}
+{"schema":4,"protocol":"corporate-v1","production_team":"mission","team_decomposition":"reviewed-v1","corporate":{"plan":".runtime-proof/root-goals/mission/corporate-plan.json","report":".runtime-proof/root-goals/mission/corporate-report.json"}}
 ```
 
 The plan is schema1 with request_sha256, author, created_at and source_paths:
@@ -105,12 +126,17 @@ predeclared regression/noise bounds. Cite project SLOs or baseline measurement,
 rather than universal FPS/latency limits. High noise is UNVERIFIED; an actual bound
 violation is FAIL. Preserve output correctness while reducing measured cost.
 
-After the independent Team scope review passes, fill the root contract and take
-the seal while the baseline still matches. Then dispatch the ready owners.
+Seal while the current source still matches the baseline and the independent
+scope review is current. Only then request the substantive Team owner packets.
 
 ```text
 python <skill>/scripts/root_gate.py seal --goal .runtime-proof/root-goals/mission
+python <skill>/scripts/team.py --project . packets --team mission
 ```
+
+The dispatch check ties the reviewed Team state and actual pre-edit source to
+the immutable root, including the proof check and verifier hashes. If the
+check rejects the inputs, resolve the reported discrepancy before dispatch.
 
 ## Execute, review and verify
 

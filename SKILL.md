@@ -36,6 +36,9 @@ Never fabricate precision or treat an agent's confidence as evidence.
 
 For substantial changes follow [the Corporate workflow](references/corporate-workflow.md).
 Use a schema-4 root with `protocol: corporate-v1` and a schema-2 Team plan.
+Set `root_protocol: corporate-v1` on the reviewed Team plan. Collect the actual
+baseline, build the root draft from it, and seal the independently reviewed plan
+and checks before requesting implementation packets.
 Keep the original verification meaning of existing schema-2/3 roots and schema-1
 teams; do not migrate active contracts silently.
 
