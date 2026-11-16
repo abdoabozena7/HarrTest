@@ -40,10 +40,12 @@ a post-change snapshot must never be relabeled baseline.
 
 Use [the schema4 template](../assets/templates/root-contract-v4.json). Keep root
 coverage, request spans, separate coverage challenge and integration child from
-schema3. Set `schema:4`, `protocol:"corporate-v1"`, and:
+schema3. Register the Team before sealing the Corporate root. The root seal pins
+the Team plan and baseline. Set `schema:4`, `protocol:"corporate-v1"` and the
+following fields.
 
 ```json
-{"production_team":"mission","corporate":{"plan":".runtime-proof/corporate-plan.json","report":".runtime-proof/corporate-report.json"}}
+{"production_team":"mission","team_decomposition":"reviewed-v1","corporate":{"plan":".runtime-proof/corporate-plan.json","report":".runtime-proof/corporate-report.json"}}
 ```
 
 The plan is schema1 with request_sha256, author, created_at and source_paths:
@@ -61,6 +63,8 @@ does not alone create an implementation dependency. Record a real blocking input
 when a dependent worker must wait. For a single owner, cite the shared invariant
 or inseparable write scope that makes a split unnecessary. The independent
 reviewer compares the decision to the code, contracts, and actual handoffs.
+Follow the [Team planning review](production-teams.md) before the implementation
+owners are dispatched.
 
 | Field | Required content |
 | --- | --- |

@@ -567,6 +567,25 @@ class CorporateTests(unittest.TestCase):
         self.assertFalse(outcome['root_goal_achieved'])
         self.assertTrue(any('QA' in error for error in outcome['errors']), outcome)
 
+    def test_reviewed_root_cannot_fall_back_to_a_legacy_team_plan(self):
+        import root_gate
+
+        contract = {**self.root, 'team_decomposition': 'reviewed-v1'}
+        proof.save(self.goal / 'root-contract.json', contract)
+        proof.save(self.goal / 'root-seal.json', {**self.seal, 'root_hash': proof.digest(contract)})
+        outcome = root_gate.check_root(self.goal)
+        self.assertFalse(outcome['root_goal_achieved'], outcome)
+        self.assertTrue(any('reviewed-v1 decomposition' in error for error in outcome['errors']), outcome)
+
+    def test_legacy_root_may_not_claim_reviewed_team_decomposition(self):
+        import root_gate
+
+        contract = {**self.root, 'schema': 3, 'team_decomposition': 'reviewed-v1'}
+        del contract['protocol']
+        del contract['corporate']
+        with self.assertRaisesRegex(proof.ProofError, 'requires reviewed-v1 on a schema-4 root'):
+            root_gate.validate(self.project, self.goal, contract)
+
     def test_explicit_file_rename_and_delete_proof_runs_preserve_absence_evidence(self):
         # Separate real subprocess proofs exercise the complete execution boundary
         # with explicit missing file roots on both sides of a rename and deletion.

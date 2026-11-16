@@ -11,6 +11,7 @@ import proof
 
 ROOT_DIR = "root-goals"
 MODES = {"live", "offline", "replay", "fixture"}
+REVIEWED_TEAM = 'reviewed-v1'
 
 
 def root_dir(project: Path, goal_id: str) -> Path:
@@ -31,6 +32,8 @@ def validate(project: Path, goal: Path, contract: dict) -> None:
         raise proof.ProofError("Root protocol must be golden-v1 on a schema-3 root")
     if schema != 4 and 'corporate' in contract:
         raise proof.ProofError('Corporate binding requires a schema-4 root')
+    if 'team_decomposition' in contract and (schema != 4 or contract['team_decomposition'] != REVIEWED_TEAM):
+        raise proof.ProofError('Reviewed Team decomposition requires reviewed-v1 on a schema-4 root')
     if contract.get("goal_id") != goal.name:
         raise proof.ProofError("Root ID mismatch")
     if "production_team" in contract:
@@ -136,9 +139,23 @@ def team_outputs(binding):
     return outputs
 
 
-def check_production_team(project, contract):
+def reviewed_team_state(project, contract):
     import team
 
+    team_id = contract['production_team']
+    state = team.load_state(project, team_id)
+    plan = state['plan']
+    if plan.get('schema') != 2 or plan.get('decomposition') != REVIEWED_TEAM:
+        raise proof.ProofError('Corporate root requires a Team plan with reviewed-v1 decomposition')
+    team.binding(project, team_id, contract['request_sha256'])
+    return state['state_sha256']
+
+
+def check_production_team(project, contract, sealing):
+    import team
+
+    if 'team_decomposition' in contract and sealing.get('team_state_sha256') != reviewed_team_state(project, contract):
+        raise proof.ProofError('Reviewed Team plan or baseline differs from the one sealed by the Corporate root')
     team_id = contract["production_team"]
     binding = team.binding(project, team_id, contract["request_sha256"])
     if contract['schema'] == 4:
@@ -180,7 +197,7 @@ def check_root(goal: Path) -> dict:
         production_team = None
         if "production_team" in contract:
             try:
-                production_team = check_production_team(project, contract)
+                production_team = check_production_team(project, contract, sealed)
                 if production_team.get("passed") is not True:
                     errors.extend("Production team: " + e for e in
                                   (production_team.get("errors") or ["verification is incomplete"]))
@@ -311,6 +328,8 @@ def main() -> int:
             if c['schema'] == 4:
                 import corporate
                 sealed['corporate'] = corporate.seal_binding(goal.parents[2], goal, c)
+            if 'team_decomposition' in c:
+                sealed['team_state_sha256'] = reviewed_team_state(goal.parents[2], c)
             proof.save(goal / "root-seal.json", sealed, exclusive=True)
             print("Root goal sealed. Child tests cannot redefine original requirements.")
             return 0
