@@ -172,6 +172,8 @@ def validate_plan(project, plan):
     t.concrete(plan.get('request'), 'Original request')
     t.concrete(plan.get('contract'), 'Shared contract')
     t.validation_files(project, plan)
+    reviewed = plan.get('decomposition') == 'reviewed-v1'
+    t.require('decomposition' not in plan or reviewed, 'Unknown Team decomposition policy')
     outcomes = plan.get('outcomes')
     t.require(isinstance(outcomes, dict) and outcomes, 'Declare original outcomes')
     for rid, value in outcomes.items():
@@ -183,7 +185,8 @@ def validate_plan(project, plan):
     for row in rows:
         t.require(isinstance(row, dict), 'Invalid implementation scope')
         tid = t.name(row.get('id'))
-        t.require(tid not in tasks and tid not in {'qa', 'check', 'integration'}, 'Duplicate/reserved owner')
+        reserved = {'qa', 'check', 'integration'} | ({'plan_review'} if reviewed else set())
+        t.require(tid not in tasks and tid not in reserved, 'Duplicate/reserved owner')
         t.require(row.get('role', 'implement') == 'implement', 'An owner must implement product files')
         t.concrete(row.get('brief'), tid + ' brief')
         outputs = t.file_list(project, row.get('outputs'), tid)
@@ -233,7 +236,28 @@ def validate_plan(project, plan):
     for field in ('model', 'reasoning_effort'):
         if field in plan:
             t.require(isinstance(plan[field], str) and bool(plan[field].strip()), 'Invalid pinned ' + field)
+    if reviewed:
+        validate_decomposition(plan, tasks, owned)
     return tasks, owned
+
+
+def validate_decomposition(plan, tasks, owned):
+    t = common()
+    sources = set(owned) | set(plan.get('validation_context', []))
+    if len(tasks) == 1:
+        t.concrete(plan.get('scope_rationale'), 'Explain why one implementation responsibility is sufficient')
+    for tid, task in tasks.items():
+        for field in ('responsibility', 'interface', 'check'):
+            t.concrete(task.get(field), f'{tid}: define {field}')
+        refs = task.get('scope_evidence')
+        t.require(isinstance(refs, list) and refs and all(isinstance(ref, str) and ref in sources for ref in refs)
+                  and len(refs) == len(set(refs)) <= t.MAX_VALIDATION_FILES,
+                  tid + ': cite distinct paths bound by the old owned files or validation context')
+        reasons = task.get('dependency_rationale', {})
+        t.require(isinstance(reasons, dict) and set(reasons) == set(task['depends_on']),
+                  tid + ': explain why each declared predecessor needs to finish first')
+        for dep, reason in reasons.items():
+            t.concrete(reason, f'{tid}: dependency on {dep}')
 
 
 def independent_pairs(tasks):
@@ -256,6 +280,10 @@ def init(project, plan):
                       'Keep validation context unchanged. If the output needs editing, keep its '
                       'original baseline and checks as separate evidence.')
     baseline = t.snapshot(project, owned)
+    if plan.get('decomposition') == 'reviewed-v1':
+        for tid, task in tasks.items():
+            t.require(all(validation_inputs.get(ref) or baseline.get(ref) for ref in task['scope_evidence']),
+                      tid + ': scope evidence needs an existing source file before implementation')
     if plan['kind'] == 'greenfield':
         t.require(not any(baseline.values()), 'Seal greenfield scopes before product creation')
     for task in tasks.values():
@@ -267,6 +295,9 @@ def init(project, plan):
              'created': proof.now(), 'validation_inputs': validation_inputs}
     state['state_sha256'] = strict_io.digest(state)
     proof.save(t.team_path(project, plan['id'], must_exist=False), state, exclusive=True)
+    if plan.get('decomposition') == 'reviewed-v1':
+        return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
+                'plan_review': plan_review_packet(project, state), 'ready': []}
     return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
             'ready': [packet(project, state, row) for row in tasks.values() if not row['depends_on']]}
 
@@ -310,6 +341,31 @@ def dispatch_packet(plan, task_name, message):
     return result
 
 
+def plan_review_packet(project, state):
+    t = common()
+    plan = state['plan']
+    path = t.team_path(project, plan['id']).as_posix()
+    evidence = f'{proof.STATE}/teams/{plan["id"]}/plan-review.txt'
+    command = t.worker_command(project, plan['id'], 'review-plan')
+    message = (f'Review the sealed decomposition independently before implementation. Read {path}.\n'
+               f'Plan SHA-256 {state["plan_sha256"]}; baseline/state SHA-256 {state["state_sha256"]}.\n'
+               'Inspect the actual project contracts, affected consumers and each scope_evidence path. '
+               'For each owner verify the responsibility, preserved interface, exact owned files, '
+               'outcomes and independent check against those sources. Find missing responsibilities '
+               'or independent components grouped into one owner. A narrow responsibility may span '
+               'multiple files. Confirm any single-scope and dependency rationales and observed worker '
+               'capacity. Record each judgment with the source location and why it supports the scope. '
+               f'Write your observations to {evidence}. Use this literal project-relative evidence path. '
+               'Record fail if a required scope, source or justification is missing. '
+               'Replace VERDICT with pass or fail based on the observations:\n'
+               f'{command} --evidence {evidence} --verdict VERDICT')
+    packet = {'task_name': 'plan_review', 'fork_turns': 'none', 'message': message}
+    if plan.get('host', {}).get('kind') == 'copilot':
+        packet['dispatch_note'] = ('Select a Copilot reviewer that can run commands and write private evidence. '
+                                   'Use an available general-purpose agent if the built-in task worker restricts writes.')
+    return packet
+
+
 def packet(project, state, task):
     t = common()
     plan, tid = state['plan'], task['id']
@@ -327,6 +383,10 @@ def packet(project, state, task):
             'Acceptance:\n' + '\n'.join(f'- {x}: {plan["outcomes"][x]}' for x in task['outcomes']) + '\n'
             'Run this handoff command with its exact script path and flags:\n'
             + t.worker_command(project, plan['id'], 'handoff') + ' --task ' + tid)
+    if plan.get('decomposition') == 'reviewed-v1':
+        text += (f'\nReviewed responsibility: {task["responsibility"]}\n'
+                 f'Interface: {task["interface"]}\nIndependent component check: {task["check"]}\n'
+                 f'Reviewed sources: {", ".join(task["scope_evidence"])}')
     repair = pending_repair(project, state, tid)
     if repair:
         text += (f'\nRepair current finding: {repair["observation"]}. '
@@ -350,6 +410,50 @@ def record(project, state, tid, files, **extra):
     return common().record(project, state, tid, files, **extra)
 
 
+def review_plan(project, state, evidence, verdict):
+    t = common()
+    plan = state['plan']
+    t.require(plan.get('decomposition') == 'reviewed-v1', 'Plan review requires reviewed-v1 decomposition')
+    t.require(verdict in {'pass', 'fail'}, 'Plan review verdict must be pass or fail')
+    t.validation_message(project, state)
+    t.require(t.snapshot(project, state['baseline']) == state['baseline'],
+              'Review the sealed baseline before any product edit')
+    prefix = f'{proof.STATE}/teams/{plan["id"]}/'
+    t.require(evidence.startswith(prefix), 'Keep plan review evidence in the private team directory')
+    path = strict_io.scoped_path(project, evidence)
+    t.require(path.is_file() and 0 < path.stat().st_size <= t.MAX_VALIDATION_FILE_BYTES,
+              'Missing bounded plan review evidence')
+    body = path.read_bytes()
+    t.concrete(body.decode('utf-8-sig'), 'Independent plan review observations')
+    digest = hashlib.sha256(body).hexdigest()
+    retained = f'{prefix}plan-review-evidence/{digest}.txt'
+    destination = strict_io.scoped_path(project, retained, must_exist=False)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with destination.open('xb') as saved:
+            saved.write(body)
+    except FileExistsError:
+        pass
+    t.require(proof.file_hash(destination) == digest, 'Retained plan review evidence changed')
+    receipt = {'id': 'plan_review', 'plan': state['plan_sha256'], 'files': {retained: digest},
+               'state': state['state_sha256'], 'verdict': verdict, 'at': proof.now()}
+    receipt['sha256'] = strict_io.digest(receipt)
+    proof.save(t.receipt_path(project, state, 'plan_review'), receipt, exclusive=True)
+    return receipt
+
+
+def approved_decomposition(project, state):
+    if state['plan'].get('decomposition') != 'reviewed-v1':
+        return None
+    t = common()
+    path = t.receipt_path(project, state, 'plan_review')
+    t.require(path.is_file(), 'Independent plan review is required before dispatch')
+    receipt = current_receipt(project, state, 'plan_review')
+    t.require(receipt.get('verdict') == 'pass' and receipt.get('state') == state['state_sha256'],
+              'Independent plan review failed or is stale; retain it and review a corrected plan')
+    return receipt
+
+
 def handoff(project, state, task):
     t = common()
     t.validation_message(project, state)
@@ -361,6 +465,9 @@ def handoff(project, state, task):
               task['id'] + ': handoff must contain an actual change')
     inputs = {dep: usable_handoff(project, state, dep)['sha256'] for dep in task['depends_on']}
     extra = {}
+    review = approved_decomposition(project, state)
+    if review:
+        extra['plan_review'] = review['sha256']
     path = t.receipt_path(project, state, 'repair-' + task['id'])
     if path.is_file():
         extra['repair'] = current_receipt(project, state, 'repair-' + task['id'])['sha256']
@@ -385,6 +492,9 @@ def usable_handoff(project, state, tid):
     t.require(not pending_repair(project, state, tid), tid + ': owner repair remains open')
     task = next(r for r in state['plan']['tasks'] if r['id'] == tid)
     receipt = current_receipt(project, state, tid)
+    review = approved_decomposition(project, state)
+    if review:
+        t.require(receipt.get('plan_review') == review['sha256'], tid + ': handoff lacks the current plan review')
     t.require(set(receipt['files']) == set(task['outputs']), tid + ': receipt scope differs from sealed owner')
     deps = {d: usable_handoff(project, state, d)['sha256'] for d in task['depends_on']}
     t.require(receipt.get('inputs') == deps, tid + ': stale prerequisite handoff')
@@ -392,7 +502,13 @@ def usable_handoff(project, state, tid):
 
 
 def ready_packets(project, state):
-    common().validation_message(project, state)
+    t = common()
+    t.validation_message(project, state)
+    if state['plan'].get('decomposition') == 'reviewed-v1':
+        path = t.receipt_path(project, state, 'plan_review')
+        if not path.is_file() or current_receipt(project, state, 'plan_review').get('verdict') == 'fail':
+            return []
+        approved_decomposition(project, state)
     ready = []
     for row in state['plan']['tasks']:
         try:
@@ -533,11 +649,13 @@ def codex_adapter(project, state, parent, sessions, require_qa):
     created = t.instant(state['created'])
     logs = t.locate_sessions(project, parent, Path(sessions or t.codex_sessions()), state['created'])
     rows = {}
+    reviewed = state['plan'].get('decomposition') == 'reviewed-v1'
     for role, (meta, path) in logs.items():
         window = NativeWindow(path, created, 'codex')
+        action = 'review-plan' if reviewed and role == 'plan_review' else None
         try:
             rows[role] = t.read_trace(project, meta, path, created, events=window,
-                                      lifecycle_limit=MAX_NATIVE_PENDING_CALLS)
+                                      lifecycle_limit=MAX_NATIVE_PENDING_CALLS, receipt_action=action)
         except ValueError as exc:
             if 'pending lifecycle limit exceeded' in str(exc):
                 raise HostEvidenceUnavailable(str(exc)) from exc
@@ -620,7 +738,7 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
     del worker['resume']
 
 
-def read_copilot_traces(project, parent, sessions, since):
+def read_copilot_traces(project, parent, sessions, since, *, reviewed=False):
     """Read Copilot's persisted session-events v1, not model-authored summaries.
 
     Format: CLI1.0.104 live native probe and the installed official SDK's
@@ -799,8 +917,9 @@ def read_copilot_traces(project, parent, sessions, since):
             if not agent and started >= since:
                 copilot_followup_result(by_agent, call.get('toolName'), args, payload, started, when)
             command = args.get('command') if isinstance(args, dict) else None
+            action = 'review-plan' if reviewed and current is rows.get('plan_review') else None
             if (started >= since and call.get('toolName') in {'powershell', 'bash'} and isinstance(command, str)
-                    and t.team_command(command) and payload.get('shellExecution', {}).get('exitCode') == 0):
+                    and t.team_command(command, action=action) and payload.get('shellExecution', {}).get('exitCode') == 0):
                 result = payload.get('result', {})
                 # Never search assistant prose, call arguments, or partial stdout for receipts.
                 content = result.get('content', '') if isinstance(result, dict) else ''
@@ -813,8 +932,33 @@ def read_copilot_traces(project, parent, sessions, since):
 
 
 def copilot_adapter(project, state, parent, sessions, require_qa):
-    rows = read_copilot_traces(project, parent, sessions, common().instant(state['created']))
+    rows = read_copilot_traces(project, parent, sessions, common().instant(state['created']),
+                               reviewed=state['plan'].get('decomposition') == 'reviewed-v1')
     return verify_native_rows(project, state, parent, rows, require_qa, 'copilot-session-events-v1')
+
+
+def verify_native_plan_review(project, state, parent, rows):
+    t = common()
+    receipt = approved_decomposition(project, state)
+    reviewer = rows.get('plan_review')
+    t.require(reviewer is not None, 'Missing native plan_review worker')
+    t.require(reviewer['id'] != parent and all(row['id'] != reviewer['id'] for role, row in rows.items()
+                                              if role != 'plan_review'), 'Plan review is not independent')
+    t.require(reviewer['start'] >= t.instant(state['created']) and not reviewer.get('failed'),
+              'Native plan review has wrong start or failed')
+    if reviewer.get('resume') is not None:
+        raise t.NativeTurnPending('plan_review')
+    t.require_receipt_turn_finished(reviewer, [receipt], 'plan_review')
+    at = t.receipt_event(reviewer, receipt, 'plan_review')
+    finished = next((end for start, end in reviewer['intervals'] if start <= at <= end), None)
+    t.require(finished is not None, 'Native plan review turn has not completed')
+    for task in state['plan']['tasks']:
+        row = rows.get(task['id'])
+        t.require(row is not None and row['start'] >= finished, task['id'] + ': owner started before plan review completed')
+    t.require(not any(when < finished and not path.startswith(proof.STATE + '/')
+                      for row in rows.values() for when, path in row['writes']),
+              'Native product write preceded completed plan review')
+    return {'actor': reviewer['id'], 'receipt': receipt['sha256'], 'completed_at': finished.isoformat()}
 
 
 def verify_native_rows(project, state, parent, rows, require_qa, adapter):
@@ -835,6 +979,9 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         if role not in {'integration', 'qa', *tasks}:
             t.require(not any(not rel.startswith(proof.STATE + '/') for _, rel in source['writes']),
                       role + ': unassigned agent wrote product files')
+    plan_review = None
+    if plan.get('decomposition') == 'reviewed-v1':
+        plan_review = verify_native_plan_review(project, state, parent, rows)
     builds, handoffs = {}, {}
     for tid, task in tasks.items():
         t.require(tid in rows, tid + ': missing native worker')
@@ -861,7 +1008,14 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         for dep in tasks[tid]['depends_on']:
             t.require(t.turn_start(row, at) >= handoffs[dep][1], tid + ': started before prerequisite handoff')
     for a, b in independent_pairs(tasks):
-        if t.completed_overlap(handoffs[a][0], handoffs[b][0]):
+        left, right = handoffs[a][0], handoffs[b][0]
+        if plan_review:
+            left_start, left_end = left['intervals'][0]
+            right_start, right_end = right['intervals'][0]
+            overlaps = max(left_start, right_start) < min(left_end, right_end)
+        else:
+            overlaps = t.completed_overlap(left, right)
+        if overlaps:
             overlap.append([a, b])
     if plan.get('max_parallel_workers', 1) > 1 and independent_pairs(tasks):
         t.require(overlap, 'Declared available parallel workers were not used on independent scopes')
@@ -885,9 +1039,12 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
                   and check_at <= qa_at and t.completed_receipt(reviewer, qa_at), 'QA has wrong order or incomplete turn')
         t.require(not any(not rel.startswith(proof.STATE + '/') for _, rel in reviewer['writes']),
                   'QA edited product source')
-    return {'status': 'PASS', 'adapter': adapter, 'workers': builds,
-            'overlap': overlap, 'independent_qa': require_qa,
-            'limitation': 'Cooperative local host records, not a hostile-writer security boundary.'}
+    assurance = {'status': 'PASS', 'adapter': adapter, 'workers': builds,
+                 'overlap': overlap, 'independent_qa': require_qa,
+                 'limitation': 'Cooperative local host records, not a hostile-writer security boundary.'}
+    if plan_review:
+        assurance['plan_review'] = plan_review
+    return assurance
 
 
 def verify_registered(project, team_id, *, require_qa=True, parent=None, sessions=None, **unused):

@@ -46,6 +46,15 @@ runtime instructions and retained baseline evidence. If an owner will edit a
 checker, give them the checker path and record its original source hash and
 baseline result separately.
 
+The template selects `decomposition: reviewed-v1`. Define each implementation
+responsibility, existing interface, independent check and `scope_evidence`.
+Evidence paths must refer to existing owned files or unchanged validation
+inputs. One responsibility can span several files when `scope_rationale`
+explains which contract ties them together. Give truly separate responsibilities
+their own owners. For each `depends_on` entry, record what needed result makes
+the dependency necessary in `dependency_rationale`. Use independent owners in
+parallel when worker capacity allows.
+
 When running in Copilot with a known session UUID or the host's explicit
 `HARRTEST_PARENT_SESSION_ID`, set `host.kind` to `copilot`. In Codex use `codex`
 when the project has access to its native logs. Use `unverified` only when the
@@ -55,6 +64,24 @@ the host before sealing. A successful init does not identify the host for you.
 ```text
 python <skill>/scripts/team.py --project . init --plan .runtime-proof/team-plan.json
 ```
+
+Dispatch the returned `plan_review` packet to a native `plan_review` worker
+separate from implementation and QA. It needs command execution and private
+evidence writes. In Copilot, use an available `general-purpose` agent if the
+built-in `task` worker restricts writes. The reviewer inspects the source,
+checks the owner boundaries and records the verdict with the packet's exact
+`review-plan` command and evidence path. Wait for the native reviewer to finish.
+A failed review stays with the sealed plan. Review a corrected plan under a new
+team ID before editing product files. After a passing review, retrieve the
+implementation packets:
+
+```text
+python <skill>/scripts/team.py --project . packets --team mission
+```
+
+Native verification checks that the `review-plan` receipt came from the
+separate reviewer and its turn completed before implementation started.
+Existing schema2 plans without the policy retain their original dispatch path.
 
 Dispatch the returned complete ready packet as a native implementation worker;
 use its returned task_name exactly so the host adapter can correlate identity.

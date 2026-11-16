@@ -18,6 +18,17 @@ import team
 import team_v2
 
 
+def reviewed_plan(plan):
+    plan['decomposition'] = 'reviewed-v1'
+    plan['scope_rationale'] = 'The existing calc.py module owns one public arithmetic responsibility.'
+    plan['tasks'][0].update(
+        responsibility='Repair arithmetic within the existing calc module.',
+        interface='Keep calc.add(a, b) as the public signed-integer operation.',
+        check='Import the original public calc.add and assert signed integer sums.',
+        scope_evidence=['calc.py'],
+    )
+
+
 class ExistingCodeTeam(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -49,6 +60,9 @@ class ExistingCodeTeam(unittest.TestCase):
 
     def complete(self):
         self.start()
+        return self.deliver()
+
+    def deliver(self):
         owner = self.implement()
         integrated, packet = team.integrate(self.project, self.state)
         check = team.runtime_check(self.project, self.state, [sys.executable, '-B', '-c',
@@ -58,6 +72,11 @@ class ExistingCodeTeam(unittest.TestCase):
         self.write(evidence, 'Independently imported add and checked positive and signed arithmetic through the existing interface.')
         review = team.review(self.project, self.state, evidence, 'pass')
         return owner, integrated, check, review, packet
+
+    def review_plan(self, verdict='pass'):
+        evidence = '.runtime-proof/teams/fix/plan-review.txt'
+        self.write(evidence, 'calc.py defines add and has one scope; the preserved public integer function is checked.')
+        return team_v2.review_plan(self.project, self.state, evidence, verdict)
 
     def test_single_owner_real_check_without_invented_glue(self):
         owner, integrated, check, review, packet = self.complete()
@@ -91,6 +110,69 @@ class ExistingCodeTeam(unittest.TestCase):
                 self.assertIn('read_agent with wait: true', note)
                 self.assertIn('write_agent to the original agent_id', note)
                 self.assertNotIn('write_agent', packet['message'])
+
+    def test_reviewed_plan_requires_source_bound_scope_and_dependencies(self):
+        reviewed_plan(self.plan)
+        self.plan.pop('scope_rationale')
+        with self.assertRaisesRegex(proof.ProofError, 'one implementation responsibility'):
+            self.start()
+        reviewed_plan(self.plan)
+        task = self.plan['tasks'][0]
+        task['scope_evidence'] = ['elsewhere.md']
+        with self.assertRaisesRegex(ValueError, 'cite distinct paths'):
+            self.start()
+        task['scope_evidence'] = ['planned.py']
+        task['outputs'].append('planned.py')
+        with self.assertRaisesRegex(ValueError, 'existing source file'):
+            self.start()
+        task['scope_evidence'] = ['calc.py']
+        self.plan['tasks'].append(dict(task, id='consumer', outputs=['consumer.py'], depends_on=['arithmetic']))
+        with self.assertRaisesRegex(ValueError, 'each declared predecessor'):
+            self.start()
+        self.plan['tasks'][1]['dependency_rationale'] = {
+            'arithmetic': 'The consumer requires the corrected function result before its binding can be tested.'}
+        self.assertEqual(self.start()['plan_review']['task_name'], 'plan_review')
+
+    def test_reviewed_plan_uses_cli_receipt_to_unlock_owner_packets(self):
+        reviewed_plan(self.plan)
+        self.write('tests.py', 'from calc import add\nassert add(1, 0) == 1\n')
+        self.plan['tasks'][0]['outputs'].append('tests.py')
+        initial = self.start()
+        self.assertEqual(initial['ready'], [])
+        self.assertEqual(initial['plan_review']['task_name'], 'plan_review')
+        self.assertIn(self.state['state_sha256'], initial['plan_review']['message'])
+        self.assertEqual(team.ready_packets(self.project, self.state), [])
+        evidence = '.runtime-proof/teams/fix/plan-review.txt'
+        self.write(evidence, 'The source contract supports one implementation owner and a related test file.')
+        result = subprocess.run([sys.executable, '-B', str(REPO / 'scripts/team.py'), '--project', str(self.project),
+                                 'review-plan', '--team', 'fix', '--evidence', evidence, '--verdict', 'pass'],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        approved = team_v2.current_receipt(self.project, self.state, 'plan_review')
+        self.assertIn(team.RECEIPT + approved['sha256'], result.stdout)
+        ready, = team.ready_packets(self.project, self.state)
+        self.assertIn('Reviewed responsibility', ready['message'])
+        handoff = self.implement()
+        self.assertEqual(handoff['plan_review'], approved['sha256'])
+
+    def test_failed_or_late_scope_review_cannot_unlock_implementation(self):
+        reviewed_plan(self.plan)
+        self.start()
+        failed = self.review_plan('fail')
+        self.assertEqual(failed['verdict'], 'fail')
+        self.assertEqual(team.ready_packets(self.project, self.state), [])
+        with self.assertRaises(FileExistsError):
+            self.review_plan()
+        self.assertEqual(team_v2.current_receipt(self.project, self.state, 'plan_review'), failed)
+        with self.assertRaisesRegex(ValueError, 'failed or is stale'):
+            self.implement()
+
+        self.plan['id'] = 'late'
+        team.init(self.project, self.plan)
+        state = team.load_state(self.project, 'late')
+        self.write('calc.py', 'def add(a, b): return a * b\n')
+        with self.assertRaisesRegex(ValueError, 'before any product edit'):
+            team_v2.review_plan(self.project, state, '.runtime-proof/teams/late/plan-review.txt', 'pass')
 
     def test_source_change_invalidates_qa_even_with_unchanged_narrative(self):
         self.complete()
@@ -352,8 +434,10 @@ class CodexAdapter(unittest.TestCase):
     start = ExistingCodeTeam.start
     implement = ExistingCodeTeam.implement
     complete = ExistingCodeTeam.complete
+    deliver = ExistingCodeTeam.deliver
+    review_plan = ExistingCodeTeam.review_plan
 
-    def native(self, role, start, end, writes, receipts, uid=None):
+    def native(self, role, start, end, writes, receipts, uid=None, *, action='handoff'):
         uid = uid or (self.parent if role == 'integration' else str(uuid4()))
         origin = 'exec' if role == 'integration' else {'subagent': {'thread_spawn': {
             'parent_thread_id': self.parent, 'agent_path': '/root/' + role, 'depth': 1}}}
@@ -368,10 +452,15 @@ class CodexAdapter(unittest.TestCase):
             rows.append(event('event_msg', sec, {'type': 'patch_apply_end', 'success': True,
                                                 'changes': {str(self.project / path): {}}}))
         for i, (receipt, sec) in enumerate(receipts):
+            command = f'python scripts/team.py {action}'
+            output = 'Output:\n' + team.RECEIPT + receipt['sha256']
+            if action == 'review-plan':
+                output = json.dumps({'chunk_id': 'fixture', 'wall_time_seconds': 0.01,
+                                     'output': output, 'exit_code': 0})
             rows.extend([event('response_item', sec, {'type': 'custom_tool_call', 'name': 'exec',
-                         'call_id': str(i), 'input': 'text(await tools.exec_command({"cmd":"python scripts/team.py handoff"}));'}),
+                         'call_id': str(i), 'input': 'text(await tools.exec_command(' + json.dumps({'cmd': command}) + '));'}),
                          event('response_item', sec + .01, {'type': 'custom_tool_call_output', 'call_id': str(i),
-                         'output': [{'text': 'Output:\n' + team.RECEIPT + receipt['sha256']}]})])
+                         'output': [{'text': output}]})])
         if end is not None:
             rows.append(event('event_msg', end, {'type': 'task_complete'}))
         path = self.logs / ('rollout-controlled-' + uid + '-' + role + '.jsonl')
@@ -386,6 +475,37 @@ class CodexAdapter(unittest.TestCase):
         result = team.verify_registered(self.project, 'fix', parent=self.parent, sessions=self.sessions)
         self.assertTrue(result['passed'], result)
         self.assertEqual(result['host_assurance']['overlap'], [])
+
+    def test_reviewed_decomposition_native_parallel_pair(self):
+        reviewed_plan(self.plan)
+        self.plan['max_parallel_workers'] = 2
+        self.write('consumer.py', 'LABEL = "before"\n')
+        self.plan['tasks'].append({
+            'id': 'consumer', 'brief': 'Implement output labeling at the existing reader boundary.',
+            'outputs': ['consumer.py'], 'depends_on': [], 'outcomes': ['sum'],
+            'responsibility': 'Present the caller labels within the existing adapter.',
+            'interface': 'Keep the existing public LABEL used by the adapter.',
+            'check': 'Import consumer and assert the new presentation label.',
+            'scope_evidence': ['consumer.py'],
+        })
+        self.start()
+        approval = self.review_plan()
+        self.assertEqual({p['task_name'] for p in team.ready_packets(self.project, self.state)}, {'arithmetic', 'consumer'})
+        self.write('consumer.py', 'LABEL = "after"\n')
+        second = team.handoff(self.project, self.state, self.plan['tasks'][1])
+        owner, integrated, check, qa, _ = self.deliver()
+        self.native('plan_review', 1, 3, [], [(approval, 2)], action='review-plan')
+        self.native('arithmetic', 4, 8, [('calc.py', 5)], [(owner, 6)])
+        consumer_uid = str(uuid4())
+        self.native('consumer', 6, 11, [('consumer.py', 9)], [(second, 10)], uid=consumer_uid)
+        self.native('integration', -1, None, [], [(integrated, 12)])
+        self.native('qa', 13, 17, [], [(check, 14), (qa, 16)])
+        result = team.verify_registered(self.project, 'fix', parent=self.parent, sessions=self.sessions)
+        self.assertTrue(result['passed'], result)
+        self.assertEqual(result['host_assurance']['overlap'], [['arithmetic', 'consumer']])
+        self.native('consumer', 9, 11, [('consumer.py', 9.5)], [(second, 10)], uid=consumer_uid)
+        result = team.verify_registered(self.project, 'fix', parent=self.parent, sessions=self.sessions)
+        self.assertIn('parallel workers', result['errors'][0])
 
     def test_large_preplan_history_keeps_current_native_proof_and_legacy_limit(self):
         owner, integrated, check, qa, _ = self.complete()
@@ -504,6 +624,8 @@ class CopilotAdapter(unittest.TestCase):
     start = ExistingCodeTeam.start
     implement = ExistingCodeTeam.implement
     complete = ExistingCodeTeam.complete
+    deliver = ExistingCodeTeam.deliver
+    review_plan = ExistingCodeTeam.review_plan
 
     def setUp(self):
         ExistingCodeTeam.setUp(self)
@@ -522,16 +644,22 @@ class CopilotAdapter(unittest.TestCase):
             value['agentId'] = agent
         return value
 
-    def trace(self, owner, integrated, check, qa):
+    def trace(self, owner, integrated, check, qa, *, plan_review=None, review_end=5):
         rows = [self.event('session.start', -1, {
             'sessionId': self.parent, 'version': 1, 'producer': 'copilot-agent',
             'copilotVersion': '1.0.104', 'selectedModel': 'fixture-model', 'reasoningEffort': 'low',
             'startTime': (team.instant(self.state['created']) - timedelta(seconds=1)).isoformat(),
             'context': {'cwd': str(self.project)}})]
-        for role, start, finish, writes, receipts in [
+        timeline = [
                 ('arithmetic', 1, 5, ['calc.py'], [(owner, 4)]),
                 ('integration', -1, None, [], [(integrated, 7)]),
-                ('qa', 8, 12, [], [(check, 9), (qa, 11)])]:
+                ('qa', 8, 12, [], [(check, 9), (qa, 11)])]
+        if plan_review:
+            timeline = [('plan_review', 1, review_end, [], [(plan_review, 3)])] + [
+                (role, start + 10, finish + 10 if finish else None, writes,
+                 [(receipt, sec + 10) for receipt, sec in receipts])
+                for role, start, finish, writes, receipts in timeline]
+        for role, start, finish, writes, receipts in timeline:
             agent, dispatch = (str(uuid4()), 'dispatch-' + role) if role != 'integration' else (None, None)
             if agent:
                 rows.append(self.event('tool.execution_start', start, {'toolCallId': dispatch,
@@ -550,8 +678,11 @@ class CopilotAdapter(unittest.TestCase):
                              'fileEdits': [{'path': str(self.project / rel), 'kind': 'edit'}]}, agent))
             for receipt, sec in receipts:
                 call = receipt['sha256']
+                command = 'python scripts/team.py handoff'
+                if role == 'plan_review':
+                    command = team.worker_command(self.project, 'fix', 'review-plan') + ' --evidence plan-review.txt --verdict pass'
                 payload = {'toolCallId': call, 'toolName': 'powershell', 'model': 'fixture-model',
-                           'arguments': {'command': 'python scripts/team.py handoff'}, 'parentToolCallId': dispatch}
+                           'arguments': {'command': command}, 'parentToolCallId': dispatch}
                 rows.append(self.event('tool.execution_start', sec, payload, agent))
                 rows.append(self.event('tool.execution_complete', sec + .01,
                             {'toolCallId': call, 'success': True, 'parentToolCallId': dispatch,
@@ -568,6 +699,46 @@ class CopilotAdapter(unittest.TestCase):
 
     def verify(self):
         return team.verify_registered(self.project, 'fix', parent=self.parent, sessions=self.sessions)
+
+    def test_reviewed_decomposition_requires_early_native_plan_reviewer_command(self):
+        reviewed_plan(self.plan)
+        packet = self.start()['plan_review']
+        self.assertIn('general-purpose agent', packet['dispatch_note'])
+        self.assertIn('--evidence .runtime-proof/teams/fix/plan-review.txt', packet['message'])
+        approval = self.review_plan()
+        owner, integrated, check, qa, _ = self.deliver()
+        self.trace(owner, integrated, check, qa)
+        rejected = self.verify()
+        self.assertIn('Missing native plan_review worker', rejected['errors'][0])
+
+        valid = self.trace(owner, integrated, check, qa, plan_review=approval)
+        result = self.verify()
+        self.assertTrue(result['passed'], result)
+        self.assertEqual(result['host_assurance']['plan_review']['receipt'], approval['sha256'])
+        self.assertNotEqual(result['host_assurance']['plan_review']['actor'],
+                            result['host_assurance']['workers']['arithmetic']['id'])
+
+        wrong = deepcopy(valid)
+        for event in wrong:
+            if (event['type'] == 'tool.execution_start'
+                    and event['data'].get('toolCallId') == approval['sha256']):
+                event['data']['arguments']['command'] = 'python scripts/team.py review --evidence plan-review.txt'
+        self.save(wrong)
+        rejected = self.verify()
+        self.assertIn('missing native tool receipt', rejected['errors'][0])
+
+        failed = deepcopy(valid)
+        for event in failed:
+            if (event['type'] == 'tool.execution_complete'
+                    and event['data'].get('toolCallId') == approval['sha256']):
+                event['data']['shellExecution']['exitCode'] = 1
+        self.save(failed)
+        rejected = self.verify()
+        self.assertIn('missing native tool receipt', rejected['errors'][0])
+
+        self.trace(owner, integrated, check, qa, plan_review=approval, review_end=12)
+        rejected = self.verify()
+        self.assertIn('owner started before plan review completed', rejected['errors'][0])
 
     def test_correlated_native_subagent_file_edit_and_finite_qa_receipts_pass(self):
         owner, integrated, check, qa, _ = self.complete()

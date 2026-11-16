@@ -5,6 +5,8 @@
   "request": "REPLACE_ME exact original user request",
   "contract": "REPLACE_ME existing interface, preserved behavior, lifecycle and permitted change",
   "validation_context": [],
+  "decomposition": "reviewed-v1",
+  "scope_rationale": "REPLACE_ME source-backed reason one implementation responsibility suffices or remove for multiple owners",
   "max_parallel_workers": 1,
   "host": {"kind": "REPLACE_ME actual host kind: copilot, codex, or unverified"},
   "outcomes": {"R01": "REPLACE_ME observable requested behavior and preserved contract"},
@@ -12,8 +14,13 @@
     {
       "id": "component",
       "brief": "REPLACE_ME bounded implementation and focused component checks",
+      "responsibility": "REPLACE_ME product behavior this owner implements",
+      "interface": "REPLACE_ME caller, output contract and failure behavior",
+      "check": "REPLACE_ME real component check and expected behavior",
+      "scope_evidence": ["REPLACE_ME existing owned or validation-context file"],
       "outputs": ["REPLACE_ME exact existing product file"],
       "depends_on": [],
+      "dependency_rationale": {},
       "outcomes": ["R01"]
     }
   ],
