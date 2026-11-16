@@ -58,6 +58,10 @@ The first matrix retained all 96 executable results. The three arms scored
 234.714506 and 1504.6956735 across 31 available receipts per arm. Independent
 reviews identified false accepts and protocol violations. The first pin cannot
 qualify under the sealed release rule.
+All 96 independent assessments recorded 11/32, 12/32 and 13/32 complete-quality
+passes, with 19, 19 and 15 false accepts in arm order. Reviewed security failures
+were 2, 4 and 6. The executable results alone would overstate the quality of all
+three arms. The first local archive retains the final assessment summary.
 
 The same frozen protocol retained a credit-validation attempt with seven passing
 external checks and a passing native Team replay. Both native workers ran at
