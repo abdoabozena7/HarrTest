@@ -136,6 +136,15 @@ results establish actual partitioning and overlap. Final QA and Corporate root
 status are tracked separately. The next frozen 96-attempt comparison began
 after the C# overlap was observed.
 
+The final pinned Team verification passed on both development projects, including
+independent QA. TypeScript passed 9/9 frozen executable checks in 2241.647s at
+7.1119710 AI credits. C# passed 13/13 in 2190.709s at 6.9551730 AI credits, with
+the same owner and QA actor resuming after repair. Both used Luna/low. Neither
+produced a complete Corporate root contract and seal. Independent review found
+that the TypeScript CLI accepted malformed UTF-8 bytes, and the C# repair also
+changed an unrelated inherited tenant lookup. These are retained development
+limitations, including where the narrower native Team gate passed.
+
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
 Record source/current-config identities, raw tool results, model/subagent usage,

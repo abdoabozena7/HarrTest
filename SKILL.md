@@ -75,6 +75,10 @@ Keep one writer per file at a time, including configuration. Route fixes to the
 existing owner, refresh dependent handoffs and reintegrate. Support real deletions
 and renames; integration can be validation-only. Inspect native status and receipts
 before repeating waits. Completed workers need a next action, not indefinite waits.
+Keep each repair within the reviewed responsibility, even when the same file
+contains unrelated behavior. If observed baseline behavior and its documented
+contract disagree, record both and resolve the impact on the request before
+changing that behavior.
 
 The coordinator resolves interfaces and integrates returned work. Independent QA
 exercises actual behavior on current source and does not edit the product.
