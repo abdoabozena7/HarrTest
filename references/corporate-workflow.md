@@ -53,6 +53,15 @@ implementation and independent QA. Corporate task IDs, output ownership and
 dependencies must match it, and verification roots must cover every Team output.
 Standalone Corporate quality results cannot substitute for this root requirement.
 
+Map requirements to existing responsibilities before choosing the owner count.
+If two scopes can implement and test against an agreed interface with disjoint
+write sets, give each its own implementation owner and dispatch both together
+when the host has capacity. Sharing a feature, output format, or public contract
+does not alone create an implementation dependency. Record a real blocking input
+when a dependent worker must wait. For a single owner, cite the shared invariant
+or inseparable write scope that makes a split unnecessary. The independent
+reviewer compares the decision to the code, contracts, and actual handoffs.
+
 | Field | Required content |
 | --- | --- |
 | context | IDs with architecture/contract/verification roles and citation `{path,sha256,start_line,end_line,excerpt}`. Archive external/user sources with original provenance as contract evidence. |

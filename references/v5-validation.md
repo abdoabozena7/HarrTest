@@ -81,6 +81,21 @@ checkpoint and retried correctly. The post-repair independent Team receipt was
 stale because the synchronous QA worker could not resume. A new development
 trial is exercising the reusable native-worker guidance.
 
+The reusable-worker trial passed 9/9 external checks at Luna/low and used an
+actual background worker follow-up. This trial exposed two workflow issues.
+The plan initially listed an editable test as immutable validation context.
+That made the expected edit invalidate the plan. Separately, the local evaluator's
+shell filter denied a QA evidence write because its narrative contained the word
+`credential`. The next evaluator's permission replay permits the two archived
+benign requests and still rejects protected paths and credential-management
+commands. The original trial lacks the review receipt and remains incomplete.
+
+At the first matrix snapshot, seven terminal V5 attempts covered two
+multi-component existing-code cases. Copilot declared one implementation scope
+for both components in all seven. The retained schema2 plans and actual actor
+observations support this count. The two cases are now development evidence for
+scope planning. Later held comparisons must use distinct replacement cases.
+
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
 Record source/current-config identities, raw tool results, model/subagent usage,

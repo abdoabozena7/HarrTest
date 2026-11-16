@@ -39,20 +39,24 @@ Use a schema-4 root with `protocol: corporate-v1` and a schema-2 Team plan.
 Keep the original verification meaning of existing schema-2/3 roots and schema-1
 teams; do not migrate active contracts silently.
 
-Choose the evidence path before the first product edit. A narrow change still
-uses one native implementation owner and a distinct testing/review worker through
-Team schema2; its integration outputs can be empty. Keep its task brief, preserved
-contract/baseline, actual checks and six layer applicability/verdict observations
-in the retained QA evidence. This lightweight path relies on inspected review
-evidence; corporate-v1 is the structured six-layer root gate for substantive work.
+Before the first edit, map each requested behavior to an existing responsibility,
+the owning files, a stable input/output contract and a check it can pass alone.
+One coherent responsibility can use one native implementation owner and a distinct
+testing/review worker through Team schema2. Record why the scope cannot usefully
+split. Keep its scope, baseline, checks and six layer verdicts in the QA evidence.
+Two separately testable responsibility changes require separate implementation
+owners and the corporate-v1 root, even when they fit one feature or share an API.
 Small size removes unnecessary implementation splits, not independent testing.
 The coordinator must not implement the narrow change itself and substitute its
 own tests for the independent worker. If delegation is actually unavailable,
 record that capability gap and leave native acceptance UNVERIFIED.
 
-Split along existing component/interface boundaries. Give each worker the
-original goal, necessary context, read/write scope, lifecycle invariants, baseline,
-risks and expected checks. A review or planning role is not an implementation owner.
+Split along existing component/interface boundaries. Agree on the interface first
+so matching implementation scopes can run in parallel. A real dependency waits
+for its prerequisite handoff when a stable shared contract cannot resolve it.
+Give each worker the original goal, necessary context, read/write scope, lifecycle
+invariants, baseline, risks and independent checks. Count implementation owners
+by their assigned product changes and actual handoffs.
 
 Use native workers for independently deliverable implementation scopes. Dispatch
 ready independent tasks together; dependent tasks wait for current handoffs.
@@ -75,6 +79,8 @@ before repeating waits. Completed workers need a next action, not indefinite wai
 The coordinator resolves interfaces and integrates returned work. Independent QA
 exercises actual behavior on current source and does not edit the product.
 Independent review checks the diff, evidence relevance and project constraints.
+It also checks whether the plan grouped separable work and whether independent
+owners actually overlapped when the host had the capacity.
 These roles are distinct from the implementer. Record actual worker identities
 and capability limits; do not label unsupported host provenance verified.
 [Team contracts and host evidence](references/production-teams.md)
