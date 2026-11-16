@@ -52,27 +52,27 @@ covers one case, one model and one repetition. The original comparison retains
 the measured results. Any further iteration that uses this finding must replace
 the consumed case in the next held corpus before measuring improvement.
 
-### First matrix executable results
+### First matrix results
 
 All 96 attempts and executable evaluations were retained by November 16, 2026.
 The denominator includes the timeout, transport failures and a V5 attempt with
 unmatched reasoning effort. One timeout's observed elapsed time includes a
 long execution gap. The original timeout record remains unchanged.
 
-| Arm | Executable functionality | Median generation seconds | Reported Copilot AI credits |
-| --- | ---: | ---: | ---: |
-| No HarrTest | 29/32 | 61.859 | 122.380940 |
-| 4.1 | 31/32 | 81.208 | 234.714506 |
-| V5 | 30/32 | 653.919 | 1504.6956735 |
+| Arm | Executable functionality | Complete quality | False accepts | Median generation seconds | Reported Copilot AI credits |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| No HarrTest | 29/32 | 11/32 | 19 | 61.859 | 122.380940 |
+| 4.1 | 31/32 | 12/32 | 19 | 81.208 | 234.714506 |
+| V5 | 30/32 | 13/32 | 15 | 653.919 | 1504.6956735 |
 
 Each credit subtotal covers 31 attempts with complete usage receipts. V5 usage
-reconciled parent and child totals in 29 attempts. The independent quality review
-was at 57/96 after executable completion. At that snapshot, complete-quality
-passes were 6, 7 and 7, respectively, with 12, 11 and 10 false accepts under the
-sealed assessor. These counts include its protected-contract and generation
-validity rules. Independent reviews document product defects separately from
-protocol violations. The first pin is disqualified by the nonzero V5 count.
-Remaining independent assessments continue on the frozen results.
+reconciled parent and child totals in 29 attempts. All 96 quality assessments
+are recorded. The sealed assessor includes protected-contract and generation
+validity rules in the table. Its reports also distinguish product defects from
+protocol violations. Independent reviews identified 3, 5 and 3 preservation
+failures, 2, 4 and 6 security failures, and 11, 12 and 8 architecture failures
+in arm order. The first pin is disqualified by its 15 false accepts. The final
+local summary is `output/v5-corporate/acceptance-v5-1/final-summary.json`.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
