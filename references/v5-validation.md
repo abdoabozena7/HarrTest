@@ -127,6 +127,15 @@ checks observed overlap afterward, and uses a fresh reviewer for a new sealed
 plan. A separate native Luna/low capability probe observed 9.672s of overlapping
 work between two background workers.
 
+The corrected workflow then passed read-only native verification of planning
+and production on two development projects. In C#, the Rules and CLI owners
+overlapped by 91.871s. In TypeScript, the SDK and CLI owners overlapped by
+96.868s after a fresh reviewer rejected the initial single-owner plan. Both
+probes ran all implementation actors on Luna/low. These production-only replay
+results establish actual partitioning and overlap. Final QA and Corporate root
+status are tracked separately. The next frozen 96-attempt comparison began
+after the C# overlap was observed.
+
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
 Record source/current-config identities, raw tool results, model/subagent usage,
