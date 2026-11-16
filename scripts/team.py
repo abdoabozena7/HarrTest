@@ -168,10 +168,12 @@ def validation_message(project, state):
         return ''
     rows = '\n'.join(f'- {strict_io.scoped_path(project, rel).as_posix()} (SHA-256 {digest})'
                      for rel, digest in expected.items())
-    return ('Sealed validation context: read these explicit local inputs before design or checks.\n'
-            f'{rows}\nUse the supplied full runtime/profile and acceptance constraints for your '
-            'component and integrated checks; do not substitute defaults. Coordinate exclusive '
-            'runtime ownership with the coordinator.\n')
+    message = ('Sealed validation context: read these explicit local inputs before design or checks.\n'
+               f'{rows}\nUse the supplied full runtime/profile and acceptance constraints for your '
+               'component and integrated checks; do not substitute defaults.')
+    if state['plan'].get('schema') != 2:
+        message += ' Coordinate exclusive runtime ownership with the coordinator.'
+    return message + '\n'
 
 
 def snapshot(project, paths):

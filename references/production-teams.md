@@ -38,9 +38,13 @@ Use corporate-v1 for mechanically structured six-layer root acceptance.
 Use [the schema2 template](../assets/templates/team-plan-v2.json), replacing its
 placeholders with the actual request, interface, owned files and checks. Set
 host.kind to the observed host and add actual model/reasoning_effort pins when
-required. Include the existing contract/baseline and relevant validation inputs
-in validation_context. Keep the plan under `.runtime-proof/team-plan.json`.
+required. Keep the plan under `.runtime-proof/team-plan.json`.
 Do this before any product edit, including a narrow one-file fix.
+
+Use `validation_context` for unchanged inputs such as the existing contract,
+runtime instructions and retained baseline evidence. If an owner will edit a
+checker, give them the checker path and record its original source hash and
+baseline result separately.
 
 When running in Copilot with a known session UUID or the host's explicit
 `HARRTEST_PARENT_SESSION_ID`, set `host.kind` to `copilot`. In Codex use `codex`

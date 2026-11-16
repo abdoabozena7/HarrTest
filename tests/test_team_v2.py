@@ -268,6 +268,55 @@ class ExistingCodeTeam(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'context changed'):
             team.ready_packets(self.project, self.state)
 
+    def test_init_rejects_validation_context_owned_by_worker_or_coordinator(self):
+        self.write('check_existing.py', 'from calc import add\nassert add(1, 1) == 0\n')
+        self.plan['validation_context'] = ['check_existing.py']
+        command = [sys.executable, '-B', str(REPO / 'scripts/team.py'),
+                   '--project', str(self.project), 'init', '--plan', 'plan.json']
+        for scope in (self.plan['tasks'][0], self.plan['integration']):
+            with self.subTest(scope=scope):
+                scope['outputs'].append('check_existing.py')
+                self.write('plan.json', json.dumps(self.plan))
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('validation_context file check_existing.py overlaps owned output check_existing.py',
+                              result.stdout)
+                self.assertIn('separate evidence', result.stdout)
+                self.assertFalse(team.team_path(self.project, 'fix', must_exist=False).exists())
+                scope['outputs'].pop()
+
+    def test_editable_checker_and_sealed_context_complete_finite_schema_two_check(self):
+        checker = 'check_existing.py'
+        retained = '.runtime-proof/baseline-check_existing.py'
+        original = 'from calc import add\nassert add(1, 0) == 1\n'
+        self.write(checker, original)
+        self.write(retained, original)
+        self.plan['validation_context'] = [retained]
+        self.plan['tasks'][0]['outputs'].append(checker)
+        ready = self.start()['ready'][0]
+        self.write(checker, original + 'assert add(1, 1) == 2\n')
+        self.implement()
+        _, qa = team.integrate(self.project, self.state)
+        result = team.runtime_check(self.project, self.state, [sys.executable, '-B', checker])
+        self.assertEqual(result['exit_code'], 0)
+        capture = proof.load(self.project / next(iter(result['files'])))
+        self.assertTrue(capture['source_unchanged'])
+        for packet in (ready, qa):
+            self.assertIn(retained, packet['message'])
+            self.assertNotIn('Coordinate exclusive runtime ownership', packet['message'])
+        self.assertEqual(self.state['baseline'][checker], self.state['validation_inputs'][retained])
+        self.assertNotEqual(self.state['baseline'][checker], proof.file_hash(self.project / checker))
+
+    def test_preexisting_schema_two_state_does_not_apply_the_new_init_guard(self):
+        self.plan['validation_context'] = ['calc.py']
+        original = {'calc.py': proof.file_hash(self.project / 'calc.py')}
+        state = {'plan': self.plan, 'plan_sha256': team.strict_io.digest(self.plan),
+                 'baseline': original, 'created': proof.now(), 'validation_inputs': original}
+        state['state_sha256'] = team.strict_io.digest(state)
+        path = team.team_path(self.project, 'fix', must_exist=False)
+        proof.save(path, state, exclusive=True)
+        self.assertEqual(team.load_state(self.project, 'fix'), state)
+
     def test_cli_dispatch_supports_schema_two(self):
         self.write('plan.json', json.dumps(self.plan))
         command = [sys.executable, '-B', str(REPO / 'scripts/team.py'), '--project', str(self.project)]

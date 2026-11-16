@@ -245,6 +245,16 @@ def independent_pairs(tasks):
 def init(project, plan):
     t = common()
     tasks, owned = validate_plan(project, plan)
+    validation_inputs = t.validation_snapshot(project, plan)
+    root = Path(project).resolve()
+    outputs = {rel: (root / rel).resolve() for rel in owned}
+    for context in validation_inputs:
+        path = (root / context).resolve()
+        for rel, output in outputs.items():
+            t.require(not (path.is_relative_to(output) or output.is_relative_to(path)),
+                      f'validation_context file {context} overlaps owned output {rel}. '
+                      'Keep validation context unchanged. If the output needs editing, keep its '
+                      'original baseline and checks as separate evidence.')
     baseline = t.snapshot(project, owned)
     if plan['kind'] == 'greenfield':
         t.require(not any(baseline.values()), 'Seal greenfield scopes before product creation')
@@ -254,7 +264,7 @@ def init(project, plan):
         for move in task.get('renames', []):
             t.require(baseline[move['to']] is None, 'Rename destination must be absent at baseline')
     state = {'plan': plan, 'plan_sha256': strict_io.digest(plan), 'baseline': baseline,
-             'created': proof.now(), 'validation_inputs': t.validation_snapshot(project, plan)}
+             'created': proof.now(), 'validation_inputs': validation_inputs}
     state['state_sha256'] = strict_io.digest(state)
     proof.save(t.team_path(project, plan['id'], must_exist=False), state, exclusive=True)
     return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
