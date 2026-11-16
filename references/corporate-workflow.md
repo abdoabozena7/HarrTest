@@ -29,7 +29,6 @@ and avoids silently broadening an exact file scope to its parent directory.
 ```text
 python <skill>/scripts/corporate.py snapshot --project . --source src --source tests
 python <skill>/scripts/corporate.py execution-ref --project . --receipt .runtime-proof/verify/runs/baseline/RUN_ID/receipt.json
-python <skill>/scripts/root_gate.py seal --goal .runtime-proof/root-goals/mission
 ```
 
 Helper outputs are inputs, not acceptance verdicts. Baseline executions precede
@@ -105,6 +104,13 @@ profile/unit, JSON pointers into actual captured artifacts, direction and justif
 predeclared regression/noise bounds. Cite project SLOs or baseline measurement,
 rather than universal FPS/latency limits. High noise is UNVERIFIED; an actual bound
 violation is FAIL. Preserve output correctness while reducing measured cost.
+
+After the independent Team scope review passes, fill the root contract and take
+the seal while the baseline still matches. Then dispatch the ready owners.
+
+```text
+python <skill>/scripts/root_gate.py seal --goal .runtime-proof/root-goals/mission
+```
 
 ## Execute, review and verify
 

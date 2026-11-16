@@ -52,6 +52,13 @@ covers one case, one model and one repetition. The original comparison retains
 the measured results. Any further iteration that uses this finding must replace
 the consumed case in the next held corpus before measuring improvement.
 
+The first matrix retained all 96 executable results. The three arms scored
+29/32, 31/32 and 30/32 on executable functionality. Median generation times were
+61.859s, 81.208s and 653.919s. Their recorded credit subtotals were 122.380940,
+234.714506 and 1504.6956735 across 31 available receipts per arm. Independent
+reviews identified false accepts and protocol violations. The first pin cannot
+qualify under the sealed release rule.
+
 The same frozen protocol retained a credit-validation attempt with seven passing
 external checks and a passing native Team replay. Both native workers ran at
 high effort, whereas the protocol required low for every actor. The attempt
@@ -75,6 +82,9 @@ controls, the schedule, and the exclusion of the evaluator and corpus from the
 generation package.
 At `881b2e6`, the integrated suite ran 494 tests in 351.124s with four skipped
 and zero failures. It includes the reviewed Team and Corporate seal controls.
+At `5492ae3`, the suite ran 495 tests in 331.357s with four skipped and zero
+failures. Current reviewed-plan commands passed both actual pinned wrapper and
+wrong-script, wrong-team, and late-actor controls.
 
 A Copilot development replay of the consumed case took 1973.437s and 5.443232
 credits at Luna/low. The independent reviewer replayed the two partial-write
@@ -102,6 +112,16 @@ The replacement cases use distinct existing components with stable shared
 interfaces. Each component is checked independently, and the composed SDK and
 real CLI are checked after integration. The old-component tests replay on the
 baseline and candidate.
+
+The first development trial of reviewed decomposition passed all nine external
+checks. The independent plan reviewer rejected one implementation owner and
+Copilot corrected the scope. The reviewer then required overlap evidence before
+dispatch, so the revised plan used two distinct owners serially. The final native
+gate rejected reuse of an actor that started before the corrected Team's seal.
+The next workflow records planned concurrency from available tool capability,
+checks observed overlap afterward, and uses a fresh reviewer for a new sealed
+plan. A separate native Luna/low capability probe observed 9.672s of overlapping
+work between two background workers.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
