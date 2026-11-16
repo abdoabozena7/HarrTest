@@ -127,11 +127,18 @@ class CopilotGuardTests(unittest.TestCase):
                 self.denied(self.event('task', {**args, **changes}))
         original = goal / 'original-request.txt'
         request_bytes = original.read_bytes()
-        original.write_text('A different request for the same fixture project.')
-        self.denied(self.event('task', args))
+        original.write_bytes(request_bytes + b'\n')
+        mismatch = self.decide(self.event('task', args))
+        self.assertEqual(mismatch['permissionDecision'], 'deny')
+        self.assertIn('root request and registered Team request must match', mismatch['permissionDecisionReason'])
         original.write_bytes(request_bytes)
+        changed_packet = self.decide(self.event('task', {**args, 'prompt': args['prompt'] + '\n'}))
+        self.assertEqual(changed_packet['permissionDecision'], 'deny')
+        self.assertIn('Copy the current Team plan_review message verbatim', changed_packet['permissionDecisionReason'])
         data.source.write_text('New code appeared before Corporate admission.\n')
-        self.denied(self.event('task', args))
+        stale = self.decide(self.event('task', args))
+        self.assertEqual(stale['permissionDecision'], 'deny')
+        self.assertIn('implementation baseline changed', stale['permissionDecisionReason'])
 
     def test_current_real_team_admission_and_stale_records(self):
         data, goal, state = self.registered_team()

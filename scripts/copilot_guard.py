@@ -129,30 +129,37 @@ def deny(reason):
     return {'permissionDecision': 'deny', 'permissionDecisionReason': 'HarrTest: ' + reason}
 
 
-def exact_plan_review(project, goal, args):
-    """Allow the private review packet from the current registered Team."""
-    if (not isinstance(args, dict) or args.keys() - TASK_FIELDS or args.get('name') != 'plan_review'
+def plan_review_issue(project, goal, args):
+    """Return the unmet precondition for a proposed pre-admission plan review."""
+    if (args.keys() - TASK_FIELDS
             or args.get('agent_type') not in ('general-purpose', 'task')
             or args.get('mode', 'sync') not in ('sync', 'background')
             or not all(isinstance(value, str) for value in args.values())):
-        return False
+        return 'Dispatch the exact plan_review packet as a new built-in general-purpose or task worker.'
     import team
     import team_v2
 
-    state_path = corporate.path(project, f'{proof.STATE}/teams/{goal}/state.json')
+    state_path = corporate.path(project, f'{proof.STATE}/teams/{goal}/state.json', exists=False)
     if not state_path.is_file() or state_path.stat().st_size > corporate.MAX_DOCUMENT:
-        return False
+        return f'Register the reviewed Corporate Team {goal} before dispatching plan_review.'
     state = team.load_state(project, goal)
     plan = state['plan']
     if (plan.get('schema') != 2 or plan.get('host', {}).get('kind') != 'copilot'
             or plan.get('decomposition') != 'reviewed-v1' or plan.get('root_protocol') != corporate.PROTOCOL):
-        return False
-    original = corporate.path(project, f'{proof.STATE}/root-goals/{goal}/original-request.txt')
+        return f'Team {goal} must use Copilot, reviewed-v1 and corporate-v1 before plan_review.'
+    original = corporate.path(project, f'{proof.STATE}/root-goals/{goal}/original-request.txt', exists=False)
     if not original.is_file() or original.stat().st_size > corporate.MAX_DOCUMENT:
-        return False
-    team.binding(project, goal, proof.file_hash(original))
+        return f'Initialize the root request for {goal} before dispatching plan_review.'
+    try:
+        team.binding(project, goal, proof.file_hash(original))
+    except (ValueError, proof.ProofError):
+        return 'The root request and registered Team request must match, including trailing whitespace.'
     packet = team_v2.plan_review_packet(project, state)
-    return args.get('prompt') == packet['message'] and team.snapshot(project, state['baseline']) == state['baseline']
+    if args.get('prompt') != packet['message']:
+        return 'Copy the current Team plan_review message verbatim into the native task prompt.'
+    if team.snapshot(project, state['baseline']) != state['baseline']:
+        return 'The implementation baseline changed after Team registration. Resolve the source drift before plan_review.'
+    return None
 
 
 def ready(project, goal):
@@ -168,10 +175,11 @@ def decide_task(project, goal, args):
     try:
         if isinstance(args, str):
             args = strict_io.loads(args)
-        if exact_plan_review(project, goal, args):
-            return {}
+        if isinstance(args, dict) and args.get('name') == 'plan_review':
+            issue = plan_review_issue(project, goal, args)
+            return deny(issue) if issue else {}
     except (ValueError, TypeError, KeyError, AttributeError, OSError, RecursionError, proof.ProofError):
-        pass
+        return deny('The native task or its registered review evidence is invalid. Inspect the current Team and root.')
     return deny(f'Before dispatching a worker for {goal}, seal the reviewed Corporate root and run '
                 f'team.py packets --team {goal}. Before sealing, dispatch only the exact plan_review '
                 'packet returned by Team init.')

@@ -154,6 +154,32 @@ checks. Its coordinator nevertheless edited the project directly and created
 no Team or root. The admission check was never reached in that trial. The result
 documents a workflow bypass, rather than a Team or Corporate pass.
 
+Two further trials on the same consumed TypeScript development task exercised
+the Copilot CLI 1.0.104 runtime with Luna/low. The second text-only trial used
+one native implementer for both components and a separate QA worker. The pinned
+Team replay passed, as did all 9 external checks in 267.132s at 3.2532295 AI
+credits. The run registered no Corporate seal.
+
+The first explicitly enrolled trial passed 9/9 external checks in 480.585s at
+6.0701035 AI credits. Its one implementation worker made four product patches
+from a child session with a different UUID. The parent editor guard did not
+cover those calls. The next pin checked the parent `task` call before a child
+could start. Copilot reported two review-dispatch denials and one product-edit
+denial. No child started and product source stayed byte-identical. That run
+passed the 5 preservation/control checks out of 9, took 200.384s and consumed
+1.8306245 AI credits. It finished without implementation or root acceptance.
+
+Read-only replay showed the later review attempt copied the exact registered
+packet. The saved original request contained one extra trailing newline, so
+Team binding rejected it before review. Guide and hook revisions preserve exact
+identity, expose the unmet precondition and reuse the authoritative snapshot.
+The mechanism is opt-in for the enrolled checkout and parent session. These
+observations cover native editor and `task` calls; shell and MCP continue under
+host permissions. The two terminal runs and projected evidence are retained in
+`development-corporate-guard-{1,2}/` and
+`development-review/corporate-guard-native-routing.json` under the local output
+directory. They are development evidence and excluded from the held matrix.
+
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
 Record source/current-config identities, raw tool results, model/subagent usage,
