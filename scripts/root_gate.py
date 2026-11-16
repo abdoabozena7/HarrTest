@@ -139,8 +139,9 @@ def team_outputs(binding):
     return outputs
 
 
-def reviewed_team_state(project, contract):
+def reviewed_team_binding(project, contract):
     import team
+    import team_v2
 
     team_id = contract['production_team']
     state = team.load_state(project, team_id)
@@ -148,14 +149,15 @@ def reviewed_team_state(project, contract):
     if plan.get('schema') != 2 or plan.get('decomposition') != REVIEWED_TEAM:
         raise proof.ProofError('Corporate root requires a Team plan with reviewed-v1 decomposition')
     team.binding(project, team_id, contract['request_sha256'])
-    return state['state_sha256']
+    review = team_v2.approved_decomposition(project, state)
+    return {'state_sha256': state['state_sha256'], 'review_sha256': review['sha256']}
 
 
 def check_production_team(project, contract, sealing):
     import team
 
-    if 'team_decomposition' in contract and sealing.get('team_state_sha256') != reviewed_team_state(project, contract):
-        raise proof.ProofError('Reviewed Team plan or baseline differs from the one sealed by the Corporate root')
+    if 'team_decomposition' in contract and sealing.get('reviewed_team') != reviewed_team_binding(project, contract):
+        raise proof.ProofError('Team plan, baseline or review differs from the Corporate root seal')
     team_id = contract["production_team"]
     binding = team.binding(project, team_id, contract["request_sha256"])
     if contract['schema'] == 4:
@@ -329,7 +331,7 @@ def main() -> int:
                 import corporate
                 sealed['corporate'] = corporate.seal_binding(goal.parents[2], goal, c)
             if 'team_decomposition' in c:
-                sealed['team_state_sha256'] = reviewed_team_state(goal.parents[2], c)
+                sealed['reviewed_team'] = reviewed_team_binding(goal.parents[2], c)
             proof.save(goal / "root-seal.json", sealed, exclusive=True)
             print("Root goal sealed. Child tests cannot redefine original requirements.")
             return 0

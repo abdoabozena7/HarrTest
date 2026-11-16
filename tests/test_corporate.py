@@ -577,6 +577,32 @@ class CorporateTests(unittest.TestCase):
         self.assertFalse(outcome['root_goal_achieved'], outcome)
         self.assertTrue(any('reviewed-v1 decomposition' in error for error in outcome['errors']), outcome)
 
+    def test_reviewed_root_binding_requires_and_retains_the_pre_edit_review(self):
+        import root_gate
+        import team_v2
+
+        plan = copy.deepcopy(self.team_plan)
+        plan.update(id='reviewed', decomposition='reviewed-v1',
+                    scope_rationale='The calculator API and its optional operand share one function and one write scope.')
+        plan['tasks'][0].update(responsibility='Implement the optional second operand in the calculator.',
+                                interface='total(a, b) keeps existing calls and accepts an omitted operand.',
+                                check='Invoke the calculator alone with one operand and expect seven.',
+                                scope_evidence=['src/calc.py'])
+        registration = team.init(self.project, plan)
+        contract = {**self.root, 'production_team': 'reviewed', 'team_decomposition': 'reviewed-v1'}
+        self.assertFalse(registration['ready'])
+        with self.assertRaisesRegex(ValueError, 'plan review is required before dispatch'):
+            root_gate.reviewed_team_binding(self.project, contract)
+        state = team.load_state(self.project, 'reviewed')
+        evidence = '.runtime-proof/teams/reviewed/plan-review.txt'
+        (self.project / evidence).write_text('The shared total() implementation and its checked public inputs justify one owner.',
+                                             encoding='utf-8')
+        review = team_v2.review_plan(self.project, state, evidence, 'pass')
+        self.assertEqual(root_gate.reviewed_team_binding(self.project, contract),
+                         {'state_sha256': state['state_sha256'], 'review_sha256': review['sha256']})
+        with self.assertRaisesRegex(proof.ProofError, 'differs from the Corporate root seal'):
+            root_gate.check_production_team(self.project, contract, {'reviewed_team': {'state_sha256': state['state_sha256']}})
+
     def test_legacy_root_may_not_claim_reviewed_team_decomposition(self):
         import root_gate
 

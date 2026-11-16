@@ -40,8 +40,9 @@ a post-change snapshot must never be relabeled baseline.
 
 Use [the schema4 template](../assets/templates/root-contract-v4.json). Keep root
 coverage, request spans, separate coverage challenge and integration child from
-schema3. Register the Team before sealing the Corporate root. The root seal pins
-the Team plan and baseline. Set `schema:4`, `protocol:"corporate-v1"` and the
+schema3. Register the Team and complete its scope review before sealing the
+Corporate root. The root seal pins the Team plan, baseline and accepted review.
+Set `schema:4`, `protocol:"corporate-v1"` and the
 following fields.
 
 ```json
