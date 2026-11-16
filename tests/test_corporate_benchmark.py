@@ -51,6 +51,22 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.freeze()
         return bench.prepare(self.experiment,case,"plain","weak-observed",1)
 
+    def test_corporate_editor_guard_profile_is_frozen_only_for_v5_development(self):
+        shutil.copy2(ROOT / 'scripts/copilot_guard.py', self.new / 'scripts/copilot_guard.py')
+        with patch.object(bench, 'preflight', return_value=self.fake_probe):
+            with self.assertRaisesRegex(ValueError, 'guarded development trial'):
+                bench.freeze(self.experiment, self.old, self.new, ['weak-observed', 'normal-observed'],
+                             kind='acceptance', corporate_guard_goal='mission')
+            plan = bench.freeze(self.experiment, self.old, self.new, ['weak-observed', 'normal-observed'],
+                                corporate_guard_goal='mission')
+        self.assertEqual(plan['corporate_guard_goal'], 'mission')
+        self.assertTrue((self.experiment / 'packages/v5/scripts/copilot_guard.py').is_file())
+        with self.assertRaisesRegex(ValueError, 'requires the V5 package'):
+            bench.prepare(self.experiment, 'py-batch-atomicity', 'plain', 'weak-observed', 1)
+        slot = bench.prepare(self.experiment, 'py-batch-atomicity', 'v5', 'weak-observed', 1)
+        meta = bench.load(slot / 'attempt.json')
+        self.assertTrue(meta['prompt'].startswith('$harrtest\n' + meta['case']['request']))
+
     def test_corpus_has_distinct_development_and_held_cases(self):
         rows=bench.cases()
         self.assertEqual(len(rows),16)

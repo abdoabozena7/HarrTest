@@ -238,11 +238,15 @@ def replay_original_checks(workspace, evidence, meta, tools, candidate_manifest)
             'status': 'UNVERIFIED' if not baseline_passed else 'PASS' if candidate_passed else 'FAIL'}
 
 
-def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400, credits=120, corpus=CORPUS, kind='development', seed=20261114):
+def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400, credits=120, corpus=CORPUS,
+           kind='development', seed=20261114, corporate_guard_goal=None):
     destination = Path(destination).resolve()
     if destination.exists():
         raise ValueError("Use a new immutable experiment directory")
     if kind not in {'development','acceptance'}:raise ValueError('Declare development or acceptance experiment')
+    if corporate_guard_goal is not None and (kind != 'development' or not isinstance(corporate_guard_goal, str)
+            or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}', corporate_guard_goal)):
+        raise ValueError('Declare a valid goal ID for an explicitly guarded development trial')
     if type(seed) is not int:raise ValueError('Execution-order seed must be an integer')
     if len(models) != 2 or len(set(models)) != 2 or any(not m or m == "auto" for m in models):
         raise ValueError("Pin two distinct concrete model IDs; Auto is not allowed")
@@ -253,6 +257,8 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
     for p, version in ((baseline, "4.1.0"), (candidate, "5.0.0")):
         if (p / "VERSION").read_text().strip() != version or not (p / "SKILL.md").is_file():
             raise ValueError("Wrong skill version: " + str(p))
+    if corporate_guard_goal and not (candidate / 'scripts/copilot_guard.py').is_file():
+        raise ValueError('The pinned candidate does not include the Corporate editor guard')
     probe = preflight(tools)
     if probe["blocked"]:
         raise ValueError("Missing live toolchain: " + ", ".join(probe["blocked"]))
@@ -282,6 +288,8 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
                        "Local source provenance is cooperative, not a hostile-writer sandbox.",
                        "Mixed complexity: two changes across independent existing components and six bounded acceptance changes. Synthetic projects exercise defined contracts and consumers at fixture scale.",
                        "Any acceptance case used to tune the harness becomes development data and requires a fresh declared comparison."]}
+    if corporate_guard_goal:
+        plan['corporate_guard_goal'] = corporate_guard_goal
     runtime_files = {}
     declared=[]
     for key in ('copilot','node','python','dotnet','tsc','msvc_env'):
@@ -619,6 +627,15 @@ def pin_settings(workspace, arm, model):
         "disabledSkills": ["harrtest"] if arm == "plain" else [], "model": model})
 
 
+def prepare_corporate_guard(workspace, python, goal, session_id):
+    script = workspace / '.github/skills/harrtest/scripts/copilot_guard.py'
+    result = command([python, '-B', script, 'config', '--project', workspace, '--goal', goal,
+                      '--session', session_id], workspace, 20)
+    if result['exit_code'] != 0:
+        raise ValueError('Could not configure the frozen Corporate editor guard')
+    save(workspace / '.github/hooks/harrtest-corporate-guard.json', json.loads(result['stdout']), exclusive=True)
+
+
 def configuration_inputs(workspace):
     """Hash benchmark controls without retaining configuration contents/secrets."""
     workspace=Path(workspace).resolve();result={}
@@ -731,6 +748,8 @@ def prepare(experiment, case_id, arm, model, repetition):
     experiment, plan = frozen(experiment)
     if arm not in ARMS or model not in plan["models"] or repetition not in (1, 2):
         raise ValueError("Attempt is outside the declared matrix")
+    if plan.get('corporate_guard_goal') and arm != 'v5':
+        raise ValueError('The guarded development profile requires the V5 package')
     case = next((r for r in plan["cases"] if r["id"] == case_id), None)
     if not case:
         raise ValueError("Unknown case")
@@ -1425,8 +1444,10 @@ import path from 'node:path';
 ''' + TASK_PIN_HOOK + SDK_PERMISSION + r'''
 const c=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const {CopilotClient,RuntimeConnection}=await import(pathToFileURL(c.sdk).href);
+const env={...process.env,HARRTEST_PARENT_SESSION_ID:c.sessionId};
+if(c.corporateGuardGoal)env.HARRTEST_CORPORATE_GOAL=c.corporateGuardGoal;
 const client=new CopilotClient({mode:'copilot-cli',workingDirectory:c.workspace,
- env:{...process.env,HARRTEST_PARENT_SESSION_ID:c.sessionId},
+ env,
  connection:RuntimeConnection.forStdio({path:c.runtime[0],args:[...c.runtime.slice(1),'--no-auto-update']})});
 const write=(name,value)=>fs.writeFileSync(c.output+'/'+name,JSON.stringify(value,null,2));
 const permission=(request,invocation)=>benchmarkPermission(request,invocation,c,
@@ -1502,6 +1523,9 @@ def _run_attempt(attempt, *, permit_generation=False):
                    'timeoutMs':budget['seconds']*1000,'maxAiCredits':budget['max_ai_credits'],
                    'readRoots':[str(Path(tools[key]).parent) for key in ('node','python','dotnet') if tools.get(key)]}
     configuration['sessionId']=str(uuid.uuid4())
+    if plan.get('corporate_guard_goal'):
+        configuration['corporateGuardGoal'] = plan['corporate_guard_goal']
+        prepare_corporate_guard(workspace, tools['python'], configuration['corporateGuardGoal'], configuration['sessionId'])
     host_home=Path(os.environ.get('COPILOT_HOME',Path.home()/'.copilot')).resolve()
     configuration['exactReadFiles']=[str(host_home/'session-state'/configuration['sessionId']/'events.jsonl')]
     save(attempt/'sdk-config.json',configuration)
@@ -1520,6 +1544,8 @@ def _run_attempt(attempt, *, permit_generation=False):
                settings_before=before_settings,settings_after={p:sha(p) for p in before_settings},
                source=tree(workspace),native_events_sha256=sha(attempt/'generation.jsonl') if (attempt/'generation.jsonl').exists() else None,
                transport='Copilot SDK session over the actual authenticated Copilot CLI process; same transport all arms')
+    if 'corporateGuardGoal' in configuration:
+        raw['corporate_guard_goal'] = configuration['corporateGuardGoal']
     sdk_result=load(attempt/'sdk-result.json') if (attempt/'sdk-result.json').exists() else {}
     if sdk_result.get('status')!='COMPLETED':raw['status']='FAILED' if not raw['timed_out'] else 'TIMEOUT'
     if before_settings!=raw['settings_after']:
@@ -1821,6 +1847,7 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='action',required=True)
     pre=sub.add_parser('preflight');pre.add_argument('--tools',type=Path)
     fr=sub.add_parser('freeze');fr.add_argument('--output',type=Path,required=True);fr.add_argument('--baseline-skill',type=Path,required=True);fr.add_argument('--candidate-skill',type=Path,required=True);fr.add_argument('--models',nargs=2,required=True);fr.add_argument('--tools',type=Path);fr.add_argument('--seconds',type=int,default=2400);fr.add_argument('--credits',type=int,default=120);fr.add_argument('--kind',choices=['development','acceptance'],default='development');fr.add_argument('--seed',type=int,default=20261114)
+    fr.add_argument('--corporate-guard-goal', help='Enroll the V5 development session in the local Corporate editor guard')
     prep=sub.add_parser('prepare');prep.add_argument('--experiment',type=Path,required=True);prep.add_argument('--case',required=True);prep.add_argument('--arm',choices=ARMS,required=True);prep.add_argument('--model',required=True);prep.add_argument('--repetition',type=int,choices=[1,2],required=True)
     ev=sub.add_parser('evaluate');ev.add_argument('--attempt',type=Path,required=True)
     run=sub.add_parser('run');run.add_argument('--attempt',type=Path,required=True);run.add_argument('--permit-generation',action='store_true')
@@ -1831,7 +1858,7 @@ def main(argv=None):
     args=parser.parse_args(argv)
     try:
         if args.action=='preflight': result=preflight(load(args.tools) if args.tools else None)
-        elif args.action=='freeze': result=freeze(args.output,args.baseline_skill,args.candidate_skill,args.models,tools=load(args.tools) if args.tools else None,seconds=args.seconds,credits=args.credits,kind=args.kind,seed=args.seed)
+        elif args.action=='freeze': result=freeze(args.output,args.baseline_skill,args.candidate_skill,args.models,tools=load(args.tools) if args.tools else None,seconds=args.seconds,credits=args.credits,kind=args.kind,seed=args.seed,corporate_guard_goal=args.corporate_guard_goal)
         elif args.action=='prepare': result={'attempt':str(prepare(args.experiment,args.case,args.arm,args.model,args.repetition))}
         elif args.action=='evaluate': result=evaluate_attempt(args.attempt)
         elif args.action=='run': result=run_attempt(args.attempt,permit_generation=args.permit_generation)

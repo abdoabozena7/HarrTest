@@ -12,6 +12,8 @@ the coordinator within its integration scope. For substantial work, complete
 the [Corporate pre-dispatch seal](references/corporate-workflow.md) first.
 When the plan, seal, or native worker capability is missing, keep that work
 unverified and continue with authorized discovery and setup.
+When the host explicitly supplies `HARRTEST_CORPORATE_GOAL`, use that goal ID
+for the reviewed Team and Corporate root. Complete its seal before product edits.
 
 ## Start from the project
 
