@@ -26,14 +26,8 @@ user's .copilot/session-state. It reads only the selected session's native event
 and keeps actual subprocess output and source hashes separate from host metadata.
 See [Corporate workflow](corporate-workflow.md) for the root quality contract.
 
-For a narrow change, the coordinator retains a compact contract/baseline and
-dispatches its one implementation packet, then collects the handoff, integrates
-without a token glue edit and dispatches the independent QA packet. QA runs the
-real old/new checks and records all six quality layer applicability/verdicts with
-observations in its evidence. Do not skip the native tester because the fix is
-small. Team receipts prove scopes, lifecycle and process results; six-layer
-semantic completeness of this lightweight narrative needs actual review.
-Use corporate-v1 for mechanically structured six-layer root acceptance.
+Team receipts establish scopes, lifecycle and recorded process results. Review
+the meaning of the six-layer QA evidence against the task's actual requirements.
 
 ### Minimal existing-change sequence
 
@@ -48,7 +42,12 @@ runtime instructions and retained baseline evidence. If an owner will edit a
 checker, give them the checker path and record its original source hash and
 baseline result separately.
 
-The template selects `decomposition: reviewed-v1`. Define each implementation
+For narrow work with one coherent responsibility and settled scope, record the
+source-backed reasoning and omit `decomposition` and `root_protocol`. `init`
+returns the single native owner packet directly. After integration, independent
+QA runs the relevant old and new checks and records all six quality layer verdicts.
+
+The template defaults to `decomposition: reviewed-v1`. Define each implementation
 responsibility, existing interface, independent check and `scope_evidence`.
 Evidence paths must refer to existing owned files or unchanged validation
 inputs. One responsibility can span several files when `scope_rationale`
@@ -56,6 +55,13 @@ explains which contract ties them together. Give truly separate responsibilities
 their own owners. For each `depends_on` entry, record what needed result makes
 the dependency necessary in `dependency_rationale`. Use independent owners in
 parallel when worker capacity allows.
+
+For substantial work, set `root_protocol` to `corporate-v1` in the Team plan.
+After the plan review passes, seal the schema-4 Corporate root with the same ID
+before running `packets`. The first `packets` command compares the live baseline
+and records admission against that seal. Later packets and repairs use the
+same seal as the source evolves. Native verification checks the seal and
+admission time against implementation and QA. See [Corporate workflow](corporate-workflow.md).
 
 When running in Copilot with a known session UUID or the host's explicit
 `HARRTEST_PARENT_SESSION_ID`, set `host.kind` to `copilot`. In Codex use `codex`
@@ -67,13 +73,13 @@ the host before sealing. A successful init does not identify the host for you.
 python <skill>/scripts/team.py --project . init --plan .runtime-proof/team-plan.json
 ```
 
-Dispatch the returned `plan_review` packet to a native `plan_review` worker
-separate from implementation and QA. It needs command execution and private
-evidence writes. In Copilot, use an available `general-purpose` agent if the
-built-in `task` worker restricts writes. The reviewer inspects the source,
-checks the owner boundaries and records the verdict with the packet's exact
-`review-plan` command and evidence path. Run the review command on its own once
-the evidence is saved. Wait for the native reviewer to finish. A failed review
+For `reviewed-v1`, dispatch the returned `plan_review` packet to a native
+`plan_review` worker separate from implementation and QA. It needs command
+execution and private evidence writes. In Copilot, use an available
+`general-purpose` agent if the built-in `task` worker restricts writes. The
+reviewer inspects the source and records its verdict on owner boundaries with
+the packet's exact `review-plan` command and evidence path. Save the evidence,
+then run the review command separately. Wait for the reviewer to finish. A failed review
 stays with the sealed plan. Use a new team ID and a fresh native `plan_review`
 actor for the corrected plan before editing product files. After a passing
 review, retrieve the packets:

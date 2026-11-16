@@ -371,6 +371,9 @@ def ready_packets(project, state):
 
 def repair(project, state, tid, evidence, observation):
     """Bind a failed integrated observation to an existing implementation owner."""
+    if state['plan'].get('schema') == 2 and state['plan'].get('root_protocol') == 'corporate-v1':
+        import team_v2
+        team_v2.corporate_admission(project, state)
     validation_message(project, state)
     tasks = {row['id']: row for row in state['plan']['tasks']}
     require(tid in tasks, 'Repair must return to a declared implementation owner')

@@ -29,6 +29,11 @@ def reviewed_plan(plan):
     )
 
 
+def corporate_seal(state, approval):
+    return {'root_hash': 'a' * 64, 'seal_sha256': 'b' * 64, 'sealed_at': proof.now(),
+            'team_state_sha256': state['state_sha256'], 'team_review_sha256': approval['sha256']}
+
+
 class ExistingCodeTeam(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -156,6 +161,58 @@ class ExistingCodeTeam(unittest.TestCase):
         self.assertIn('Reviewed responsibility', ready['message'])
         handoff = self.implement()
         self.assertEqual(handoff['plan_review'], approved['sha256'])
+
+    def test_corporate_root_admission_requires_original_source_once(self):
+        self.plan['root_protocol'] = 'corporate-v1'
+        with self.assertRaisesRegex(ValueError, 'requires reviewed-v1'):
+            self.start()
+        reviewed_plan(self.plan)
+        self.start()
+        approval = self.review_plan()
+        binding = corporate_seal(self.state, approval)
+        with self.assertRaisesRegex(proof.ProofError, 'sealed schema-4 root'):
+            team.ready_packets(self.project, self.state)
+        path = team.team_path(self.project, 'fix', 'corporate-dispatch.json', must_exist=False)
+        self.assertFalse(path.exists())
+        with self.assertRaisesRegex(ValueError, 'admit the sealed Corporate root'):
+            team_v2.packet(self.project, self.state, self.plan['tasks'][0])
+
+        def dispatch(project, state, *, baseline_current):
+            if baseline_current and team.snapshot(project, state['baseline']) != state['baseline']:
+                raise proof.ProofError('Source changed before Corporate dispatch')
+            return binding
+
+        path_to_source = self.project / 'calc.py'
+        original = path_to_source.read_bytes()
+        with patch('root_gate.require_corporate_dispatch', side_effect=dispatch) as root:
+            self.write('calc.py', 'def add(a,b): return a+b\n')
+            with self.assertRaisesRegex(proof.ProofError, 'Source changed before Corporate dispatch'):
+                team.ready_packets(self.project, self.state)
+            self.assertFalse(path.exists())
+            path_to_source.write_bytes(original)
+            ready, = team.ready_packets(self.project, self.state)
+            self.assertIn(binding['seal_sha256'], ready['message'])
+            retained = proof.load(path)
+            self.write('calc.py', 'def add(a,b): return a+b\n')
+            self.assertEqual(len(team.ready_packets(self.project, self.state)), 1)
+            receipt = team.handoff(self.project, self.state, self.plan['tasks'][0])
+            self.assertEqual(receipt['root_seal_sha256'], binding['seal_sha256'])
+            integrated, _ = team.integrate(self.project, self.state)
+            self.assertEqual(integrated['inputs'], {'arithmetic': receipt['sha256']})
+            self.assertEqual(proof.load(path), retained)
+            self.assertTrue(all(not call.kwargs['baseline_current'] for call in root.call_args_list[2:]))
+
+            qa_note = '.runtime-proof/teams/fix/qa.txt'
+            self.write(qa_note, 'The failed integration observation belongs to the current owner.')
+            team.review(self.project, self.state, qa_note, 'fail')
+            binding = dict(binding, seal_sha256='c' * 64)
+            with self.assertRaisesRegex(ValueError, 'differs from the current root seal'):
+                team.repair(self.project, self.state, 'arithmetic', qa_note, 'The current owner must repair this test.')
+            self.assertFalse(team.receipt_path(self.project, self.state, 'repair-arithmetic').exists())
+            binding = retained['binding']
+            repaired = team.repair(self.project, self.state, 'arithmetic', qa_note, 'The current owner must repair this test.')
+            self.assertIn(binding['seal_sha256'], repaired['packet']['message'])
+
 
     def test_plan_review_command_binds_the_exact_engine_and_scope(self):
         evidence = '.runtime-proof/teams/fix/plan-review.txt'
@@ -765,6 +822,41 @@ class CopilotAdapter(unittest.TestCase):
         self.trace(owner, integrated, check, qa, plan_review=approval, review_end=12)
         rejected = self.verify()
         self.assertIn('owner started before plan review completed', rejected['errors'][0])
+
+    def test_corporate_native_receipts_cannot_accept_a_pre_admission_start_or_write(self):
+        reviewed_plan(self.plan)
+        self.plan['root_protocol'] = 'corporate-v1'
+        self.plan['integration']['outputs'] = ['glue.py']
+        self.write('glue.py', '# existing integration scope\n')
+        self.start()
+        approval = self.review_plan()
+        begin = team.instant(self.state['created'])
+        binding = {**corporate_seal(self.state, approval), 'sealed_at': (begin + timedelta(seconds=9)).isoformat()}
+        with patch('root_gate.require_corporate_dispatch', return_value=binding):
+            with patch.object(proof, 'now', return_value=(begin + timedelta(seconds=10)).isoformat()):
+                team.ready_packets(self.project, self.state)
+            owner, integrated, check, qa, _ = self.deliver()
+            valid = self.trace(owner, integrated, check, qa, plan_review=approval)
+            result = self.verify()
+            self.assertTrue(result['passed'], result)
+            self.assertEqual(result['host_assurance']['corporate_dispatch']['binding'], binding)
+
+            early = deepcopy(valid)
+            for event in early:
+                if (event['data'].get('toolCallId') == 'dispatch-arithmetic'
+                        and event['type'] in {'tool.execution_start', 'subagent.started'}):
+                    event['timestamp'] = (team.instant(event['timestamp']) - timedelta(seconds=2)).isoformat()
+            self.save(sorted(early, key=lambda e: e['timestamp']))
+            self.assertIn('owner started before Corporate root admission', self.verify()['errors'][0])
+
+            early_write = [
+                self.event('tool.execution_start', 8, {'toolCallId': 'glue-before-seal', 'toolName': 'apply_patch',
+                                'arguments': 'patch', 'model': 'fixture-model'}),
+                self.event('tool.execution_complete', 8.1, {'toolCallId': 'glue-before-seal', 'success': True,
+                                'fileEdits': [{'path': str(self.project / 'glue.py'), 'kind': 'edit'}]}),
+            ]
+            self.save(sorted(valid + early_write, key=lambda e: e['timestamp']))
+            self.assertIn('Native product write preceded Corporate root admission', self.verify()['errors'][0])
 
     def test_correlated_native_subagent_file_edit_and_finite_qa_receipts_pass(self):
         owner, integrated, check, qa, _ = self.complete()

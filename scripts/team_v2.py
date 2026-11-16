@@ -174,6 +174,9 @@ def validate_plan(project, plan):
     t.validation_files(project, plan)
     reviewed = plan.get('decomposition') == 'reviewed-v1'
     t.require('decomposition' not in plan or reviewed, 'Unknown Team decomposition policy')
+    if 'root_protocol' in plan:
+        t.require(plan['root_protocol'] == 'corporate-v1' and reviewed,
+                  'Team root_protocol corporate-v1 requires reviewed-v1 decomposition')
     outcomes = plan.get('outcomes')
     t.require(isinstance(outcomes, dict) and outcomes, 'Declare original outcomes')
     for rid, value in outcomes.items():
@@ -374,9 +377,11 @@ def plan_review_packet(project, state):
     return packet
 
 
-def packet(project, state, task):
+def packet(project, state, task, *, admission=None):
     t = common()
     plan, tid = state['plan'], task['id']
+    if admission is None:
+        admission = corporate_admission(project, state)
     text = (f'You own implementation scope {tid}. Project: {Path(project).resolve().as_posix()}.\n'
             f'Pinned HarrTest: {Path(__file__).resolve().parents[1].as_posix()}.\n'
             f'Original request: {plan["request"]}\nExisting architecture/interfaces: {plan["contract"]}\n'
@@ -395,6 +400,8 @@ def packet(project, state, task):
         text += (f'\nReviewed responsibility: {task["responsibility"]}\n'
                  f'Interface: {task["interface"]}\nIndependent component check: {task["check"]}\n'
                  f'Reviewed sources: {", ".join(task["scope_evidence"])}')
+    if admission:
+        text += f'\nCorporate root seal SHA-256: {admission["binding"]["seal_sha256"]}.'
     repair = pending_repair(project, state, tid)
     if repair:
         text += (f'\nRepair current finding: {repair["observation"]}. '
@@ -462,20 +469,49 @@ def approved_decomposition(project, state):
     return receipt
 
 
+def corporate_admission(project, state, *, issue=False):
+    if state['plan'].get('root_protocol') != 'corporate-v1':
+        return None
+    import root_gate
+
+    t = common()
+    path = t.team_path(project, state['plan']['id'], 'corporate-dispatch.json', must_exist=False)
+    exists = path.is_file()
+    t.require(exists or issue, 'Use Team packets to admit the sealed Corporate root before dispatch')
+    binding = root_gate.require_corporate_dispatch(project, state, baseline_current=not exists)
+    if not exists:
+        admission = {'binding': binding, 'admitted_at': proof.now()}
+        admission['sha256'] = strict_io.digest(admission)
+        try:
+            proof.save(path, admission, exclusive=True)
+        except FileExistsError:
+            pass  # A concurrent caller may have admitted the same immutable root.
+    admission = proof.load(path)
+    digest = admission.pop('sha256')
+    t.require(strict_io.digest(admission) == digest and admission['binding'] == binding,
+              'Corporate dispatch admission differs from the current root seal')
+    t.require(t.instant(admission['admitted_at']) >= t.instant(binding['sealed_at']),
+              'Corporate dispatch admission predates the root seal')
+    return {**admission, 'sha256': digest}
+
+
 def handoff(project, state, task):
     t = common()
     t.validation_message(project, state)
+    admission = corporate_admission(project, state)
     files = t.snapshot(project, task['outputs'])
     deleted = deleted_paths(task)
     for rel, digest in files.items():
         t.require((digest is None) == (rel in deleted), 'Only declared deletions may be absent: ' + rel)
     t.require(any(value != state['baseline'][rel] for rel, value in files.items()),
               task['id'] + ': handoff must contain an actual change')
-    inputs = {dep: usable_handoff(project, state, dep)['sha256'] for dep in task['depends_on']}
+    inputs = {dep: usable_handoff(project, state, dep, admission=admission)['sha256'] for dep in task['depends_on']}
     extra = {}
     review = approved_decomposition(project, state)
     if review:
         extra['plan_review'] = review['sha256']
+    if admission:
+        extra['root_seal_sha256'] = admission['binding']['seal_sha256']
     path = t.receipt_path(project, state, 'repair-' + task['id'])
     if path.is_file():
         extra['repair'] = current_receipt(project, state, 'repair-' + task['id'])['sha256']
@@ -494,17 +530,22 @@ def pending_repair(project, state, tid):
     return repair if owner.get('repair') != repair['sha256'] else None
 
 
-def usable_handoff(project, state, tid):
+def usable_handoff(project, state, tid, *, admission=None):
     t = common()
     t.validation_message(project, state)
+    if admission is None:
+        admission = corporate_admission(project, state)
     t.require(not pending_repair(project, state, tid), tid + ': owner repair remains open')
     task = next(r for r in state['plan']['tasks'] if r['id'] == tid)
     receipt = current_receipt(project, state, tid)
     review = approved_decomposition(project, state)
     if review:
         t.require(receipt.get('plan_review') == review['sha256'], tid + ': handoff lacks the current plan review')
+    if admission:
+        t.require(receipt.get('root_seal_sha256') == admission['binding']['seal_sha256'],
+                  tid + ': handoff lacks the admitted Corporate root seal')
     t.require(set(receipt['files']) == set(task['outputs']), tid + ': receipt scope differs from sealed owner')
-    deps = {d: usable_handoff(project, state, d)['sha256'] for d in task['depends_on']}
+    deps = {d: usable_handoff(project, state, d, admission=admission)['sha256'] for d in task['depends_on']}
     t.require(receipt.get('inputs') == deps, tid + ': stale prerequisite handoff')
     return receipt
 
@@ -517,17 +558,18 @@ def ready_packets(project, state):
         if not path.is_file() or current_receipt(project, state, 'plan_review').get('verdict') == 'fail':
             return []
         approved_decomposition(project, state)
+    admission = corporate_admission(project, state, issue=True)
     ready = []
     for row in state['plan']['tasks']:
         try:
             for dep in row['depends_on']:
-                usable_handoff(project, state, dep)
+                usable_handoff(project, state, dep, admission=admission)
         except (ValueError, proof.ProofError):
             continue
         try:
-            usable_handoff(project, state, row['id'])
+            usable_handoff(project, state, row['id'], admission=admission)
         except (ValueError, proof.ProofError):
-            ready.append(packet(project, state, row))
+            ready.append(packet(project, state, row, admission=admission))
     return ready
 
 
@@ -535,7 +577,8 @@ def integrate(project, state):
     t = common()
     t.validation_message(project, state)
     plan = state['plan']
-    children = {r['id']: usable_handoff(project, state, r['id']) for r in plan['tasks']}
+    admission = corporate_admission(project, state)
+    children = {r['id']: usable_handoff(project, state, r['id'], admission=admission) for r in plan['tasks']}
     receipt = record(project, state, 'integration', t.snapshot(project, state['baseline']),
                      inputs={tid: row['sha256'] for tid, row in children.items()})
     evidence = f'{proof.STATE}/teams/{plan["id"]}/qa-evidence.txt'
@@ -636,7 +679,8 @@ def repair(project, state, tid, evidence, observation):
 def verify_structural(project, state, require_qa):
     t = common()
     t.validation_message(project, state)
-    children = {r['id']: usable_handoff(project, state, r['id']) for r in state['plan']['tasks']}
+    admission = corporate_admission(project, state)
+    children = {r['id']: usable_handoff(project, state, r['id'], admission=admission) for r in state['plan']['tasks']}
     if require_qa:
         integrated = current_receipt(project, state, 'integration')
         t.require(set(integrated['files']) == set(state['baseline']), 'Integrated source scope differs from plan')
@@ -996,11 +1040,19 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
     plan_review = None
     if plan.get('decomposition') == 'reviewed-v1':
         plan_review = verify_native_plan_review(project, state, parent, rows)
+    admission = corporate_admission(project, state)
+    if admission:
+        admitted = t.instant(admission['admitted_at'])
+        t.require(not any(when < admitted and not rel.startswith(proof.STATE + '/')
+                          for row in rows.values() for when, rel in row['writes']),
+                  'Native product write preceded Corporate root admission')
     builds, handoffs = {}, {}
     for tid, task in tasks.items():
         t.require(tid in rows, tid + ': missing native worker')
-        row, receipt = rows[tid], usable_handoff(project, state, tid)
+        row, receipt = rows[tid], usable_handoff(project, state, tid, admission=admission)
         t.require(row['id'] != parent and row['start'] >= created, tid + ': wrong native identity/start')
+        if admission:
+            t.require(row['start'] >= admitted, tid + ': owner started before Corporate root admission')
         t.require(not row.get('failed'), tid + ': native worker failed')
         if row.get('resume') is not None:
             raise t.NativeTurnPending(tid)
@@ -1045,6 +1097,8 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         reviewer = rows['qa']
         t.require(not reviewer.get('failed'), 'Native QA worker failed')
         t.require(reviewer['id'] not in {parent, *(v['id'] for v in builds.values())}, 'QA is not independent')
+        if admission:
+            t.require(reviewer['start'] >= admitted, 'QA started before Corporate root admission')
         if reviewer.get('resume') is not None:
             raise t.NativeTurnPending('qa')
         t.require_receipt_turn_finished(reviewer, [check, qa], 'qa')
@@ -1058,6 +1112,8 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
                  'limitation': 'Cooperative local host records, not a hostile-writer security boundary.'}
     if plan_review:
         assurance['plan_review'] = plan_review
+    if admission:
+        assurance['corporate_dispatch'] = admission
     return assurance
 
 
