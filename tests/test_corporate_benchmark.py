@@ -941,7 +941,7 @@ public static class StockCsv
         self.assertEqual(bench.tree(workspace), before)
 
     def test_summary_reports_reviewed_layer_failures_and_bound_credit_receipts(self):
-        attempt = self.attempt('py-monthly-report-utc')
+        attempt = self.attempt('py-retry-recovery')
         report = self.timeout_review(attempt)
         review = bench.load(report)
         for row in review['layers']:
