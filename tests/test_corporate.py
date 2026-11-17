@@ -762,6 +762,20 @@ class CorporateTests(unittest.TestCase):
         self.assertEqual(len(stale['missing']), 3)
         self.assertFalse(self.report_path.exists())
 
+    def test_report_scaffold_preserves_failed_check_execution(self):
+        self.report_path.unlink()
+        content = self.source.read_text(encoding='utf-8')
+        self.source.write_text(content.replace('return a + b', 'return a + b + 1'), encoding='utf-8')
+        for name in ('baseline', 'change', 'negative'):
+            self.run_check(name)
+        outcome = corporate.report_scaffold(self.goal)
+        self.assertEqual(outcome['status'], 'DRAFT_UNVERIFIED')
+        self.assertEqual({row['check']: row['status'] for row in outcome['observed']}, {
+            'verify/baseline': 'FAIL', 'verify/change': 'FAIL', 'verify/negative': 'PASS'})
+        draft = proof.load(self.report_path)
+        self.assertNotIn('review', draft)
+        self.assertEqual(len(draft['executions']), 3)
+
     def test_dispatch_refuses_changed_review_binding_and_changed_checker(self):
         goal, state, _ = self.reviewed_draft()
         corporate.scaffold(goal, 'verify', ['baseline'], 'calculator-owner')
