@@ -13,7 +13,9 @@ from uuid import uuid4
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'scripts'))
+import corporate
 import proof
+import strict_io
 import team
 import team_v2
 
@@ -861,6 +863,105 @@ class CopilotAdapter(unittest.TestCase):
 
     def verify(self):
         return team.verify_registered(self.project, 'fix', parent=self.parent, sessions=self.sessions)
+
+    def coverage_events(self, sec, revision, *, edit=None, changes=None):
+        goal = self.project / '.runtime-proof/root-goals/fix'
+        request = self.plan['request']
+        bindings = {'request_sha256': hashlib.sha256(request.encode()).hexdigest(),
+                    'segments_sha256': proof.digest(['spans', revision]),
+                    'acceptance_sha256': proof.digest(['acceptance', revision])}
+        prompt = corporate.coverage_review_message(goal, bindings, 'Coordinator "fixture" with café identity')
+        args = {'name': 'coverage_review', 'agent_type': 'general-purpose', 'mode': 'background',
+                'prompt': prompt, **(changes or {})}
+        dispatch, actor = str(uuid4()), str(uuid4())
+        events = [self.event('tool.execution_start', sec, {'toolName': 'task', 'toolCallId': dispatch,
+                  'arguments': args}), self.event('subagent.started', sec + .01,
+                  {'toolCallId': dispatch, 'agentDisplayName': 'coverage_review', 'model': 'fixture-model'}, actor),
+                  self.event('subagent.configured', sec + .02,
+                  {'model': 'fixture-model', 'reasoningEffort': 'low'}, actor)]
+        if edit:
+            call = str(uuid4())
+            events.extend([self.event('tool.execution_start', sec + .03,
+                           {'toolCallId': call, 'toolName': 'apply_patch', 'parentToolCallId': dispatch}, actor),
+                           self.event('tool.execution_complete', sec + .04, {'toolCallId': call, 'success': True,
+                           'parentToolCallId': dispatch, 'fileEdits': [{'path': str(self.project / edit),
+                                                                       'kind': 'edit'}]}, actor)])
+        events.append(self.event('subagent.completed', sec + .05, {'toolCallId': dispatch}, actor))
+        return events
+
+    def test_corporate_coverage_review_revisions_keep_team_identity_and_writes(self):
+        reviewed_plan(self.plan)
+        self.plan['root_protocol'] = 'corporate-v1'
+        self.start()
+        approval = self.review_plan()
+        begin = team.instant(self.state['created'])
+        binding = {**corporate_seal(self.state, approval), 'sealed_at': (begin + timedelta(seconds=9)).isoformat()}
+        with patch('root_gate.require_corporate_dispatch', return_value=binding):
+            with patch.object(proof, 'now', return_value=(begin + timedelta(seconds=10)).isoformat()):
+                team.ready_packets(self.project, self.state)
+            owner, integrated, check, qa, _ = self.deliver()
+            valid = self.trace(owner, integrated, check, qa, plan_review=approval)
+            first, second = self.coverage_events(6, 1), self.coverage_events(7, 2)
+            self.save(sorted(valid + first + second, key=lambda e: e['timestamp']))
+            result = self.verify()
+            self.assertTrue(result['passed'], result)
+            self.assertEqual(set(result['host_assurance']['workers']), {'arithmetic'})
+
+            reviewer_edit = self.coverage_events(7, 2, edit='calc.py')
+            self.save(sorted(valid + first + reviewer_edit, key=lambda e: e['timestamp']))
+            self.assertIn('unassigned agent wrote product files', self.verify()['errors'][0])
+
+            late = self.coverage_events(9.5, 2)
+            self.save(sorted(valid + first + late, key=lambda e: e['timestamp']))
+            self.assertIn('coverage reviewer started after Corporate root sealing', self.verify()['errors'][0])
+
+            prompt = second[0]['data']['arguments']['prompt']
+            request_hash = hashlib.sha256(self.plan['request'].encode()).hexdigest()
+            for changes in ({'prompt': prompt + '\n'}, {'prompt': prompt.replace(request_hash, 'b' * 64)},
+                            {'agent_type': 'explore'}, {'mode': 'resume'}):
+                with self.subTest(changes=changes.keys()):
+                    first_invalid = self.coverage_events(6, 1, changes=changes)
+                    second_invalid = self.coverage_events(7, 2, changes=changes)
+                    self.save(sorted(valid + first_invalid + second_invalid, key=lambda e: e['timestamp']))
+                    self.assertIn('unique originating named task', self.verify()['errors'][0])
+
+    def test_new_corporate_plan_reserves_coverage_name_without_rejecting_legacy_owner(self):
+        reviewed_plan(self.plan)
+        self.plan['root_protocol'] = 'corporate-v1'
+        self.plan['tasks'][0]['id'] = 'coverage_review'
+        with self.assertRaisesRegex(ValueError, 'Reserved Corporate coverage reviewer name'):
+            self.start()
+
+        self.state = {'plan': self.plan, 'plan_sha256': strict_io.digest(self.plan),
+                      'baseline': team.snapshot(self.project, ['calc.py']),
+                      'validation_inputs': {}, 'created': proof.now()}
+        self.state['state_sha256'] = strict_io.digest(self.state)
+        proof.save(team.team_path(self.project, 'fix', must_exist=False), self.state)
+        self.assertEqual(team.load_state(self.project, 'fix'), self.state)
+        approval = self.review_plan()
+        begin = team.instant(self.state['created'])
+        binding = {**corporate_seal(self.state, approval), 'sealed_at': (begin + timedelta(seconds=9)).isoformat()}
+        with patch('root_gate.require_corporate_dispatch', return_value=binding):
+            with patch.object(proof, 'now', return_value=(begin + timedelta(seconds=10)).isoformat()):
+                team.ready_packets(self.project, self.state)
+            owner, integration, check, qa, _ = self.deliver()
+            rows = self.trace(owner, integration, check, qa, plan_review=approval)
+            for event in rows:
+                data = event['data']
+                args = data.get('arguments')
+                if isinstance(args, dict) and args.get('name') == 'arithmetic':
+                    args['name'] = 'coverage_review'
+                if data.get('agentDisplayName') == 'arithmetic':
+                    data['agentDisplayName'] = 'coverage_review'
+            valid = rows + self.coverage_events(6, 1)
+            self.save(sorted(valid, key=lambda e: e['timestamp']))
+            result = self.verify()
+            self.assertTrue(result['passed'], result)
+            self.assertEqual(set(result['host_assurance']['workers']), {'coverage_review'})
+
+            duplicate_owner = self.coverage_events(13, 2, changes={'prompt': 'Second owner with legacy label.'})
+            self.save(sorted(valid + duplicate_owner, key=lambda e: e['timestamp']))
+            self.assertIn('unique originating named task', self.verify()['errors'][0])
 
     def test_reviewed_decomposition_requires_early_native_plan_reviewer_command(self):
         reviewed_plan(self.plan)

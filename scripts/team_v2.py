@@ -21,6 +21,7 @@ MAX_NATIVE_WINDOW_BYTES = 32 * 1024 * 1024
 MAX_NATIVE_WINDOW_EVENTS = 100_000
 MAX_NATIVE_PENDING_CALLS = 4096
 MAX_NATIVE_SCAN_BYTES = 1024 * 1024 * 1024
+COPILOT_COVERAGE_REVIEW = 'coverage_review'
 
 
 class HostEvidenceUnavailable(ValueError):
@@ -273,6 +274,8 @@ def independent_pairs(tasks):
 def init(project, plan):
     t = common()
     tasks, owned = validate_plan(project, plan)
+    if plan.get('root_protocol') == 'corporate-v1' and plan.get('host', {}).get('kind') == 'copilot':
+        t.require(COPILOT_COVERAGE_REVIEW not in tasks, 'Reserved Corporate coverage reviewer name')
     validation_inputs = t.validation_snapshot(project, plan)
     root = Path(project).resolve()
     outputs = {rel: (root / rel).resolve() for rel in owned}
@@ -798,7 +801,48 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
     del worker['resume']
 
 
-def read_copilot_traces(project, parent, sessions, since, *, review_team=None):
+def is_copilot_coverage_review(project, review_team, request, args):
+    """Recognize the exact historical packet, including superseded draft hashes."""
+    import corporate
+    from copilot_guard import TASK_FIELDS
+
+    if (args.get('name') != COPILOT_COVERAGE_REVIEW or args.keys() - TASK_FIELDS
+            or args.get('agent_type') not in ('general-purpose', 'task')
+            or args.get('mode', 'sync') not in ('sync', 'background')
+            or not all(isinstance(value, str) for value in args.values())):
+        return False
+    prompt = args.get('prompt', '')
+    goal = project / proof.STATE / 'root-goals' / review_team
+    start = (f'Independently review coverage of {(goal / "original-request.txt").as_posix()} '
+             f'against {(goal / "root-contract.json").as_posix()}.\n'
+             'Current request, span and acceptance bindings: ')
+    details = prompt.removeprefix(start)
+    if details == prompt:
+        return False
+    bindings_text, _, remaining = details.partition('.\n')
+    _, marker, planner_text = remaining.partition('method fresh-context-agent, planner ')
+    planner_json, delimiter, _ = planner_text.rpartition(', your actual reviewer identity, concrete observations, ')
+    if not marker or not delimiter:
+        return False
+    try:
+        bindings = strict_io.loads(bindings_text)
+        planner = strict_io.loads(planner_json)
+        corporate.text(planner, 'Actual planner identity')
+    except (ValueError, TypeError, RecursionError, proof.ProofError):
+        return False
+    if (not isinstance(bindings, dict)
+            or bindings.keys() != {'request_sha256', 'segments_sha256', 'acceptance_sha256'}
+            or any(not isinstance(digest, str) or not common().re.fullmatch(r'[0-9a-f]{64}', digest)
+                   for digest in bindings.values())):
+        return False
+    request = request.replace('\r\n', '\n')
+    if bindings['request_sha256'] not in {hashlib.sha256(s.encode('utf-8')).hexdigest()
+                                         for s in (request, request.replace('\n', '\r\n'))}:
+        return False
+    return prompt == corporate.coverage_review_message(goal, bindings, planner)
+
+
+def read_copilot_traces(project, parent, sessions, since, *, review_team=None, corporate_request=None):
     """Read Copilot's persisted session-events v1, not model-authored summaries.
 
     Format: CLI1.0.104 live native probe and the installed official SDK's
@@ -910,15 +954,21 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None):
             call_id = payload.get('toolCallId')
             args = dispatch.pop(call_id, {}).get('arguments', {})
             label = args.get('name') if isinstance(args, dict) else None
-            t.require(label and label == payload.get('agentDisplayName') and label not in rows
+            t.require(label and label == payload.get('agentDisplayName')
                       and isinstance(agent, str) and agent not in by_agent and agent != parent,
                       'Copilot subagent lacks a unique originating named task')
+            role = label
+            if (label == COPILOT_COVERAGE_REVIEW and corporate_request is not None and review_team is not None
+                    and is_copilot_coverage_review(project, review_team, corporate_request, args)):
+                # Keep review activity observable without claiming an implementation role.
+                role = f'{COPILOT_COVERAGE_REVIEW}:{agent}'
+            t.require(role not in rows, 'Copilot subagent lacks a unique originating named task')
             current = row(agent, when, payload.get('model'))
             current['dispatch_call'] = call_id
             current['interactions'] = set()
             current['turn_starts'].append(when)
             current['active'] = when
-            by_agent[agent], rows[label] = current, current
+            by_agent[agent], rows[role] = current, current
         elif kind == 'subagent.configured':
             t.require(current is not None and agent, 'Copilot subagent configuration lacks identity')
             current['model'], current['effort'] = payload.get('model'), payload.get('reasoningEffort')
@@ -999,7 +1049,9 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None):
 def copilot_adapter(project, state, parent, sessions, require_qa):
     plan = state['plan']
     review_team = plan['id'] if plan.get('decomposition') == 'reviewed-v1' else None
-    rows = read_copilot_traces(project, parent, sessions, common().instant(state['created']), review_team=review_team)
+    corporate_request = plan['request'] if plan.get('root_protocol') == 'corporate-v1' else None
+    rows = read_copilot_traces(project, parent, sessions, common().instant(state['created']),
+                               review_team=review_team, corporate_request=corporate_request)
     return verify_native_rows(project, state, parent, rows, require_qa, 'copilot-session-events-v1')
 
 
@@ -1051,6 +1103,10 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
     admission = corporate_admission(project, state)
     if admission:
         admitted = t.instant(admission['admitted_at'])
+        sealed = t.instant(admission['binding']['sealed_at'])
+        t.require(not any(source['start'] >= sealed for role, source in rows.items()
+                          if role.startswith(COPILOT_COVERAGE_REVIEW + ':')),
+                  'Native coverage reviewer started after Corporate root sealing')
         t.require(not any(when < admitted and not rel.startswith(proof.STATE + '/')
                           for row in rows.values() for when, rel in row['writes']),
                   'Native product write preceded Corporate root admission')
