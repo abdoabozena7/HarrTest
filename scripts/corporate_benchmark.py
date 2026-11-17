@@ -244,15 +244,20 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
     if destination.exists():
         raise ValueError("Use a new immutable experiment directory")
     if kind not in {'development','acceptance'}:raise ValueError('Declare development or acceptance experiment')
-    if corporate_guard_goal is not None and (kind != 'development' or not isinstance(corporate_guard_goal, str)
+    if corporate_guard_goal is not None and (not isinstance(corporate_guard_goal, str)
             or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}', corporate_guard_goal)):
-        raise ValueError('Declare a valid goal ID for an explicitly guarded development trial')
+        raise ValueError('Declare a valid goal ID for the explicitly enrolled Corporate profile')
     if type(seed) is not int:raise ValueError('Execution-order seed must be an integer')
     if len(models) != 2 or len(set(models)) != 2 or any(not m or m == "auto" for m in models):
         raise ValueError("Pin two distinct concrete model IDs; Auto is not allowed")
     if not isinstance(seconds, int) or not 60 <= seconds <= 7200 or not isinstance(credits, int) or credits < 30:
         raise ValueError("Invalid common attempt bounds")
     rows = cases(corpus)
+    guard_cases = None
+    if corporate_guard_goal and kind == 'acceptance':
+        guard_cases = sorted(case['id'] for case in rows if case['split'] == 'acceptance' and case.get('complexity'))
+        if not guard_cases:
+            raise ValueError('Guarded comparison requires predeclared substantial held cases')
     baseline, candidate = Path(baseline).resolve(), Path(candidate).resolve()
     for p, version in ((baseline, "4.1.0"), (candidate, "5.0.0")):
         if (p / "VERSION").read_text().strip() != version or not (p / "SKILL.md").is_file():
@@ -290,6 +295,8 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
                        "Any acceptance case used to tune the harness becomes development data and requires a fresh declared comparison."]}
     if corporate_guard_goal:
         plan['corporate_guard_goal'] = corporate_guard_goal
+    if guard_cases is not None:
+        plan['corporate_guard_cases'] = guard_cases
     runtime_files = {}
     declared=[]
     for key in ('copilot','node','python','dotnet','tsc','msvc_env'):
@@ -764,6 +771,14 @@ def prepare_corporate_guard(workspace, python, goal, session_id):
     save(workspace / '.github/hooks/harrtest-corporate-guard.json', json.loads(result['stdout']), exclusive=True)
 
 
+def attempt_guard_goal(plan, attempt):
+    goal = plan.get('corporate_guard_goal')
+    if goal and attempt['arm'] == 'v5' and (
+            plan['kind'] == 'development' or attempt['case']['id'] in plan['corporate_guard_cases']):
+        return goal
+    return None
+
+
 def configuration_inputs(workspace):
     """Hash benchmark controls without retaining configuration contents/secrets."""
     workspace=Path(workspace).resolve();result={}
@@ -876,7 +891,7 @@ def prepare(experiment, case_id, arm, model, repetition):
     experiment, plan = frozen(experiment)
     if arm not in ARMS or model not in plan["models"] or repetition not in (1, 2):
         raise ValueError("Attempt is outside the declared matrix")
-    if plan.get('corporate_guard_goal') and arm != 'v5':
+    if plan.get('corporate_guard_goal') and plan['kind'] == 'development' and arm != 'v5':
         raise ValueError('The guarded development profile requires the V5 package')
     case = next((r for r in plan["cases"] if r["id"] == case_id), None)
     if not case:
@@ -1780,9 +1795,10 @@ def _run_attempt(attempt, *, permit_generation=False):
                    'timeoutMs':budget['seconds']*1000,'maxAiCredits':budget['max_ai_credits'],
                    'readRoots':[str(Path(tools[key]).parent) for key in ('node','python','dotnet') if tools.get(key)]}
     configuration['sessionId']=str(uuid.uuid4())
-    if plan.get('corporate_guard_goal'):
-        configuration['corporateGuardGoal'] = plan['corporate_guard_goal']
-        prepare_corporate_guard(workspace, tools['python'], configuration['corporateGuardGoal'], configuration['sessionId'])
+    guard_goal = attempt_guard_goal(plan, meta)
+    if guard_goal:
+        configuration['corporateGuardGoal'] = guard_goal
+        prepare_corporate_guard(workspace, tools['python'], guard_goal, configuration['sessionId'])
     host_home=Path(os.environ.get('COPILOT_HOME',Path.home()/'.copilot')).resolve()
     configuration['exactReadFiles']=[str(host_home/'session-state'/configuration['sessionId']/'events.jsonl')]
     save(attempt/'sdk-config.json',configuration)
@@ -2095,16 +2111,20 @@ def summarize(experiment):
     qualified=(plan.get('kind')=='acceptance' and all(x['missing']==0 and x['unreviewed']==0 for x in counts.values())
                and counts['v5']['false_accepts']==0
                and counts['v5']['complete_quality_passed']>max(counts['plain']['complete_quality_passed'],counts['v4.1']['complete_quality_passed']))
-    return {'schema':1,'kind':plan.get('kind','development'),'declared_attempts':96,'attempts':rows,'counts':counts,'release_qualified':qualified,
+    result = {'schema':1,'kind':plan.get('kind','development'),'declared_attempts':96,'attempts':rows,'counts':counts,'release_qualified':qualified,
             'metric_scope':'Regression, security and architecture counts are failed independent layer verdicts per attempt, not distinct findings. Credit totals cover the reported subtotal only. Time and performance summaries identify their observed denominators.',
             'limitation':'Independent operator-supplied six-layer assessments on current source and actual completion claims required for all attempts; functional counts alone cannot qualify Corporate release. Attribution remains cooperative local evidence.'}
+    if 'corporate_guard_cases' in plan:
+        result['candidate_profile'] = {'corporate_guard_cases': plan['corporate_guard_cases'],
+                                       'enrollment_arm': 'v5', 'goal': plan['corporate_guard_goal']}
+    return result
 
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='action',required=True)
     pre=sub.add_parser('preflight');pre.add_argument('--tools',type=Path)
     fr=sub.add_parser('freeze');fr.add_argument('--output',type=Path,required=True);fr.add_argument('--baseline-skill',type=Path,required=True);fr.add_argument('--candidate-skill',type=Path,required=True);fr.add_argument('--models',nargs=2,required=True);fr.add_argument('--tools',type=Path);fr.add_argument('--seconds',type=int,default=2400);fr.add_argument('--credits',type=int,default=120);fr.add_argument('--kind',choices=['development','acceptance'],default='development');fr.add_argument('--seed',type=int,default=20261114)
-    fr.add_argument('--corporate-guard-goal', help='Enroll the V5 development session in the local Corporate editor guard')
+    fr.add_argument('--corporate-guard-goal', help='Enroll V5 on substantial held cases or in a development trial')
     prep=sub.add_parser('prepare');prep.add_argument('--experiment',type=Path,required=True);prep.add_argument('--case',required=True);prep.add_argument('--arm',choices=ARMS,required=True);prep.add_argument('--model',required=True);prep.add_argument('--repetition',type=int,choices=[1,2],required=True)
     ev=sub.add_parser('evaluate');ev.add_argument('--attempt',type=Path,required=True)
     run=sub.add_parser('run');run.add_argument('--attempt',type=Path,required=True);run.add_argument('--permit-generation',action='store_true')

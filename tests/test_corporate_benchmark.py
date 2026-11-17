@@ -64,12 +64,9 @@ class CorporateBenchmarkTests(unittest.TestCase):
             self.freeze(corpus=path)
         return bench.prepare(self.experiment,case,"plain","weak-observed",1)
 
-    def test_corporate_editor_guard_profile_is_frozen_only_for_v5_development(self):
+    def test_corporate_editor_guard_profile_for_v5_development(self):
         shutil.copy2(ROOT / 'scripts/copilot_guard.py', self.new / 'scripts/copilot_guard.py')
         with patch.object(bench, 'preflight', return_value=self.fake_probe):
-            with self.assertRaisesRegex(ValueError, 'guarded development trial'):
-                bench.freeze(self.experiment, self.old, self.new, ['weak-observed', 'normal-observed'],
-                             kind='acceptance', corporate_guard_goal='mission')
             plan = bench.freeze(self.experiment, self.old, self.new, ['weak-observed', 'normal-observed'],
                                 corporate_guard_goal='mission')
         self.assertEqual(plan['corporate_guard_goal'], 'mission')
@@ -79,6 +76,29 @@ class CorporateBenchmarkTests(unittest.TestCase):
         slot = bench.prepare(self.experiment, 'py-batch-atomicity', 'v5', 'weak-observed', 1)
         meta = bench.load(slot / 'attempt.json')
         self.assertTrue(meta['prompt'].startswith('$harrtest\n' + meta['case']['request']))
+
+    def test_acceptance_guard_profiles_v5_on_the_frozen_substantial_cases(self):
+        shutil.copy2(ROOT / 'scripts/copilot_guard.py', self.new / 'scripts/copilot_guard.py')
+        with patch.object(bench, 'preflight', return_value=self.fake_probe):
+            plan = bench.freeze(self.experiment, self.old, self.new, ['weak-observed', 'normal-observed'],
+                                kind='acceptance', corporate_guard_goal='mission')
+        cases = [case for case in plan['cases'] if case['split'] == 'acceptance']
+        guarded = sorted(case['id'] for case in cases if case.get('complexity'))
+        self.assertEqual(plan['corporate_guard_cases'], guarded)
+        self.assertEqual(len(plan['execution_order']), 96)
+        for arm in bench.ARMS:
+            slot = bench.prepare(self.experiment, guarded[0], arm, 'weak-observed', 1)
+            metadata = bench.load(slot / 'attempt.json')
+            self.assertEqual(metadata['arm'], arm)
+            self.assertEqual(bench.attempt_guard_goal(plan, metadata), 'mission' if arm == 'v5' else None)
+            self.assertFalse((slot / 'work/.github/hooks/harrtest-corporate-guard.json').exists())
+        bounded = next(case['id'] for case in cases if case['id'] not in guarded)
+        narrow = bench.prepare(self.experiment, bounded, 'v5', 'normal-observed', 2)
+        self.assertIsNone(bench.attempt_guard_goal(plan, bench.load(narrow / 'attempt.json')))
+        summary = bench.summarize(self.experiment)
+        self.assertEqual(summary['candidate_profile'], {'corporate_guard_cases': guarded,
+                                                         'enrollment_arm': 'v5', 'goal': 'mission'})
+        self.assertFalse(summary['release_qualified'])
 
     def test_corpus_has_distinct_development_and_held_cases(self):
         rows=bench.cases()
