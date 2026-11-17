@@ -531,6 +531,19 @@ class CorporateTests(unittest.TestCase):
         self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
         self.assertFalse(json.loads(rejected.stdout)['root_goal_achieved'])
 
+    def test_schema4_root_flags_unowned_source_even_after_current_checks_pass(self):
+        unowned = self.project / 'src/new_policy.json'
+        unowned.write_text('{"verify": false}', encoding='utf-8')
+        self.finish()
+        self.assertTrue(self.result()['passed'], self.result())
+        args = [sys.executable, '-B', str(ROOT / 'scripts/root_gate.py'), 'verify', '--goal', str(self.goal)]
+        rejected = subprocess.run(args, capture_output=True, text=True)
+        self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
+        evidence = json.loads(rejected.stdout)
+        self.assertTrue(evidence['corporate']['passed'])
+        self.assertIn('Production team: Corporate source changed outside sealed Team ownership: src/new_policy.json',
+                      evidence['errors'])
+
     def copied_verifier(self):
         """Execute a real separate helper package without altering tracked code."""
         package = self.project / 'verifier-copy'

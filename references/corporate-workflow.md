@@ -185,6 +185,10 @@ proceed through the normal permission flow. [GitHub Copilot hooks reference](htt
 Use [Team schema2](production-teams.md) for bounded owners and actual host capacity.
 Parallelize independent ready scopes, serialize dependencies and shared resources,
 and route failures to existing owners. Integration can be validation-only.
+Final root verification compares the baseline and candidate inside the declared
+source paths. Every changed file in that comparison needs a sealed Team owner
+or a declared integration output. Review the full project diff as well so a
+file omitted from the declared source paths can still be found.
 Run changed-behavior and preservation checks through the proof collector.
 If QA finds an apparent inherited fault, replay the same condition on baseline
 and candidate without changing the oracle. Record the affected requirements and

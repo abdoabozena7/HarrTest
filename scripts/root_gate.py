@@ -161,8 +161,18 @@ def check_production_team(project, contract, sealing):
     team_id = contract["production_team"]
     binding = team.binding(project, team_id, contract["request_sha256"])
     if contract['schema'] == 4:
+        import corporate
+
         state = team.load_state(project, team_id)
-        _corporate_team_scope(project, contract, state, binding)
+        plan = _corporate_team_scope(project, contract, state, binding)
+        baseline = plan['baseline']['source']['files']
+        current = corporate.source_snapshot(project, plan['source_paths'])['files']
+        owned = {team.product_key(rel) for rel in team_outputs(binding)}
+        unowned = sorted(rel for rel in baseline.keys() | current.keys()
+                         if baseline.get(rel) != current.get(rel) and team.product_key(rel) not in owned)
+        if unowned:
+            raise proof.ProofError('Corporate source changed outside sealed Team ownership: '
+                                   + ', '.join(unowned[:10]))
     else:
         child_id = contract["integration"]["task_id"]
         path = proof.relative_file(project / proof.STATE, child_id)
