@@ -99,6 +99,25 @@ SHA-256 `af67a653e4a87eea48d3d3aacdc96d7e862423bd091bcf4605c08dd8dea0c68a`.
 The next comparison moves the three cases that informed corrective rules into
 development and freezes replacement cases before Copilot runs them.
 
+### Third frozen comparison
+
+The third comparison used `84ea616` with three replacement held cases and
+explicit local V5 guard enrollment on the two predeclared multi-component
+cases. The driver and independent reviewers retained all 96 slots. Generation
+completed in 13 attempts, including four matched blocks with all arms completed.
+The other 83 failed in Copilot's model discovery or response transport. Forty
+failed before a native session started. Forty-three failed during model
+responses. The diagnostics include DNS, authentication, connection resets,
+closed streams and timeouts. They leave the underlying cause undetermined.
+
+Fixed-denominator complete artifact quality was 2/32, 3/32 and 3/32, with 2,
+2 and 1 false accepts in arm order. The availability collapse leaves this run
+unqualified for release and unsuitable for measuring a comparative gain. The
+third summary is `output/v5-corporate/acceptance-v5-6/final-summary.json`,
+SHA-256 `f777a3c8c21d6d6ab86b67437ecab3d13e8acf766b3ca57b68cb07000c22b9d`.
+The archive includes an independent runtime audit with counts and a protocol
+digest. A future experiment keeps these outcomes and uses a new frozen directory.
+
 ### Workflow development evidence
 
 The same frozen protocol retained a credit-validation attempt with seven passing
@@ -228,6 +247,24 @@ remained `ROOT_GOAL_UNVERIFIED`. The coverage review required a separate native
 task, which the enrolled parent could not start before admission in that pin.
 The next revision provides exact scope and coverage review packets and asks the
 scope reviewer to check the smallest viable split against actual interfaces.
+
+In the fourth enrolled development trial, Luna's first native plan reviewer
+rejected a single implementation owner. The model registered two independent
+owners and a fresh plan review passed. Six successive request coverage reviews
+did not approve the draft within the generation budget. No implementation
+worker started, no product changes landed and 5/9 external checks passed.
+
+The fifth trial used a consumed C# project. Luna sealed the root and admitted
+implementation before two owners started 2ms apart and overlapped 61.367s.
+Separate QA and final evidence reviewers ran. All 8 external checks and the
+artifact guard passed in 2286.388s at 43.1642975 credits. Root verification
+reported two issues: native nested reviewer tasks lacked origin handling, and
+baseline/candidate replay used identical executed commands and assertions with
+different normal check roles. The nested parser was tested on the full
+20,986,008-byte persisted native journal. It retained two nested helpers and
+all four private edits. The replay validator accepts matching normal check
+roles without waiving differences in command, mode, assertions or exit codes.
+The original development result remains `ROOT_GOAL_UNVERIFIED`.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.

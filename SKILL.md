@@ -149,6 +149,10 @@ including optional controls and failure triggers. Exercise the valid alternate
 values and malformed shapes or types the contract rejects. For a rejected
 operation that can cause side effects, assert the before/after state at the
 rejection boundary as well as the public response.
+For an affected representation or conversion, check valid boundary values that
+still have representable outputs. Cite the accepted input domain and actual
+runtime limits. If a runtime cannot honor the contract at that boundary, retain
+the failing observation and resolve the contract impact before claiming completion.
 
 Every required layer must PASS. NOT_APPLICABLE requires impact reasoning, cited
 evidence and separate review. Missing checks remain UNVERIFIED. A failed major
