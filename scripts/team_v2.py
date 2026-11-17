@@ -351,14 +351,22 @@ def plan_review_packet(project, state):
     path = t.team_path(project, plan['id']).as_posix()
     evidence = f'{proof.STATE}/teams/{plan["id"]}/plan-review.txt'
     command = t.worker_command(project, plan['id'], 'review-plan')
+    split_check = ''
+    if plan.get('root_protocol') == 'corporate-v1':
+        split_check = ('Compare the proposed owner map against the nearest viable split. For each changed boundary, '
+                       'state whether its owner could implement and check it against the existing interface while '
+                       'another owner works. An integration test needed at the end does not block either component. '
+                       'For a single owner, identify the shared write path, coupled invariant or unavailable interface '
+                       'that prevents a split. If neither scope needs the other to produce its first testable result, '
+                       'return fail and identify the separately testable responsibilities. Keep product files read-only. ')
     message = (f'Review the sealed decomposition independently before implementation. Read {path}.\n'
                f'Plan SHA-256 {state["plan_sha256"]}; baseline/state SHA-256 {state["state_sha256"]}.\n'
                'Inspect the actual project contracts, affected consumers and each scope_evidence path. '
                'For each owner verify the responsibility, preserved interface, exact owned files, '
                'outcomes and independent check against those sources. Find missing responsibilities '
                'or independent components grouped into one owner. A narrow responsibility may span '
-               'multiple files. Confirm any single-scope and dependency rationales. Check the planned '
-               'worker width against available native dispatch and known runtime limits. Use that '
+               f'multiple files. Confirm any single-scope and dependency rationales. {split_check}'
+               'Check the planned worker width against available native dispatch and known runtime limits. Use that '
                'capability evidence at plan review. Actual owner overlap is verified after dispatch. '
                'Serial independent work needs a documented host cap, rejected '
                'simultaneous dispatch or another observed constraint. Record each judgment with the '

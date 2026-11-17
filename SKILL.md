@@ -14,8 +14,9 @@ When the plan, seal, or native worker capability is missing, keep that work
 unverified and continue with authorized discovery and setup.
 When the host explicitly supplies `HARRTEST_CORPORATE_GOAL`, use that goal ID
 for the reviewed Team and Corporate root. Save the original request in the root
-first, then register the Team with `team.py init --request-from-root`. Use the
-exact returned review packet and complete the root seal before product edits.
+first, then register the Team with `team.py init --request-from-root`. Dispatch
+the exact Team plan review and `corporate.py coverage-packet` messages as separate
+tasks. Complete the root seal before dispatching implementation or editing.
 
 ## Start from the project
 
@@ -61,6 +62,8 @@ testing/review worker through Team schema2. Record why the scope cannot usefully
 split. Keep its scope, baseline, checks and six layer verdicts in the QA evidence.
 Two separately testable responsibility changes require separate implementation
 owners and the corporate-v1 root, even when they fit one feature or share an API.
+Compare the nearest viable split against real interfaces. A shared end-to-end test
+does not make components dependent if they can each pass a check against that interface.
 Small changes still require independent testing on the integrated source.
 
 Split along existing component/interface boundaries. Agree on the interface first
@@ -183,6 +186,11 @@ For a newly found issue, replay the same observation against the pinned baseline
 and the current source. Record its impact on the agreed requirements before
 routing repair. Keep inherited out-of-scope findings visible and keep affected
 requirements open until their failures are resolved.
+For an inherited defect outside the change, cite the unchanged source, compare
+its trigger and observable result before and after, and explain why it cannot
+affect any changed requirement or trust boundary before accepting the scoped work.
+If the change interacts with the defect or project policy disallows it, keep the
+affected layer open.
 
 Load domain instructions only when actual behavior needs them:
 [visible output](references/quality-intent.md), [browser behavior](references/web-validation.md),

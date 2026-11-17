@@ -134,11 +134,31 @@ class CopilotGuardTests(unittest.TestCase):
         original.write_bytes(request_bytes)
         changed_packet = self.decide(self.event('task', {**args, 'prompt': args['prompt'] + '\n'}))
         self.assertEqual(changed_packet['permissionDecision'], 'deny')
-        self.assertIn('Copy the current Team plan_review message verbatim', changed_packet['permissionDecisionReason'])
+        self.assertIn('Copy the current plan_review message verbatim', changed_packet['permissionDecisionReason'])
         data.source.write_text('New code appeared before Corporate admission.\n')
         stale = self.decide(self.event('task', args))
         self.assertEqual(stale['permissionDecision'], 'deny')
         self.assertIn('implementation baseline changed', stale['permissionDecisionReason'])
+
+    def test_only_current_corporate_coverage_review_packet_can_dispatch(self):
+        _, goal, _ = self.registered_team()
+        fixture.corporate.scaffold(goal, 'verify', ['baseline'], 'calculator-owner')
+        draft_path = goal / 'root-contract.json'
+        draft = proof.load(draft_path)
+        packet = fixture.corporate.coverage_packet(goal)
+        args = {'name': packet['task_name'], 'prompt': packet['message'], 'agent_type': 'general-purpose'}
+        self.assertEqual(args['name'], 'coverage_review')
+        self.assertEqual(self.decide(self.event('task', args)), {})
+        self.assertIn('Keep product files and the draft read-only', args['prompt'])
+        self.denied(self.event('task', {**args, 'prompt': args['prompt'] + '\nExtra instruction.'}))
+        self.denied(self.event('task', {**args, 'name': 'implementation'}))
+        draft['requirements'][0]['claim'] = 'A revised requirement in the actual draft.'
+        proof.save(draft_path, draft)
+        self.denied(self.event('task', args))
+        current = fixture.corporate.coverage_packet(goal)
+        self.assertEqual(self.decide(self.event('task', {**args, 'prompt': current['message']})), {})
+        proof.save(goal / 'root-seal.json', {'example': 'Sealed but not admitted'})
+        self.denied(self.event('task', {**args, 'prompt': current['message']}))
 
     def test_current_real_team_admission_and_stale_records(self):
         data, goal, state = self.registered_team()

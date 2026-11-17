@@ -180,6 +180,17 @@ host permissions. The two terminal runs and projected evidence are retained in
 `development-review/corporate-guard-native-routing.json` under the local output
 directory. They are development evidence and excluded from the held matrix.
 
+In the third enrolled trial, Luna corrected the request binding, completed a
+native scope review, sealed a schema-4 root, and received owner admission before
+the first product patch. It passed 9/9 external checks in 1721.567s at 18.3884765
+AI credits. It still used one implementation owner for independently testable
+components, amended an existing test and failed the frozen artifact guard. The
+QA worker recorded inherited failures and unmeasured performance; the root
+remained `ROOT_GOAL_UNVERIFIED`. The coverage review required a separate native
+task, which the enrolled parent could not start before admission in that pin.
+The next revision provides exact scope and coverage review packets and asks the
+scope reviewer to check the smallest viable split against actual interfaces.
+
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
 Record source/current-config identities, raw tool results, model/subagent usage,

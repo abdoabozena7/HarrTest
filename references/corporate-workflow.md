@@ -64,9 +64,10 @@ mapping if the independently reviewed request requires additional requirements.
 The [schema4 template](../assets/templates/root-contract-v4.json) also supports
 manual authoring. Each attempt keeps its own original request and artifacts.
 
-After completing the draft, use `corporate.py coverage-input --goal` to obtain
-the request, span and acceptance hashes for the independent reviewer. Have the
-reviewer inspect the actual request, scope and span mapping and write
+After completing the draft, use `corporate.py coverage-packet --goal` for the
+independent reviewer. The packet binds the current request, span and acceptance
+hashes. Dispatch its `task_name` and `message` exactly. Have the reviewer inspect
+the actual request, scope and span mapping and write
 `coverage-review.json` in the goal directory. The artifact includes those
 hashes, `method`, `planner`, `reviewer`, `unresolved_findings`, `verdict` and
 concrete `observations`. Then run `corporate.py bind-coverage --goal` to link
@@ -165,8 +166,8 @@ Team workflows use their existing configuration.
 For that checkout and session, the hook denies supported native editor actions
 on product files and parent `task` dispatch until `team.py packets` admits the
 reviewed Corporate root. Use the same pinned HarrTest package for the hook and
-the Team commands. Before sealing, pass the exact returned `plan_review` name
-and message as the reviewer task's `name` and `prompt`. Use a supported built-in
+the Team commands. Before sealing, dispatch the exact `plan_review` and
+`coverage_review` packets as separate reviewer tasks. Use a supported built-in
 review worker (`general-purpose` or `task`) that can save private evidence. The
 coordinator's direct inspection and private `.runtime-proof` writes continue
 through normal permissions. The installed Copilot CLI 1.0.104 Explore profile

@@ -662,6 +662,35 @@ def coverage_input(goal):
             'acceptance_sha256': proof.digest({key: root[key] for key in ('requirements', 'integration')})}
 
 
+def coverage_packet(goal):
+    """Assign the pre-seal request coverage review against the current draft."""
+    project, goal = goal_project(goal)
+    require(not (goal / 'root-seal.json').exists(), 'Review request coverage before sealing the root')
+    root_path = path(goal, 'root-contract.json')
+    root = document(root_path)
+    require(root.get('schema') == 4 and root.get('protocol') == PROTOCOL
+            and root.get('goal_id') == root.get('production_team') == goal.name,
+            'Use the matching Corporate root draft')
+    expected = coverage_input(goal)
+    require(root.get('request_sha256') == expected['request_sha256'], 'Original request differs from the draft')
+    _, _, plan = _load(project, goal, root)
+    text(plan.get('author'), 'Actual planner identity')
+    request = path(goal, 'original-request.txt').as_posix()
+    destination = path(goal, 'coverage-review.json', exists=False).as_posix()
+    message = (
+        f'Independently review coverage of {request} against {root_path.as_posix()}.\n'
+        f'Current request, span and acceptance bindings: {json.dumps(expected, sort_keys=True)}.\n'
+        'Inspect the actual source and project contracts that affect the meaning of the request. '
+        'Check that every requirement, material edge case and preservation obligation has an observable '
+        'criterion. Identify any weak assertion, unsupported assumption or omitted material requirement. '
+        'Keep product files and the draft read-only. Only write the private review artifact at '
+        f'{destination}. Include the three bindings above, method fresh-context-agent, '
+        f'planner {json.dumps(plan["author"])}, your actual reviewer identity, concrete observations, '
+        'unresolved_findings and verdict. Use covered only if there are no unresolved findings. '
+        'Return the artifact path and verdict to the coordinator.')
+    return {'task_name': 'coverage_review', 'fork_turns': 'none', 'message': message}
+
+
 def bind_coverage(goal):
     """Link a reviewer-authored artifact after validating it against the draft."""
     import coverage
@@ -700,7 +729,7 @@ def main():
     draft.add_argument('--proof-task', required=True)
     draft.add_argument('--baseline-check', action='append', required=True)
     draft.add_argument('--author', required=True)
-    for command in ('coverage-input', 'bind-coverage'):
+    for command in ('coverage-input', 'coverage-packet', 'bind-coverage'):
         sub.add_parser(command).add_argument('--goal', type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -708,6 +737,8 @@ def main():
             result = scaffold(args.goal, args.proof_task, args.baseline_check, args.author)
         elif args.command == 'coverage-input':
             result = coverage_input(args.goal)
+        elif args.command == 'coverage-packet':
+            result = coverage_packet(args.goal)
         elif args.command == 'bind-coverage':
             result = bind_coverage(args.goal)
         elif args.command == 'snapshot':
