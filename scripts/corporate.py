@@ -536,7 +536,9 @@ def check(project, goal, contract):
                     require(old_key in baseline and baseline[old_key]['passed'],
                             'Preservation needs a successful pre-change baseline check')
                     old_check = baseline[old_key]['check']
-                    replay_fields = ('command', 'cwd', 'mode', 'role', 'assertions', 'expected_exit_codes')
+                    require(old_check['role'] in {'acceptance', 'regression'},
+                            'Preservation baseline must be an acceptance or regression check')
+                    replay_fields = ('command', 'cwd', 'mode', 'assertions', 'expected_exit_codes')
                     defaults = {'cwd': '.', 'expected_exit_codes': [0]}
                     require(all(old_check.get(field, defaults.get(field)) == good['check'].get(field, defaults.get(field))
                                 for field in replay_fields),

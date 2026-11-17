@@ -491,6 +491,35 @@ class CorporateTests(unittest.TestCase):
         self.finish()
         self.assertIn('replay the baseline', self.result()['errors'][0])
 
+    def test_preservation_replays_same_oracle_across_normal_check_roles(self):
+        before = corporate._baseline(self.project, self.plan)[('verify', 'baseline')]
+        contract = proof.load(self.task / 'contract.json')
+        replay = copy.deepcopy(before['check'])
+        replay.update(id='legacy-replay', role='acceptance')
+        contract['checks'].append(replay)
+        contract['plan']['tasks'][0]['checks'].append(replay['id'])
+        replay_task = self.project / '.runtime-proof/replay'
+        replay_task.mkdir()
+        contract['task_id'] = replay_task.name
+        proof.validate_contract(contract)
+        proof.save(replay_task / 'context.json', {'project': str(self.project)})
+        proof.save(replay_task / 'contract.json', contract)
+        proof.save(replay_task / 'seal.json', {'contract_hash': proof.digest(contract),
+                                             'engine_hash': proof.engine_hash(contract)})
+        self.plan['layers'][1]['criteria'][0]['check'] = {'task_id': 'replay', 'check_id': replay['id']}
+        self.save_plan()
+        self.seal['corporate'] = corporate.seal_binding(self.project, self.goal, self.root)
+        proof.save(self.goal / 'root-seal.json', self.seal)
+        with contextlib.redirect_stdout(io.StringIO()):
+            receipt = proof.run_check(replay_task, replay['id'])
+        old_ref = next(ref for ref in self.report['executions'] if '/baseline/' in ref['receipt'])
+        self.report['executions'].remove(old_ref)
+        path = replay_task / 'runs' / replay['id'] / receipt['run_id'] / 'receipt.json'
+        self.report['executions'].append(corporate.execution_reference(self.project, path.relative_to(self.project).as_posix()))
+        self.report['plan_sha256'] = proof.file_hash(self.plan_path)
+        self.sign_review()
+        self.assertTrue(self.result()['passed'], self.result())
+
     def test_schema4_root_cli_integrates_corporate_and_refuses_failed_layer(self):
         args = [sys.executable, '-B', str(ROOT / 'scripts/root_gate.py'), 'verify', '--goal', str(self.goal)]
         result = subprocess.run(args, capture_output=True, text=True)
