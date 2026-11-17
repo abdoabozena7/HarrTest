@@ -544,6 +544,22 @@ class CorporateTests(unittest.TestCase):
         self.assertIn('Production team: Corporate source changed outside sealed Team ownership: src/new_policy.json',
                       evidence['errors'])
 
+    def test_schema4_root_rejects_later_expansion_of_integration_ownership(self):
+        extra = 'src/new_policy.json'
+        team_plan = copy.deepcopy(self.team_plan)
+        team_plan['integration']['outputs'].append(extra)
+        state_path = team.team_path(self.project, 'mission')
+        state_path.unlink()
+        team.init(self.project, team_plan)
+        (self.project / extra).write_text('{"enabled": true}', encoding='utf-8')
+        self.finish()
+        args = [sys.executable, '-B', str(ROOT / 'scripts/root_gate.py'), 'verify', '--goal', str(self.goal)]
+        rejected = subprocess.run(args, capture_output=True, text=True)
+        self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
+        evidence = json.loads(rejected.stdout)
+        self.assertTrue(evidence['corporate']['passed'])
+        self.assertIn('Production team: Corporate Team state differs from the root seal', evidence['errors'])
+
     def copied_verifier(self):
         """Execute a real separate helper package without altering tracked code."""
         package = self.project / 'verifier-copy'

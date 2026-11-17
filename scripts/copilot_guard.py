@@ -112,6 +112,7 @@ def admission_is_current(project, goal):
             or proof.file_hash(request) != contract['request_sha256']
             or seal['request_sha256'] != contract['request_sha256']
             or seal['root_hash'] != strict_io.digest(contract)
+            or seal.get('corporate_team_sha256') != state_digest
             or not corporate_plan.is_file() or corporate_plan.stat().st_size > corporate.MAX_DOCUMENT
             or seal['corporate']['plan_sha256'] != proof.file_hash(corporate_plan)
             or seal['reviewed_team'] != {'state_sha256': state_digest, 'review_sha256': review_digest}):

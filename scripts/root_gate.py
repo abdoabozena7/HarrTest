@@ -164,6 +164,8 @@ def check_production_team(project, contract, sealing):
         import corporate
 
         state = team.load_state(project, team_id)
+        if sealing.get('corporate_team_sha256') != state['state_sha256']:
+            raise proof.ProofError('Corporate Team state differs from the root seal')
         plan = _corporate_team_scope(project, contract, state, binding)
         baseline = plan['baseline']['source']['files']
         current = corporate.source_snapshot(project, plan['source_paths'])['files']
@@ -249,7 +251,8 @@ def require_corporate_dispatch(project, state, *, baseline_current):
     if seal.get('root_hash') != proof.digest(contract) or seal.get('request_sha256') != contract['request_sha256']:
         raise proof.ProofError('Corporate dispatch root contract differs from its seal')
     reviewed = _corporate_dispatch_inputs(project, contract, state, baseline_current=baseline_current)
-    if seal.get('reviewed_team') != reviewed:
+    if (seal.get('reviewed_team') != reviewed
+            or seal.get('corporate_team_sha256') != state['state_sha256']):
         raise proof.ProofError('Team plan, baseline or review differs from the Corporate root seal')
     if seal.get('corporate') != corporate.seal_binding(project, goal, contract):
         raise proof.ProofError('Corporate dispatch plan, baseline, checks or verifier differ from the root seal')
@@ -403,19 +406,24 @@ def main() -> int:
             return 0
         if args.action == "seal":
             c = proof.load(goal / "root-contract.json")
-            validate(goal.parents[2], goal, c)
+            project = goal.parents[2]
+            validate(project, goal, c)
             sealed = {"root_hash": proof.digest(c), "request_sha256": c["request_sha256"]}
             if c['schema'] == 4:
                 import corporate
-                sealed['corporate'] = corporate.seal_binding(goal.parents[2], goal, c)
-            if 'team_decomposition' in c:
                 import team
-                project = goal.parents[2]
+
                 state = team.load_state(project, c['production_team'])
-                if state['plan'].get('root_protocol') == 'corporate-v1':
+                sealed['corporate_team_sha256'] = state['state_sha256']
+                reviewed = 'team_decomposition' in c
+                if reviewed and state['plan'].get('root_protocol') == 'corporate-v1':
                     sealed['reviewed_team'] = _corporate_dispatch_inputs(project, c, state, baseline_current=True)
                 else:
-                    sealed['reviewed_team'] = reviewed_team_binding(project, c)
+                    binding = team.binding(project, c['production_team'], c['request_sha256'])
+                    _corporate_team_scope(project, c, state, binding)
+                    if reviewed:
+                        sealed['reviewed_team'] = reviewed_team_binding(project, c)
+                sealed['corporate'] = corporate.seal_binding(project, goal, c)
             sealed['sealed_at'] = proof.now()
             proof.save(goal / "root-seal.json", sealed, exclusive=True)
             print("Root goal sealed. Child tests cannot redefine original requirements.")
