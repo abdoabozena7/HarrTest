@@ -18,6 +18,11 @@ before fixtures were updated; another imported an evaluator while it was being
 edited. They are not replaced or presented as passed. Final live-model comparison
 and subsequent session-pinning changes require their own validation.
 
+The integrated candidate at `74f6283` ran 530 tests in 574.909s with four
+skipped and zero failures. The suite includes the shared-baseline check and
+unchanged legacy root contract controls. The log is
+`output/v5-corporate/next-integrated-tests-r14.log` in the candidate worktree.
+
 ## Live comparison
 
 Eight development cases and eight separate acceptance cases cover existing
@@ -272,6 +277,12 @@ native plan and coverage review, then ended on a model-response DNS error.
 The Corporate seal was absent and no implementation worker started. The
 retained baseline passed 3/8 external checks. This outcome cannot measure the
 effect of the two fixes on completed Copilot work.
+
+The seventh trial also reached independent plan and coverage review. Copilot
+did not reach session idle within the 2400-second cap, no root was sealed, and
+the unchanged project passed 3/8 external checks. Its recorded result is a
+development failure. The third and fourth held comparisons use distinct frozen
+directories and retain their own runtime interruption evidence.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
