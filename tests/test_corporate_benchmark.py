@@ -887,7 +887,7 @@ public static class StockCsv
         return path
 
     def test_reviewed_timeout_is_a_failed_retained_denominator_not_a_dead_end(self):
-        p=self.attempt('py-monthly-report-utc');review=self.timeout_review(p)
+        p=self.attempt('py-retry-recovery');review=self.timeout_review(p)
         assessment=bench.record_assessment(p,review)
         self.assertFalse(assessment['complete_quality_passed'])
         self.assertFalse(assessment['false_accept'])
@@ -918,7 +918,7 @@ public static class StockCsv
         self.assertFalse(bench.record_assessment(p,review)['complete_quality_passed'])
 
     def test_post_review_generation_changes_invalidate_summary(self):
-        p=self.attempt('py-monthly-report-utc');review=self.timeout_review(p)
+        p=self.attempt('py-retry-recovery');review=self.timeout_review(p)
         bench.record_assessment(p,review)
         bench.save(p/'generation.json',{'status':'COMPLETED'})
         with self.assertRaisesRegex(ValueError,'generation record changed'):
