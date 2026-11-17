@@ -487,9 +487,107 @@ export function evaluate(text: string): string {
 ''',
 }
 
+CUE_REPORT_CONTRACT = '''The Rules.Evaluate(string text) API and positional JSON CLI accept:
+{"op":"cues","cues":[{"id":"intro","start_ms":0,"end_ms":800}]} -> {"ids":["intro"],"covered_ms":800}.
+CueOrder.Sort(IReadOnlyList<StudioCue>) returns the same records in ascending start order. Equal start times retain input order regardless of cue ID or end time. The input order and records are unchanged.
+CueCoverage.TotalMilliseconds(IReadOnlyList<StudioCue>) returns the number of covered milliseconds across the union of all half-open intervals [start_ms,end_ms). Cues may be unsorted, disjoint, touching, overlapping, repeated, entirely contained in another cue, or zero-length. Zero-length cues still appear in ids.
+Times are nonnegative signed 64-bit integer milliseconds with end_ms >= start_ms. Cue IDs are nonempty strings; duplicate IDs are allowed. An empty list gives {"ids":[],"covered_ms":0}.
+cue_count returns {"count":N} for the number of input records, without evaluating cue order or coverage.
+Preserve the shared StudioCue record and both component signatures. Only change CueOrder.cs and CueCoverage.cs for production behavior. Keep docs, adapters and project configuration unchanged. Tests may be added or extended without weakening existing checks.
+'''
+
+CUE_REPORT_FILES = {
+    'StudioCue.cs': 'public sealed record StudioCue(string Id, long StartMs, long EndMs);\n',
+    'CueOrder.cs': '''public static class CueOrder
+{
+    public static StudioCue[] Sort(IReadOnlyList<StudioCue> cues)
+        => cues.OrderBy(cue => cue.StartMs).ThenBy(cue => cue.Id, StringComparer.Ordinal).ToArray();
+}
+''',
+    'CueCoverage.cs': '''public static class CueCoverage
+{
+    public static long TotalMilliseconds(IReadOnlyList<StudioCue> cues)
+        => cues.Sum(cue => cue.EndMs - cue.StartMs);
+}
+''',
+    'Rules.cs': '''using System.Text.Json;
+
+public static class Rules
+{
+    public static string Evaluate(string text)
+    {
+        using var document = JsonDocument.Parse(text);
+        var request = document.RootElement;
+        var input = request.GetProperty("cues");
+        switch (request.GetProperty("op").GetString())
+        {
+            case "cue_count":
+                return JsonSerializer.Serialize(new { count = input.GetArrayLength() });
+            case "cues":
+                var cues = input.EnumerateArray().Select(cue => new StudioCue(
+                    cue.GetProperty("id").GetString()!,
+                    cue.GetProperty("start_ms").GetInt64(),
+                    cue.GetProperty("end_ms").GetInt64())).ToArray();
+                return JsonSerializer.Serialize(new {
+                    ids = CueOrder.Sort(cues).Select(cue => cue.Id),
+                    covered_ms = CueCoverage.TotalMilliseconds(cues)
+                });
+            default:
+                throw new ArgumentException("unsupported operation");
+        }
+    }
+}
+''',
+}
+
+TILE_WINDOW_CONTRACT = '''The evaluate(text: string): string API and positional JSON CLI accept:
+{"op":"tiles","grid":[["a","b"],["c","d"]],"x":0,"y":0,"width":1,"height":2} -> {"tiles":["a","c"]}.
+The grid is a rectangular array of string rows, possibly empty or of zero width. Coordinates are zero-based, x for columns and y for rows. Coordinates, nonnegative extents, and x+width and y+height are safe integers.
+Intersect the original half-open rectangle [x,x+width) by [y,y+height) with the grid. Return the intersected cells in row-major order, retaining duplicates and empty cell strings. A zero extent or an empty intersection returns {"tiles":[]}.
+tile_count returns {"count":N} for the total number of cells without applying a window.
+Keep the exported SDK and CLI unchanged. Production changes belong in rules.ts. Keep docs, adapters and project configuration unchanged. Tests may be added or extended without weakening existing checks.
+'''
+
+TILE_WINDOW_SOURCE = '''export function evaluate(text: string): string {
+  const { op, grid, x, y, width, height } = JSON.parse(text);
+  const rows: string[][] = grid;
+  if (op === 'tile_count') return JSON.stringify({count: rows.reduce((n, row) => n + row.length, 0)});
+  if (op !== 'tiles') throw new Error('unsupported operation');
+  const left = Math.max(0, x);
+  const top = Math.max(0, y);
+  return JSON.stringify({tiles: rows.slice(top, top + height).flatMap(row => row.slice(left, left + width))});
+}
+'''
+
+RECIPE_SCALE_CONTRACT = '''The rules.evaluate(text: str) -> str API and positional JSON CLI accept:
+{"op":"scale","from_servings":2,"to_servings":4,"ingredients":[{"label":"rice","units":4,"step":2}]} -> {"ingredients":[{"label":"rice","units":8}]}.
+The source and target serving counts and each ingredient step are positive integers; units are nonnegative integers. For each ingredient, the scaled amount is the least integer multiple of step that is at least units * to_servings / from_servings. This is exact integer-rational scaling, including for large integer values. An exact multiple is kept, and zero stays zero.
+Return a result row for each input ingredient in the same order. Preserve labels exactly, including duplicate labels. The empty ingredient list returns {"ingredients":[]}.
+ingredient_count returns {"count":N} for the number of input ingredients. It does not require either serving count or inspect ingredients.
+Keep the exported SDK and CLI unchanged. Production changes belong in rules.py. Keep docs, adapters and project configuration unchanged. Tests may be added or extended without weakening existing checks.
+'''
+
+RECIPE_SCALE_SOURCE = '''import json
+
+
+def evaluate(text: str) -> str:
+    request = json.loads(text)
+    rows = request['ingredients']
+    if request['op'] == 'ingredient_count':
+        return json.dumps({'count': len(rows)})
+    if request['op'] != 'scale':
+        raise ValueError('unsupported operation')
+    source, target = request['from_servings'], request['to_servings']
+    return json.dumps({'ingredients': [
+        {'label': row['label'], 'units': row['units'] * target // source}
+        for row in rows
+    ]})
+'''
+
 COMPONENT_SOURCE_FILES = {
     'stock-snapshot': {'StockCsv.cs', 'StockProjection.cs'},
     'triage-queue': {'rank.ts', 'group.ts'},
+    'cue-report': {'CueOrder.cs', 'CueCoverage.cs'},
 }
 
 
@@ -549,6 +647,15 @@ The original CLI takes the operation string as its first argument and prints ret
         common['CONTRACT.md'] = TRIAGE_CONTRACT
         common['ARCHITECTURE.md'] = ('rank.ts ranks Ticket records. group.ts groups Ticket records into QueueSummary. '
                                       'Keep the shared tickets.ts contracts and existing rules.ts and cli.ts adapters unchanged.\n')
+    if scenario == 'cue-report':
+        common['CONTRACT.md'] = CUE_REPORT_CONTRACT
+        common['ARCHITECTURE.md'] = ('CueOrder.cs owns ordering. CueCoverage.cs owns interval coverage. '
+                                     'Rules.cs composes them and Program.cs adapts the positional CLI. '
+                                     'Keep both adapters and the shared StudioCue.cs record unchanged.\n')
+    if scenario == 'tile-window':
+        common['CONTRACT.md'] = TILE_WINDOW_CONTRACT
+    if scenario == 'recipe-scale':
+        common['CONTRACT.md'] = RECIPE_SCALE_CONTRACT
     if tools:
         common['RUNTIME.md']+='Pinned executable paths: '+json.dumps({key:tools[key] for key in ['python','node','dotnet','cxx'] if tools.get(key)},sort_keys=True)+'\n'
     smoke = {
@@ -576,12 +683,29 @@ The original CLI takes the operation string as its first argument and prints ret
         smoke = (f"args=[{str(tools.get('node') or 'node')!r},'--experimental-strip-types','cli.ts',"
                  "json.dumps({'op':'queue','tickets':[{'id':'old','severity':'high','owner':'Lee'}]})]; "
                  "expected={'owners':[{'name':'Lee','ids':['old']}],'unassigned':[]}")
+    if scenario == 'cue-report':
+        request = {'op': 'cues', 'cues': [{'id': 'existing', 'start_ms': 12, 'end_ms': 37}]}
+        smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
+                 f"'--verbosity','quiet','--',json.dumps({request!r})]; "
+                 "expected={'ids':['existing'],'covered_ms':25}")
+    if scenario == 'tile-window':
+        request = {'op': 'tiles', 'grid': [['old', 'edge'], ['next', 'other']], 'x': 1, 'y': 0,
+                   'width': 1, 'height': 2}
+        smoke = (f"args=[{str(tools.get('node') or 'node')!r},'--experimental-strip-types','cli.ts',"
+                 f"json.dumps({request!r})]; expected={{'tiles':['edge','other']}}")
+    if scenario == 'recipe-scale':
+        request = {'op': 'scale', 'from_servings': 2, 'to_servings': 6,
+                   'ingredients': [{'label': 'flour', 'units': 4, 'step': 2}]}
+        smoke = f"args=[sys.executable,'cli.py',json.dumps({request!r})]; expected={{'ingredients':[{{'label':'flour','units':12}}]}}"
     common['check_existing.py']='import json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nscratch = Path(".runtime-proof/scratch")\nscratch.mkdir(parents=True, exist_ok=True)\nwith tempfile.TemporaryDirectory(dir=scratch) as temp:\n    '+smoke+'\n    result=subprocess.run(args,capture_output=True,text=True,check=True);lines=result.stdout.strip().splitlines();actual=json.loads(lines[-1]);assert actual==expected,(actual,expected);print("Existing public behavior checked")\n'
     if case.get('scenario')=='lookup':
         common['PERFORMANCE.md']='For lookup30000 sorted keys and20000 queries, preserve exact results and reduce median command wall time to at most70% of the unchanged baseline on the same machine/compiler/options. Use one warmup and five measurements per version; retain raw values and noise.\n'
     if lang == "python":
         if scenario == 'month-report':
             return {**common, 'rules.py': MONTHLY_REPORT_SOURCE,
+                    'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
+        if scenario == 'recipe-scale':
+            return {**common, 'rules.py': RECIPE_SCALE_SOURCE,
                     'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
         core = '''import json\nfrom pathlib import Path\n\ndef evaluate(text):\n    x = json.loads(text)\n    if x['op'] == 'redact':\n        return json.dumps(x['data'], sort_keys=True)\n    p = Path(x['store'])\n    state = json.loads(p.read_text()) if p.exists() else {'balance': 0, 'seen': []}\n    for event in x['events']:\n        state['balance'] += event['amount']\n        if event['amount'] < 0:\n            raise ValueError('negative amount')\n        state['seen'].append(event['id'])\n        p.write_text(json.dumps(state, sort_keys=True))\n        if event.get('fail_after'):\n            raise RuntimeError('injected interruption')\n    return json.dumps(state, sort_keys=True)\n'''
         return {**common, "rules.py": core, "cli.py": "from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n"}
@@ -591,6 +715,8 @@ The original CLI takes the operation string as its first argument and prints ret
                    "package.json": '{"type":"module","private":true}\n'}
         if scenario == 'triage-queue':
             project.update(TRIAGE_FILES)
+        if scenario == 'tile-window':
+            project['rules.ts'] = TILE_WINDOW_SOURCE
         return project
     if lang == "csharp":
         core = '''using System;\nusing System.Text.Json;\npublic static class Rules {\n public static string Evaluate(string text) {\n  using var d = JsonDocument.Parse(text); var x = d.RootElement; string op=x.GetProperty("op").GetString()!;\n  if(op=="refund") return (x.GetProperty("age").GetInt32()<x.GetProperty("window").GetInt32()).ToString().ToLowerInvariant();\n  if(op=="tenant") { foreach(var a in x.GetProperty("accounts").EnumerateArray()) if(a.GetProperty("id").GetString()==x.GetProperty("id").GetString()) return a.GetProperty("balance").GetRawText(); return "null"; }\n  long left=x.GetProperty("left").GetInt64(), amount=x.GetProperty("amount").GetInt64();\n  if(op=="credit") return JsonSerializer.Serialize(new {balance=left+amount,accepted=true});\n  long right=x.GetProperty("right").GetInt64(); left-=amount;\n  if(left<0) return JsonSerializer.Serialize(new {left,right,accepted=false});\n  return JsonSerializer.Serialize(new {left,right=right+amount,accepted=true});\n }\n}\n'''
@@ -600,6 +726,8 @@ The original CLI takes the operation string as its first argument and prints ret
         files = {**common, "Rules.cs": core, "Program.cs": "Console.WriteLine(Rules.Evaluate(args[0]));\n", "Existing.csproj": project}
         if scenario == 'stock-snapshot':
             files.update(STOCK_FILES)
+        if scenario == 'cue-report':
+            files.update(CUE_REPORT_FILES)
         return files
     core = r'''#pragma once
 #include <algorithm>
@@ -847,6 +975,39 @@ catch { Console.WriteLine("ERROR"); }
 '''
 
 
+CUE_REPORT_CONSUMER = '''using System.Text.Json;
+
+try
+{
+    using var document = JsonDocument.Parse(args[0]);
+    var request = document.RootElement;
+    var op = request.GetProperty("op").GetString();
+    if (op != "external-cue-order" && op != "external-cue-coverage")
+    {
+        Console.WriteLine(Rules.Evaluate(args[0]));
+        return;
+    }
+
+    var cues = request.GetProperty("cues").EnumerateArray().Select(cue => new StudioCue(
+        cue.GetProperty("id").GetString()!,
+        cue.GetProperty("start_ms").GetInt64(),
+        cue.GetProperty("end_ms").GetInt64())).ToArray();
+    var original = cues.ToArray();
+    if (op == "external-cue-order")
+    {
+        StudioCue[] ordered = CueOrder.Sort(cues);
+        Console.WriteLine(JsonSerializer.Serialize(new { ordered, unchanged = cues.SequenceEqual(original) }));
+    }
+    else
+    {
+        long covered_ms = CueCoverage.TotalMilliseconds(cues);
+        Console.WriteLine(JsonSerializer.Serialize(new { covered_ms, unchanged = cues.SequenceEqual(original) }));
+    }
+}
+catch { Console.WriteLine("ERROR"); }
+'''
+
+
 def triage_consumer(workspace, output):
     imports = []
     for names, module in [('evaluate', 'rules'), ('rankTickets', 'rank'), ('groupTickets', 'group'),
@@ -907,7 +1068,8 @@ def build_program(workspace, output, lang, tools, *, scenario=None):
         for src in workspace.rglob('*.cs'):
             if src.name=='Program.cs' or any(part in SKIP for part in src.relative_to(workspace).parts):continue
             target=output/src.relative_to(workspace);target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(src,target)
-        driver = STOCK_CONSUMER if scenario == 'stock-snapshot' else 'try {Console.WriteLine(Rules.Evaluate(args[0]));} catch {Console.WriteLine("ERROR");}\n'
+        driver = {'stock-snapshot': STOCK_CONSUMER, 'cue-report': CUE_REPORT_CONSUMER}.get(
+            scenario, 'try {Console.WriteLine(Rules.Evaluate(args[0]));} catch {Console.WriteLine("ERROR");}\n')
         (output / "Program.cs").write_text(driver, encoding="utf-8")
         (output / "Evaluator.csproj").write_text(fixture({"language": "csharp"})["Existing.csproj"], encoding="utf-8")
         built = command([tools["dotnet"], "build", "--nologo", "-v:q", "-o", str(output / "app")], output, 150)
@@ -930,6 +1092,7 @@ def build_program(workspace, output, lang, tools, *, scenario=None):
 
 def build_public_cli(workspace, output, lang, tools):
     """Exercise the real adapter in addition to the independently compiled API consumer."""
+    if lang=='python':return [tools['python'],'-B',str(workspace/'cli.py')],[]
     if lang=='typescript':return [tools['node'],'--experimental-strip-types',str(workspace/'cli.ts')],[]
     output.mkdir(parents=True)
     for src in workspace.rglob('*.cs'):
@@ -1023,6 +1186,92 @@ def triage_component_vectors():
          {'owners': [{'name': 'lee', 'ids': ['urgent', 'standard', 'low']}, {'name': 'Jo', 'ids': ['middle']}],
           'unassigned': ['unassigned', 'blank']}),
     ]
+
+
+def cue_component_vectors():
+    def request(op, rows):
+        return {'op': op, 'cues': [
+            {'id': identifier, 'start_ms': start, 'end_ms': end}
+            for identifier, start, end in rows
+        ]}
+
+    def ordered(rows):
+        return {'ordered': [
+            {'Id': identifier, 'StartMs': start, 'EndMs': end}
+            for identifier, start, end in rows
+        ], 'unchanged': True}
+
+    def covered(total):
+        return {'covered_ms': total, 'unchanged': True}
+
+    tied = [('later', 30, 35), ('zulu', 5, 14), ('alpha', 5, 15),
+            ('zulu', 5, 7), ('zero', 0, 0)]
+    intervals = [('island', 40, 50), ('inner', 2, 5), ('whole', 0, 12),
+                 ('touch', 12, 20), ('bridge', 18, 28), ('repeat', 0, 12),
+                 ('zero', 97, 97)]
+    large = [('second', 6_000_000_000, 9_000_000_000), ('first', 0, 4_000_000_000),
+             ('nested', 1_000_000_000, 2_000_000_000)]
+    composed = [('tail', 21, 24), ('zulu', 3, 9), ('alpha', 3, 14), ('middle', 12, 21)]
+    return [
+        ('preservation-cue-report-empty', request('cues', []), {'ids': [], 'covered_ms': 0}),
+        ('preservation-cue-count', request('cue_count', tied), {'count': 5}),
+        ('preservation-cue-order-distinct', request('external-cue-order', [('next', 48, 61), ('first', 2, 9)]),
+         ordered([('first', 2, 9), ('next', 48, 61)])),
+        ('preservation-cue-coverage-disjoint', request('external-cue-coverage', [('b', 7, 9), ('a', 0, 3)]),
+         covered(5)),
+        ('cue-order-stable', request('external-cue-order', tied), ordered([tied[i] for i in [4, 1, 2, 3, 0]])),
+        ('cue-coverage-union', request('external-cue-coverage', intervals), covered(38)),
+        ('cue-coverage-wide', request('external-cue-coverage', large), covered(7_000_000_000)),
+        ('cue-composed-report', request('cues', composed), {'ids': ['zulu', 'alpha', 'middle', 'tail'], 'covered_ms': 21}),
+    ]
+
+
+def tile_window_vectors():
+    grid = [['a', 'b', 'c', 'd'], ['e', '', 'g', 'h'], ['i', 'j', 'g', 'l']]
+
+    def view(x, y, width, height, tiles, *, rows=grid):
+        return json.dumps({'op': 'tiles', 'grid': rows, 'x': x, 'y': y, 'width': width, 'height': height}), {'tiles': tiles}
+
+    ordinary = [
+        view(1, 0, 2, 2, ['b', 'c', '', 'g']),
+        view(0, 0, 1, 1, [], rows=[]),
+        (json.dumps({'op': 'tile_count', 'grid': grid}), {'count': 12}),
+    ]
+    target = [
+        view(-2, -1, 3, 3, ['a', 'e']),
+        view(2, 1, 7, 8, ['g', 'h', 'g', 'l']),
+        view(-6, 1, 4, 1, []),
+        view(0, -4, 2, 4, []),
+        view(4, 0, 2, 2, []),
+        view(1, 3, 2, 2, []),
+        view(-2, -2, 9, 0, []),
+        view(3, 1, 0, 3, []),
+        view(-1, -1, 3, 4, [], rows=[[], []]),
+    ]
+    return ordinary, target
+
+
+def recipe_scale_vectors():
+    def scaled(source, target, rows, amounts):
+        request = {'op': 'scale', 'from_servings': source, 'to_servings': target,
+                   'ingredients': [{'label': label, 'units': units, 'step': step} for label, units, step in rows]}
+        expected = {'ingredients': [{'label': label, 'units': amount}
+                                    for (label, _, _), amount in zip(rows, amounts, strict=True)]}
+        return json.dumps(request), expected
+
+    ordinary = [
+        scaled(2, 6, [('flour', 4, 2)], [12]),
+        scaled(3, 2, [], []),
+        (json.dumps({'op': 'ingredient_count', 'ingredients': [{}, {}]}), {'count': 2}),
+    ]
+    target = [
+        scaled(6, 7, [('tea', 4, 3), ('น้ำ', 12, 7), ('tea', 0, 4), (' sugar ', 9, 4), ('salt', 1, 5)],
+               [6, 14, 0, 12, 5]),
+        scaled(5, 2, [('exact', 30, 4), ('near', 31, 4), ('whole', 50, 7)], [12, 16, 21]),
+        scaled(2, 1, [('wide', 18_014_398_509_481_985, 1)], [9_007_199_254_740_993]),
+        scaled(7, 7, [('multiple', 14, 7), ('adjusted', 15, 7)], [14, 21]),
+    ]
+    return ordinary, target
 
 
 def test_vectors(case, sandbox):
@@ -1219,7 +1468,8 @@ def _evaluate_attempt(attempt):
         if scenario == 'month-report':
             check_monthly_report(exercise, evidence)
         elif scenario in COMPONENT_SOURCE_FILES:
-            vectors = stock_component_vectors() if scenario == 'stock-snapshot' else triage_component_vectors()
+            vectors = {'stock-snapshot': stock_component_vectors, 'triage-queue': triage_component_vectors,
+                       'cue-report': cue_component_vectors}[scenario]()
             for label, request, expected in vectors:
                 exercise(label, json.dumps(request), expected)
             public, public_builds = build_public_cli(workspace, evidence/'public-cli', case['language'], toolchain(plan))
@@ -1229,6 +1479,13 @@ def _evaluate_attempt(attempt):
                 exercise('public-composed-report', json.dumps(request), expected, program=public)
             else:
                 checks.append({'check': 'public-cli-build', 'passed': False})
+        elif scenario in {'tile-window', 'recipe-scale'}:
+            ordinary, target = tile_window_vectors() if scenario == 'tile-window' else recipe_scale_vectors()
+            public, _ = build_public_cli(workspace, evidence/'public-cli', case['language'], toolchain(plan))
+            for prefix, vectors in (('preservation', ordinary), ('target', target)):
+                for index, (text, expected) in enumerate(vectors):
+                    exercise(f'{prefix}-sdk-{index}', text, expected)
+                    exercise(f'{prefix}-cli-{index}', text, expected, program=public)
         elif case["language"] == "python":
             store=evidence/'state.json'
             def event(events,expected,label): exercise(label,json.dumps({"op":"batch","store":str(store),"events":events}),expected)

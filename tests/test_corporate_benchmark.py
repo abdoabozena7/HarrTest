@@ -31,6 +31,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
             (directory / "scripts/corporate_benchmark.py").write_text("DO NOT EXPOSE ORACLES\n")
             (directory / "assets/corporate").mkdir(parents=True)
             (directory / "assets/corporate/cases.json").write_text("DO NOT EXPOSE CASES\n")
+            (directory / "assets/corporate/retired-development.json").write_text("DO NOT EXPOSE ARCHIVE\n")
             (directory / "references").mkdir()
             for guide in ['cli-agent-validation.md','web-validation.md','simulation-validation.md']:
                 (directory/'references'/guide).write_text('Production workflow guide\n')
@@ -43,12 +44,24 @@ class CorporateBenchmarkTests(unittest.TestCase):
             for key in ['tsc','node_types']:
                 if tools.get(key):self.fake_probe['tools'][key]=tools[key]
 
-    def freeze(self,kind='development'):
+    def freeze(self,kind='development',corpus=bench.CORPUS):
         with patch.object(bench, "preflight", return_value=self.fake_probe):
-            return bench.freeze(self.experiment,self.old,self.new,["weak-observed","normal-observed"],kind=kind)
+            return bench.freeze(self.experiment,self.old,self.new,["weak-observed","normal-observed"],kind=kind,corpus=corpus)
 
     def attempt(self, case):
-        self.freeze()
+        active = bench.cases()
+        if any(row['id'] == case for row in active):
+            self.freeze()
+        else:
+            # Exercise historical evaluator behavior without admitting a retired
+            # case to the current active corpus or a new acceptance experiment.
+            retired = bench.load(bench.CORPUS.with_name('retired-development.json'))['cases']
+            original = next(row for row in retired if row['id'] == case)
+            replaced = next(row for row in active if row['language'] == original['language']
+                            and row['split'] == 'development')
+            path = self.root / 'historical-control-corpus.json'
+            bench.save(path, {'schema': 1, 'cases': [original if row == replaced else row for row in active]})
+            self.freeze(corpus=path)
         return bench.prepare(self.experiment,case,"plain","weak-observed",1)
 
     def test_corporate_editor_guard_profile_is_frozen_only_for_v5_development(self):
@@ -73,19 +86,20 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(len({row['id'] for row in rows}),16)
         for split in ['development','acceptance']:
             self.assertEqual(sum(x['split']==split for x in rows),8)
+            for language in bench.LANGUAGES:
+                self.assertEqual(sum(x['split']==split and x['language']==language for x in rows),2)
         splits = {row['id']: row['split'] for row in rows}
-        self.assertEqual(splits['py-batch-atomicity'], 'development')
-        self.assertEqual(splits['py-monthly-report-utc'], 'acceptance')
-        self.assertNotIn('py-event-idempotency', splits)
-        self.assertEqual(splits['cs-credit-validation'], 'development')
-        self.assertEqual(splits['cs-build-dependency-plan'], 'acceptance')
-        self.assertNotIn('cs-refund-boundary', splits)
-        self.assertEqual(splits['cs-atomic-transfer'], 'development')
-        self.assertEqual(splits['ts-explicit-config'], 'development')
-        self.assertEqual(splits['cs-stock-snapshot'], 'acceptance')
-        self.assertEqual(splits['ts-triage-queue'], 'acceptance')
-        self.assertNotIn('cs-tenant-lookup', splits)
-        self.assertNotIn('ts-explicit-limit', splits)
+        consumed = {'cs-stock-snapshot', 'ts-record-framing', 'py-monthly-report-utc'}
+        self.assertTrue(all(splits[case] == 'development' for case in consumed))
+        retained = {'cs-build-dependency-plan', 'ts-triage-queue', 'py-retry-recovery',
+                    'cpp-lookup-scaling', 'cpp-capacity-contract'}
+        replacements = {'cs-studio-cue-report', 'ts-tile-window', 'py-recipe-batch-scale'}
+        self.assertEqual({case for case, split in splits.items() if split == 'acceptance'}, retained | replacements)
+        retired = bench.load(bench.CORPUS.with_name('retired-development.json'))['cases']
+        self.assertEqual({row['id'] for row in retired}, {'cs-credit-validation', 'ts-path-boundary', 'py-log-redaction'})
+        self.assertTrue(all(row['split'] == 'development' and row['id'] not in splits for row in retired))
+        for previously_retired in ['py-event-idempotency', 'cs-refund-boundary', 'cs-tenant-lookup', 'ts-explicit-limit']:
+            self.assertNotIn(previously_retired, splits)
 
     def test_pin_does_not_expose_evaluator_or_corpus(self):
         self.freeze()
@@ -93,8 +107,93 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertTrue((pinned/'scripts/tool.py').is_file())
         self.assertFalse((pinned/'scripts/corporate_benchmark.py').exists())
         self.assertFalse((pinned/'assets/corporate').exists())
+        self.assertEqual(bench.sha(self.experiment/'evaluator/cases.json'), bench.sha(bench.CORPUS))
+        self.assertEqual(bench.sha(self.experiment/'evaluator/corporate_benchmark.py'), bench.sha(bench.__file__))
         for guide in ['cli-agent-validation.md','web-validation.md','simulation-validation.md']:
             self.assertTrue((pinned/'references'/guide).is_file())
+
+    def test_rotated_csharp_components_have_separate_runtime_oracles_and_cli(self):
+        dotnet = Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
+        if not dotnet.is_file():
+            self.skipTest('Pinned local .NET10 SDK unavailable')
+        self.fake_probe['tools']['dotnet'] = str(dotnet)
+        attempt = self.attempt('cs-studio-cue-report')
+        work = attempt/'work'
+
+        def checks(result):
+            return {row['check']: row['passed'] for row in result['checks']}
+
+        baseline = bench.evaluate_attempt(attempt)
+        bad = checks(baseline)
+        self.assertTrue(all(value for key, value in bad.items() if key.startswith('preservation')))
+        for key in ('cue-order-stable', 'cue-coverage-union', 'public-composed-report'):
+            self.assertFalse(bad[key])
+
+        # Disposable positive controls are never copied into generated fixtures.
+        order = work/'CueOrder.cs'
+        order.write_text(order.read_text(encoding='utf-8').replace(
+            '.ThenBy(cue => cue.Id, StringComparer.Ordinal)', ''), encoding='utf-8')
+        isolated = checks(bench.evaluate_attempt(attempt))
+        self.assertTrue(isolated['cue-order-stable'])
+        self.assertFalse(isolated['cue-coverage-union'])
+        self.assertFalse(isolated['public-composed-report'])
+        (work/'CueCoverage.cs').write_text('''public static class CueCoverage
+{
+    public static long TotalMilliseconds(IReadOnlyList<StudioCue> cues)
+    {
+        long total = 0, end = 0;
+        foreach (var cue in cues.OrderBy(cue => cue.StartMs))
+        {
+            if (cue.EndMs <= end) continue;
+            total += cue.EndMs - Math.Max(end, cue.StartMs);
+            end = cue.EndMs;
+        }
+        return total;
+    }
+}
+''', encoding='utf-8')
+        fixed = bench.evaluate_attempt(attempt)
+        self.assertTrue(fixed['automated_artifact_passed'])
+        self.assertTrue(all(checks(fixed).values()))
+        self.assertTrue(fixed['unchanged_by_evaluator'])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for TypeScript runtime')
+    def test_rotated_typescript_runtime_preserves_positional_and_sdk_results(self):
+        if not self.fake_probe['tools'].get('tsc'):
+            self.skipTest('Pinned TypeScript compiler unavailable')
+        attempt = self.attempt('ts-tile-window')
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertEqual(baseline['type_correctness'], 'PASS')
+        self.assertTrue(all(value for key, value in checks.items() if key.startswith('preservation')))
+        self.assertFalse(checks['target-sdk-0'])
+        self.assertFalse(checks['target-cli-0'])
+        core = attempt/'work'/'rules.ts'
+        old = core.read_text(encoding='utf-8')
+        core.write_text(old.replace(
+            'rows.slice(top, top + height).flatMap(row => row.slice(left, left + width))',
+            'rows.slice(top, Math.max(top, y + height)).flatMap(row => row.slice(left, Math.max(left, x + width)))'),
+            encoding='utf-8')
+        fixed = bench.evaluate_attempt(attempt)
+        self.assertTrue(fixed['automated_artifact_passed'])
+        self.assertTrue(fixed['unchanged_by_evaluator'])
+
+    def test_rotated_python_runtime_checks_exact_output_and_preserves_original_oracle(self):
+        attempt = self.attempt('py-recipe-batch-scale')
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertTrue(all(value for key, value in checks.items() if key.startswith('preservation')))
+        self.assertFalse(checks['target-sdk-0'])
+        self.assertFalse(checks['target-cli-0'])
+        core = attempt/'work'/'rules.py'
+        old = core.read_text(encoding='utf-8')
+        core.write_text(old.replace("row['units'] * target // source",
+            "((row['units'] * target + source * row['step'] - 1) // (source * row['step'])) * row['step']"),
+            encoding='utf-8')
+        fixed = bench.evaluate_attempt(attempt)
+        self.assertTrue(fixed['automated_artifact_passed'])
+        self.assertTrue(fixed['unchanged_by_evaluator'])
+        self.assertFalse(fixed['existing_tests_changed'])
 
     def test_declared_toolchain_content_change_invalidates_experiment(self):
         compiler=self.root/'compiler-marker';compiler.write_text('compiler version1')
