@@ -591,6 +591,43 @@ def evaluate(text: str) -> str:
     ]})
 '''
 
+MUSEUM_ROUTE_CONTRACT = '''The rules.evaluate(text: str) -> str API and positional JSON CLI accept:
+{"op":"route","galleries":{"hall":["prints"],"prints":[]},"start":"hall","goal":"prints"} -> {"path":["hall","prints"]}.
+galleries maps gallery ID strings to ordered lists of one-way crossings to existing galleries. Crossings may repeat and may form cycles.
+The path includes both endpoints and has the fewest crossings among directed routes. For equal-length paths, compare the positions of their crossings in each gallery's neighbor list at the first differing choice. Prefer the earlier listed crossing. The order of keys in galleries has no effect.
+A known start equal to the goal returns a path containing only that gallery. Unreachable or unknown endpoints return {"path":[]}.
+gallery_count returns {"count":N} from the number of keys in galleries. It does not require endpoints or inspect the neighbor lists.
+Keep the exported SDK, CLI, and result shapes unchanged. Production changes belong in rules.py. Keep docs, adapters and project configuration unchanged. Tests may be added or extended without weakening existing checks.
+'''
+
+MUSEUM_ROUTE_SOURCE = '''import json
+
+
+def find_route(galleries, current, goal, path):
+    if current == goal:
+        return path
+    for neighbor in galleries[current]:
+        if neighbor in path:
+            continue
+        route = find_route(galleries, neighbor, goal, [*path, neighbor])
+        if route:
+            return route
+    return []
+
+
+def evaluate(text: str) -> str:
+    request = json.loads(text)
+    galleries = request['galleries']
+    if request['op'] == 'gallery_count':
+        return json.dumps({'count': len(galleries)})
+    if request['op'] != 'route':
+        raise ValueError('unsupported operation')
+    start, goal = request['start'], request['goal']
+    if start not in galleries or goal not in galleries:
+        return json.dumps({'path': []})
+    return json.dumps({'path': find_route(galleries, start, goal, [start])})
+'''
+
 COMPONENT_SOURCE_FILES = {
     'stock-snapshot': {'StockCsv.cs', 'StockProjection.cs'},
     'triage-queue': {'rank.ts', 'group.ts'},
@@ -663,6 +700,8 @@ The original CLI takes the operation string as its first argument and prints ret
         common['CONTRACT.md'] = TILE_WINDOW_CONTRACT
     if scenario == 'recipe-scale':
         common['CONTRACT.md'] = RECIPE_SCALE_CONTRACT
+    if scenario == 'museum-route':
+        common['CONTRACT.md'] = MUSEUM_ROUTE_CONTRACT
     if tools:
         common['RUNTIME.md']+='Pinned executable paths: '+json.dumps({key:tools[key] for key in ['python','node','dotnet','cxx'] if tools.get(key)},sort_keys=True)+'\n'
     smoke = {
@@ -704,6 +743,9 @@ The original CLI takes the operation string as its first argument and prints ret
         request = {'op': 'scale', 'from_servings': 2, 'to_servings': 6,
                    'ingredients': [{'label': 'flour', 'units': 4, 'step': 2}]}
         smoke = f"args=[sys.executable,'cli.py',json.dumps({request!r})]; expected={{'ingredients':[{{'label':'flour','units':12}}]}}"
+    if scenario == 'museum-route':
+        request = {'op': 'route', 'galleries': {'lobby': ['ink'], 'ink': []}, 'start': 'lobby', 'goal': 'ink'}
+        smoke = f"args=[sys.executable,'cli.py',json.dumps({request!r})]; expected={{'path':['lobby','ink']}}"
     common['check_existing.py']='import json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nscratch = Path(".runtime-proof/scratch")\nscratch.mkdir(parents=True, exist_ok=True)\nwith tempfile.TemporaryDirectory(dir=scratch) as temp:\n    '+smoke+'\n    result=subprocess.run(args,capture_output=True,text=True,check=True);lines=result.stdout.strip().splitlines();actual=json.loads(lines[-1]);assert actual==expected,(actual,expected);print("Existing public behavior checked")\n'
     if case.get('scenario')=='lookup':
         common['PERFORMANCE.md']='For lookup30000 sorted keys and20000 queries, preserve exact results and reduce median command wall time to at most70% of the unchanged baseline on the same machine/compiler/options. Use one warmup and five measurements per version; retain raw values and noise.\n'
@@ -713,6 +755,9 @@ The original CLI takes the operation string as its first argument and prints ret
                     'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
         if scenario == 'recipe-scale':
             return {**common, 'rules.py': RECIPE_SCALE_SOURCE,
+                    'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
+        if scenario == 'museum-route':
+            return {**common, 'rules.py': MUSEUM_ROUTE_SOURCE,
                     'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
         core = '''import json\nfrom pathlib import Path\n\ndef evaluate(text):\n    x = json.loads(text)\n    if x['op'] == 'redact':\n        return json.dumps(x['data'], sort_keys=True)\n    p = Path(x['store'])\n    state = json.loads(p.read_text()) if p.exists() else {'balance': 0, 'seen': []}\n    for event in x['events']:\n        state['balance'] += event['amount']\n        if event['amount'] < 0:\n            raise ValueError('negative amount')\n        state['seen'].append(event['id'])\n        p.write_text(json.dumps(state, sort_keys=True))\n        if event.get('fail_after'):\n            raise RuntimeError('injected interruption')\n    return json.dumps(state, sort_keys=True)\n'''
         return {**common, "rules.py": core, "cli.py": "from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n"}
@@ -1289,6 +1334,45 @@ def recipe_scale_vectors():
     return ordinary, target
 
 
+def museum_route_vectors():
+    def route(galleries, start, goal, path):
+        return json.dumps({'op': 'route', 'galleries': galleries, 'start': start, 'goal': goal}), {'path': path}
+
+    simple = {'lobby': ['ink'], 'ink': []}
+    scenic = {'prints': [], 'ramp': ['prints'], 'courtyard': ['ramp'], 'stairs': ['prints'],
+              'entrance': ['courtyard', 'stairs']}
+    ordered = {'exit': [], 'ceramics': ['exit'], 'albums': ['exit'],
+               'bronze': ['ceramics', 'albums'], 'amber': ['albums'], 'entry': ['bronze', 'amber']}
+    cycles = {'entry': ['loop', 'loop', 'bridge'], 'loop': ['entry', 'quiet'],
+              'quiet': ['loop'], 'bridge': ['entry', 'exit'], 'exit': [], 'island': ['island']}
+    converging = {'entry': ['long', 'short'], 'long': ['bend'], 'bend': ['joint'],
+                  'short': ['joint'], 'joint': ['exit'], 'exit': []}
+    ordinary = [
+        route(simple, 'lobby', 'ink', ['lobby', 'ink']),
+        route(simple, 'ink', 'lobby', []),
+        (json.dumps({'op': 'gallery_count', 'galleries': {'entry': None, 'exit': []}}), {'count': 2}),
+    ]
+    target = [
+        route(scenic, 'entrance', 'prints', ['entrance', 'stairs', 'prints']),
+        route(ordered, 'entry', 'exit', ['entry', 'bronze', 'ceramics', 'exit']),
+        route(converging, 'entry', 'exit', ['entry', 'short', 'joint', 'exit']),
+        route(cycles, 'entry', 'exit', ['entry', 'bridge', 'exit']),
+        route(cycles, 'entry', 'island', []),
+        route(cycles, 'loop', 'loop', ['loop']),
+        route(simple, 'unknown', 'unknown', []),
+        route(simple, 'lobby', 'unknown', []),
+        route({}, 'lobby', 'ink', []),
+    ]
+    return ordinary, target
+
+
+SDK_AND_CLI_VECTORS = {
+    'tile-window': tile_window_vectors,
+    'recipe-scale': recipe_scale_vectors,
+    'museum-route': museum_route_vectors,
+}
+
+
 def test_vectors(case, sandbox):
     scenario = case["scenario"]
     def j(x): return json.dumps(x, separators=(",", ":"))
@@ -1494,8 +1578,8 @@ def _evaluate_attempt(attempt):
                 exercise('public-composed-report', json.dumps(request), expected, program=public)
             else:
                 checks.append({'check': 'public-cli-build', 'passed': False})
-        elif scenario in {'tile-window', 'recipe-scale'}:
-            ordinary, target = tile_window_vectors() if scenario == 'tile-window' else recipe_scale_vectors()
+        elif scenario in SDK_AND_CLI_VECTORS:
+            ordinary, target = SDK_AND_CLI_VECTORS[scenario]()
             public, _ = build_public_cli(workspace, evidence/'public-cli', case['language'], toolchain(plan))
             for prefix, vectors in (('preservation', ordinary), ('target', target)):
                 for index, (text, expected) in enumerate(vectors):

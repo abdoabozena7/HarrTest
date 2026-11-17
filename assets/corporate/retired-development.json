@@ -1,10 +1,14 @@
 {
   "schema": 1,
   "purpose": "Historical development definitions retired from the active corpus to keep the split balanced. Frozen experiments continue to use their archived definitions and evaluator.",
-  "previous_acceptance_protocol_sha256": "a9dcabca5bd31210475a6a35e7c42c98e666c07200cc2afd636310de716cf06a",
+  "rotations": [
+    {"protocol_sha256":"a9dcabca5bd31210475a6a35e7c42c98e666c07200cc2afd636310de716cf06a","retired":["cs-credit-validation","ts-path-boundary","py-log-redaction"]},
+    {"protocol_sha256":"14b2e716a1d15da85d0293e24da16acdda0b073c1283f285a82d36e1dd0ab495","retired":["py-batch-atomicity"]}
+  ],
   "cases": [
     {"id":"cs-credit-validation","split":"development","language":"csharp","scenario":"credit","request":"Validate credit requests before changing the ledger: only strictly positive amounts are allowed. Preserve valid credits and the existing public contract."},
     {"id":"ts-path-boundary","split":"development","language":"typescript","scenario":"path","request":"Secure the existing root-relative path resolver: reject paths escaping the configured root, while preserving valid nested paths and the public interface."},
-    {"id":"py-log-redaction","split":"development","language":"python","scenario":"redact","request":"Remove credential disclosure from the existing structured diagnostics, including nested structures, while retaining non-sensitive diagnostic fields and the exported API."}
+    {"id":"py-log-redaction","split":"development","language":"python","scenario":"redact","request":"Remove credential disclosure from the existing structured diagnostics, including nested structures, while retaining non-sensitive diagnostic fields and the exported API."},
+    {"id":"py-batch-atomicity","split":"development","language":"python","scenario":"atomic","request":"Make validation failure atomic for the existing batch worker: invalid input must leave persisted state unchanged. Preserve valid batches, the storage schema and the public interface."}
   ]
 }

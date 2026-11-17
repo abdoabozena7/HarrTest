@@ -64,6 +64,15 @@ class CorporateBenchmarkTests(unittest.TestCase):
             self.freeze(corpus=path)
         return bench.prepare(self.experiment,case,"plain","weak-observed",1)
 
+    def summary_attempt(self):
+        # Summaries enumerate the frozen held matrix, so the synthetic receipt
+        # must be attached to an actual held slot regardless of corpus rotation.
+        plan = self.freeze()
+        held_python = {row['id'] for row in plan['cases']
+                       if row['split'] == 'acceptance' and row['language'] == 'python'}
+        slot = next(row for row in plan['execution_order'] if row['case'] in held_python and row['arm'] == 'plain')
+        return bench.prepare(self.experiment, slot['case'], slot['arm'], slot['model'], slot['repetition'])
+
     def test_corporate_editor_guard_profile_for_v5_development(self):
         shutil.copy2(ROOT / 'scripts/copilot_guard.py', self.new / 'scripts/copilot_guard.py')
         with patch.object(bench, 'preflight', return_value=self.fake_probe):
@@ -71,9 +80,11 @@ class CorporateBenchmarkTests(unittest.TestCase):
                                 corporate_guard_goal='mission')
         self.assertEqual(plan['corporate_guard_goal'], 'mission')
         self.assertTrue((self.experiment / 'packages/v5/scripts/copilot_guard.py').is_file())
+        case = next(row['id'] for row in plan['cases']
+                    if row['split'] == 'development' and row['language'] == 'python')
         with self.assertRaisesRegex(ValueError, 'requires the V5 package'):
-            bench.prepare(self.experiment, 'py-batch-atomicity', 'plain', 'weak-observed', 1)
-        slot = bench.prepare(self.experiment, 'py-batch-atomicity', 'v5', 'weak-observed', 1)
+            bench.prepare(self.experiment, case, 'plain', 'weak-observed', 1)
+        slot = bench.prepare(self.experiment, case, 'v5', 'weak-observed', 1)
         meta = bench.load(slot / 'attempt.json')
         self.assertTrue(meta['prompt'].startswith('$harrtest\n' + meta['case']['request']))
 
@@ -109,14 +120,18 @@ class CorporateBenchmarkTests(unittest.TestCase):
             for language in bench.LANGUAGES:
                 self.assertEqual(sum(x['split']==split and x['language']==language for x in rows),2)
         splits = {row['id']: row['split'] for row in rows}
-        consumed = {'cs-stock-snapshot', 'ts-record-framing', 'py-monthly-report-utc'}
+        consumed = {'cs-stock-snapshot', 'ts-record-framing', 'py-monthly-report-utc', 'py-recipe-batch-scale'}
         self.assertTrue(all(splits[case] == 'development' for case in consumed))
         retained = {'cs-build-dependency-plan', 'ts-triage-queue', 'py-retry-recovery',
                     'cpp-lookup-scaling', 'cpp-capacity-contract'}
-        replacements = {'cs-studio-cue-report', 'ts-tile-window', 'py-recipe-batch-scale'}
+        replacements = {'cs-studio-cue-report', 'ts-tile-window', 'py-museum-route'}
         self.assertEqual({case for case, split in splits.items() if split == 'acceptance'}, retained | replacements)
-        retired = bench.load(bench.CORPUS.with_name('retired-development.json'))['cases']
-        self.assertEqual({row['id'] for row in retired}, {'cs-credit-validation', 'ts-path-boundary', 'py-log-redaction'})
+        archive = bench.load(bench.CORPUS.with_name('retired-development.json'))
+        retired = archive['cases']
+        retired_ids = {'cs-credit-validation', 'ts-path-boundary', 'py-log-redaction', 'py-batch-atomicity'}
+        self.assertEqual(len(retired), len(retired_ids))
+        self.assertEqual({row['id'] for row in retired}, retired_ids)
+        self.assertCountEqual([case for rotation in archive['rotations'] for case in rotation['retired']], retired_ids)
         self.assertTrue(all(row['split'] == 'development' and row['id'] not in splits for row in retired))
         for previously_retired in ['py-event-idempotency', 'cs-refund-boundary', 'cs-tenant-lookup', 'ts-explicit-limit']:
             self.assertNotIn(previously_retired, splits)
@@ -210,6 +225,43 @@ class CorporateBenchmarkTests(unittest.TestCase):
         core.write_text(old.replace("row['units'] * target // source",
             "((row['units'] * target + source * row['step'] - 1) // (source * row['step'])) * row['step']"),
             encoding='utf-8')
+        fixed = bench.evaluate_attempt(attempt)
+        self.assertTrue(fixed['automated_artifact_passed'])
+        self.assertTrue(fixed['unchanged_by_evaluator'])
+        self.assertFalse(fixed['existing_tests_changed'])
+
+    def test_rotated_python_shortest_path_oracle_preserves_neighbor_order(self):
+        attempt = self.attempt('py-museum-route')
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertTrue(all(passed for name, passed in checks.items() if name.startswith('preservation')))
+        self.assertFalse(checks['target-sdk-0'])
+        self.assertFalse(checks['target-cli-2'])
+        core = attempt/'work'/'rules.py'
+        source = core.read_text(encoding='utf-8')
+        implementation = '''def find_route(galleries, current, goal, path):
+    frontier = [path]
+    visited = {current}
+    while frontier:
+        route = frontier.pop(0)
+        if route[-1] == goal:
+            return route
+        for neighbor in galleries[route[-1]]:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                frontier.append([*route, neighbor])
+    return []
+
+
+'''
+        fixed_source = source[:source.index('def find_route')] + implementation + source[source.index('def evaluate'):]
+        core.write_text(fixed_source.replace('in galleries[route[-1]]:', 'in sorted(galleries[route[-1]]):'),
+                        encoding='utf-8')
+        partial = bench.evaluate_attempt(attempt)
+        self.assertFalse(partial['functional_passed'])
+        self.assertEqual({row['check'] for row in partial['checks'] if not row['passed']},
+                         {'target-sdk-1', 'target-cli-1'})
+        core.write_text(fixed_source, encoding='utf-8')
         fixed = bench.evaluate_attempt(attempt)
         self.assertTrue(fixed['automated_artifact_passed'])
         self.assertTrue(fixed['unchanged_by_evaluator'])
@@ -887,11 +939,15 @@ public static class StockCsv
         return path
 
     def test_reviewed_timeout_is_a_failed_retained_denominator_not_a_dead_end(self):
-        p=self.attempt('py-retry-recovery');review=self.timeout_review(p)
+        p=self.summary_attempt();review=self.timeout_review(p)
         assessment=bench.record_assessment(p,review)
         self.assertFalse(assessment['complete_quality_passed'])
         self.assertFalse(assessment['false_accept'])
-        counts=bench.summarize(self.experiment)['counts']['plain']
+        summary=bench.summarize(self.experiment)
+        observed=next(row for row in summary['attempts'] if row['status']=='TIMEOUT')
+        self.assertEqual(observed['case'],bench.load(p/'attempt.json')['case']['id'])
+        self.assertEqual(observed['completion_claim'],'INCOMPLETE')
+        counts=summary['counts']['plain']
         self.assertEqual(counts['denominator'],32)
         self.assertEqual(counts['unreviewed'],31)
         self.assertEqual(counts['false_accepts'],0)
@@ -918,7 +974,7 @@ public static class StockCsv
         self.assertFalse(bench.record_assessment(p,review)['complete_quality_passed'])
 
     def test_post_review_generation_changes_invalidate_summary(self):
-        p=self.attempt('py-retry-recovery');review=self.timeout_review(p)
+        p=self.summary_attempt();review=self.timeout_review(p)
         bench.record_assessment(p,review)
         bench.save(p/'generation.json',{'status':'COMPLETED'})
         with self.assertRaisesRegex(ValueError,'generation record changed'):
@@ -941,7 +997,7 @@ public static class StockCsv
         self.assertEqual(bench.tree(workspace), before)
 
     def test_summary_reports_reviewed_layer_failures_and_bound_credit_receipts(self):
-        attempt = self.attempt('py-retry-recovery')
+        attempt = self.summary_attempt()
         report = self.timeout_review(attempt)
         review = bench.load(report)
         for row in review['layers']:
@@ -949,9 +1005,10 @@ public static class StockCsv
                 row['status'] = 'FAIL'
         bench.save(report, review)
         usage_path = attempt / 'usage.json'
+        model = bench.load(attempt / 'attempt.json')['model']
         usage = {'aiCreditsStatus': 'complete', 'totalNanoAiu': 1_500_000_000,
                  'agentMetrics': {'main': {'totalNanoAiu': 1_000_000_000}, 'child': {'totalNanoAiu': 500_000_000}},
-                 'modelMetrics': {'weak-observed': {'totalNanoAiu': 1_500_000_000}}}
+                 'modelMetrics': {model: {'totalNanoAiu': 1_500_000_000}}}
         bench.save(usage_path, usage)
         generation_path = attempt / 'generation.json'
         generation = bench.load(generation_path)
