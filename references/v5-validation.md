@@ -1,8 +1,8 @@
 # V5 Corporate validation — in progress
 
-V5 is a local development candidate. It has not replaced the released 4.1 package
-on GitHub or the installed user-global skill. No corporate-readiness or V5 model
-quality improvement has been established yet.
+V5 is a local development candidate. The released package and user-global skill
+are at 4.1.0. The frozen results below measure quality differences for the
+evaluated changes and environments.
 
 ## Baseline
 
@@ -32,7 +32,7 @@ with no task-specific repairs to generated artifacts.
 The frozen acceptance run began on 2026-11-14 using GPT-6 Luna and GPT-6.1 Sol
 at low reasoning effort, with the same 2,400-second and 120-AI-credit caps for
 each attempt. Independent assessments are recorded as attempts complete.
-The local protocol, journal and partial summary are under `output/v5-corporate/acceptance-v5-1/`.
+The first local protocol, journal and final summary are under `output/v5-corporate/acceptance-v5-1/`.
 
 The first matched block used Luna on the Python batch-atomicity request. All
 three artifacts passed the frozen executable suite. Independent reviewers
@@ -62,6 +62,44 @@ All 96 independent assessments recorded 11/32, 12/32 and 13/32 complete-quality
 passes, with 19, 19 and 15 false accepts in arm order. Reviewed security failures
 were 2, 4 and 6. The executable results alone would overstate the quality of all
 three arms. The first local archive retains the final assessment summary.
+
+### Second frozen comparison
+
+The second comparison froze the V5 package at `a2ae3e8`, used the same two
+models, effort, budgets and fixed denominator, and replaced four development-
+consumed cases before execution. All 96 outcomes and independent assessments
+are present. Four generation outcomes failed and remain in the denominator.
+
+| Measure | No HarrTest | 4.1 | V5 |
+| --- | ---: | ---: | ---: |
+| Executable functionality | 29/32 | 30/32 | 30/32 |
+| Independently complete artifact quality | 12/32 | 12/32 | 18/32 |
+| False accepts | 20 | 19 | 4 |
+| Regressions | 5 | 2 | 5 |
+| Security layer failures | 4 | 2 | 3 |
+| Architecture or protected-scope violations | 15 | 16 | 6 |
+| Generation median (seconds) | 72.704 | 100.570 | 740.592 |
+| Observed Copilot AI credits | 135.254950 | 246.9606825 | 1761.2535515 |
+| Complete usage receipts | 32/32 | 31/32 | 30/32 |
+
+Six of the 18 V5 artifacts passed complete quality while their own final
+responses reported incomplete acceptance. Of 16 V5 responses claiming full
+completion, 12 passed independent artifact review. The four false accepts cover
+legacy input acceptance or rejection, a protected file boundary and an original
+test oracle. Independent adjudication of both disputed stock review blocks
+retained every verdict. The C++ performance workload had three measured passes
+in plain and four in each skill arm. One plain attempt had no usable measurement.
+The benchmark records 28 reconciled V5 parent/child credit totals.
+
+The fixed release threshold requires zero V5 false accepts, so this package is
+unqualified. The latest optional guard was developed on consumed cases after
+this matrix was frozen. The matrix cannot establish its impact. The second
+matrix's final summary is `output/v5-corporate/acceptance-v5-5/final-summary.json`,
+SHA-256 `af67a653e4a87eea48d3d3aacdc96d7e862423bd091bcf4605c08dd8dea0c68a`.
+The next comparison moves the three cases that informed corrective rules into
+development and freezes replacement cases before Copilot runs them.
+
+### Workflow development evidence
 
 The same frozen protocol retained a credit-validation attempt with seven passing
 external checks and a passing native Team replay. Both native workers ran at

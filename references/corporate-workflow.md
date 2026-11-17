@@ -193,8 +193,13 @@ the repair scope guided by the request and project policy.
 
 The mutable report contains schema1, plan_sha256, current source, executions and
 review. Execution references are `{receipt:project-relative-path,sha256:digest}`.
-The gate rechecks captured outputs/artifacts/assertions and current check identity,
-rather than trusting a passed boolean. A later run supersedes old candidate evidence.
+Once the planned checks run on the final source, use
+`corporate.py report-scaffold --goal .runtime-proof/root-goals/mission` to collect
+their actual latest receipts. The command prints missing or stale checks and
+binds the new report for review. It preserves any existing report. Archive an
+earlier report in the private evidence directory before issuing a new one after
+repair. The gate rechecks the captured outputs and assertions. A later run
+supersedes old candidate evidence.
 
 An independent reviewer differs from author, declares human/fresh-context-agent
 method, and binds source_digest, plan_sha256 and report_sha256 (report excluding

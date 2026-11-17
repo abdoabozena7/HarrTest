@@ -357,17 +357,25 @@ def validate(project, goal, contract):
     return plan
 
 
-def seal_binding(project, goal, contract):
-    project, goal = Path(project).resolve(), Path(goal).resolve()
-    plan_path, _, plan = _load(project, goal, contract)
+def planned_checks(plan):
     checks = set()
+    candidate_checks = set()
     for layer in plan['layers']:
         for criterion in layer['criteria']:
-            checks.update((selector(criterion['check']), selector(criterion['negative_check'])))
+            candidate_checks.update((selector(criterion['check']), selector(criterion['negative_check'])))
             if 'baseline_check' in criterion:
                 checks.add(selector(criterion['baseline_check']))
         for metric in layer.get('metrics', []):
-            checks.update((selector(metric['check']), selector(metric['baseline_check'])))
+            candidate_checks.add(selector(metric['check']))
+            checks.add(selector(metric['baseline_check']))
+    return checks, candidate_checks
+
+
+def seal_binding(project, goal, contract):
+    project, goal = Path(project).resolve(), Path(goal).resolve()
+    plan_path, _, plan = _load(project, goal, contract)
+    baseline_checks, candidate_checks = planned_checks(plan)
+    checks = baseline_checks | candidate_checks
     frozen_checks = {}
     child_tasks = {task_id for task_id, _ in checks}
     child_tasks.update(link['task_id'] for requirement in contract.get('requirements', [])
@@ -662,33 +670,39 @@ def coverage_input(goal):
             'acceptance_sha256': proof.digest({key: root[key] for key in ('requirements', 'integration')})}
 
 
+def coverage_review_message(goal, bindings, planner):
+    """Format the exact review message for a current or previously issued draft."""
+    goal = Path(goal)
+    request = (goal / 'original-request.txt').as_posix()
+    root = (goal / 'root-contract.json').as_posix()
+    destination = (goal / 'coverage-review.json').as_posix()
+    return (
+        f'Independently review coverage of {request} against {root}.\n'
+        f'Current request, span and acceptance bindings: {json.dumps(bindings, sort_keys=True)}.\n'
+        'Inspect the actual source and project contracts that affect the meaning of the request. '
+        'Check that every requirement, material edge case and preservation obligation has an observable '
+        'criterion. Identify any weak assertion, unsupported assumption or omitted material requirement. '
+        'Keep product files and the draft read-only. Only write the private review artifact at '
+        f'{destination}. Include the three bindings above, method fresh-context-agent, '
+        f'planner {json.dumps(planner)}, your actual reviewer identity, concrete observations, '
+        'unresolved_findings and verdict. Use covered only if there are no unresolved findings. '
+        'Return the artifact path and verdict to the coordinator.')
+
+
 def coverage_packet(goal):
     """Assign the pre-seal request coverage review against the current draft."""
     project, goal = goal_project(goal)
     require(not (goal / 'root-seal.json').exists(), 'Review request coverage before sealing the root')
-    root_path = path(goal, 'root-contract.json')
-    root = document(root_path)
+    root = document(path(goal, 'root-contract.json'))
     require(root.get('schema') == 4 and root.get('protocol') == PROTOCOL
             and root.get('goal_id') == root.get('production_team') == goal.name,
             'Use the matching Corporate root draft')
     expected = coverage_input(goal)
     require(root.get('request_sha256') == expected['request_sha256'], 'Original request differs from the draft')
     _, _, plan = _load(project, goal, root)
-    text(plan.get('author'), 'Actual planner identity')
-    request = path(goal, 'original-request.txt').as_posix()
-    destination = path(goal, 'coverage-review.json', exists=False).as_posix()
-    message = (
-        f'Independently review coverage of {request} against {root_path.as_posix()}.\n'
-        f'Current request, span and acceptance bindings: {json.dumps(expected, sort_keys=True)}.\n'
-        'Inspect the actual source and project contracts that affect the meaning of the request. '
-        'Check that every requirement, material edge case and preservation obligation has an observable '
-        'criterion. Identify any weak assertion, unsupported assumption or omitted material requirement. '
-        'Keep product files and the draft read-only. Only write the private review artifact at '
-        f'{destination}. Include the three bindings above, method fresh-context-agent, '
-        f'planner {json.dumps(plan["author"])}, your actual reviewer identity, concrete observations, '
-        'unresolved_findings and verdict. Use covered only if there are no unresolved findings. '
-        'Return the artifact path and verdict to the coordinator.')
-    return {'task_name': 'coverage_review', 'fork_turns': 'none', 'message': message}
+    path(goal, 'coverage-review.json', exists=False)
+    return {'task_name': 'coverage_review', 'fork_turns': 'none',
+            'message': coverage_review_message(goal, expected, plan['author'])}
 
 
 def bind_coverage(goal):
@@ -715,6 +729,45 @@ def bind_coverage(goal):
     return {'status': 'COVERAGE_LINKED', 'root': str(root_path), 'root_sealed': False}
 
 
+def report_scaffold(goal):
+    """Collect current candidate executions, leaving every verdict to review."""
+    project, goal = goal_project(goal)
+    root = document(path(goal, 'root-contract.json'))
+    seal = document(path(goal, 'root-seal.json'))
+    _, report_path, plan = _load(project, goal, root)
+    binding = seal_binding(project, goal, root)
+    require(seal.get('root_hash') == proof.digest(root) and seal.get('corporate') == binding,
+            'The sealed root or its Corporate inputs changed')
+    current = source_snapshot(project, plan['source_paths'])
+    _, checks = planned_checks(plan)
+    executions, observed, missing = [], [], []
+    for task_id, check_id in sorted(checks):
+        label = task_id + '/' + check_id
+        try:
+            task = path(project, f'{proof.STATE}/{task_id}')
+            pointer = document(path(task, f'latest/{check_id}.json'))
+            run = path(task, pointer['run'])
+            receipt = (run / 'receipt.json').relative_to(project).as_posix()
+            ref = execution_reference(project, receipt)
+            actual = execution(project, ref, current, latest=True)
+            require(actual['selector'] == (task_id, check_id), 'Receipt belongs to another check')
+            require(instant(actual['receipt']['started_at']) >= instant(seal['sealed_at']),
+                    'Run the candidate check after sealing')
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError, OSError, proof.ProofError) as exc:
+            missing.append({'check': label, 'status': 'UNVERIFIED', 'reason': str(exc)})
+            continue
+        executions.append(ref)
+        observed.append({'check': label, 'status': 'PASS' if actual['passed'] else 'FAIL'})
+    if missing:
+        return {'status': 'UNVERIFIED', 'observed': observed, 'missing': missing, 'report_written': False}
+    require(source_snapshot(project, plan['source_paths']) == current, 'Candidate source changed during collection')
+    report = {'schema': 1, 'plan_sha256': binding['plan_sha256'], 'source': current, 'executions': executions}
+    proof.save(report_path, report, exclusive=True)
+    return {'status': 'DRAFT_UNVERIFIED', 'report': str(report_path), 'observed': observed,
+            'review_binding': {'source_digest': current['digest'], 'plan_sha256': binding['plan_sha256'],
+                               'report_sha256': proof.digest(report)}}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -729,7 +782,7 @@ def main():
     draft.add_argument('--proof-task', required=True)
     draft.add_argument('--baseline-check', action='append', required=True)
     draft.add_argument('--author', required=True)
-    for command in ('coverage-input', 'coverage-packet', 'bind-coverage'):
+    for command in ('coverage-input', 'coverage-packet', 'bind-coverage', 'report-scaffold'):
         sub.add_parser(command).add_argument('--goal', type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -741,6 +794,8 @@ def main():
             result = coverage_packet(args.goal)
         elif args.command == 'bind-coverage':
             result = bind_coverage(args.goal)
+        elif args.command == 'report-scaffold':
+            result = report_scaffold(args.goal)
         elif args.command == 'snapshot':
             result = source_snapshot(args.project.resolve(), args.source)
         else:

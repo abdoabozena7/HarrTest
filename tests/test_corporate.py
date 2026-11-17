@@ -732,6 +732,36 @@ class CorporateTests(unittest.TestCase):
         with self.assertRaisesRegex(proof.ProofError, 'Source changed before Corporate dispatch'):
             root_gate.require_corporate_dispatch(self.project, state, baseline_current=True)
 
+    def test_report_scaffold_uses_exact_latest_candidate_executions_without_claiming_review(self):
+        original = self.report_path.read_bytes()
+        self.report_path.unlink()
+        command = [sys.executable, '-B', str(ROOT / 'scripts/corporate.py'), 'report-scaffold',
+                   '--goal', str(self.goal)]
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        draft = proof.load(self.report_path)
+        summary = json.loads(result.stdout)
+        self.assertEqual(summary['status'], 'DRAFT_UNVERIFIED')
+        self.assertNotIn('review', draft)
+        expected = {key: value for key, value in json.loads(original).items() if key != 'review'}
+        self.assertCountEqual(draft['executions'], expected['executions'])
+        self.assertEqual(draft, {**expected, 'executions': draft['executions']})
+        self.assertEqual(summary['review_binding']['report_sha256'], proof.digest(draft))
+        self.assertEqual({row['status'] for row in summary['observed']}, {'PASS'})
+        # A subsequent review and previous evidence survive retries. A
+        # source change invalidates the current receipts and creates no report.
+        self.report_path.write_bytes(original)
+        repeat = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(repeat.returncode, 2, repeat.stdout + repeat.stderr)
+        self.assertEqual(self.report_path.read_bytes(), original)
+        self.report_path.unlink()
+        with self.source.open('a', encoding='utf-8') as source:
+            source.write('\nnew_source = True\n')
+        stale = corporate.report_scaffold(self.goal)
+        self.assertEqual(stale['status'], 'UNVERIFIED')
+        self.assertEqual(len(stale['missing']), 3)
+        self.assertFalse(self.report_path.exists())
+
     def test_dispatch_refuses_changed_review_binding_and_changed_checker(self):
         goal, state, _ = self.reviewed_draft()
         corporate.scaffold(goal, 'verify', ['baseline'], 'calculator-owner')
