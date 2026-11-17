@@ -241,7 +241,8 @@ In the third enrolled trial, Luna corrected the request binding, completed a
 native scope review, sealed a schema-4 root, and received owner admission before
 the first product patch. It passed 9/9 external checks in 1721.567s at 18.3884765
 AI credits. It still used one implementation owner for independently testable
-components, amended an existing test and failed the frozen artifact guard. The
+components and amended an existing test. Strict TypeScript checking failed on
+an unassigned variable and the frozen artifact guard rejected the result. The
 QA worker recorded inherited failures and unmeasured performance; the root
 remained `ROOT_GOAL_UNVERIFIED`. The coverage review required a separate native
 task, which the enrolled parent could not start before admission in that pin.
@@ -265,6 +266,12 @@ different normal check roles. The nested parser was tested on the full
 all four private edits. The replay validator accepts matching normal check
 roles without waiving differences in command, mode, assertions or exit codes.
 The original development result remains `ROOT_GOAL_UNVERIFIED`.
+
+The sixth trial loaded the nested-task and preservation fixes. It reached
+native plan and coverage review, then ended on a model-response DNS error.
+The Corporate seal was absent and no implementation worker started. The
+retained baseline passed 3/8 external checks. This outcome cannot measure the
+effect of the two fixes on completed Copilot work.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.
