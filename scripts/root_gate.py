@@ -199,6 +199,9 @@ def _corporate_team_scope(project, contract, state, binding):
         target = proof.relative_file(project, output, must_exist=False)
         if not any(target.is_relative_to(root) for root in roots):
             raise proof.ProofError('Corporate verification scope omits Team output: ' + output)
+    baseline = plan['baseline']['source']['files']
+    if any(baseline.get(rel) != digest for rel, digest in state['baseline'].items()):
+        raise proof.ProofError('Team output baseline differs from the Corporate baseline')
     child_id = contract['integration']['task_id']
     task = proof.relative_file(project / proof.STATE, child_id)
     child = proof.load(task / 'contract.json')
@@ -220,8 +223,6 @@ def _corporate_dispatch_inputs(project, contract, state, *, baseline_current):
     binding = team.binding(project, state['plan']['id'], contract['request_sha256'])
     plan = _corporate_team_scope(project, contract, state, binding)
     baseline = plan['baseline']['source']
-    if any(baseline['files'].get(rel) != digest for rel, digest in state['baseline'].items()):
-        raise proof.ProofError('Team output baseline differs from the Corporate baseline')
     if baseline_current and (corporate.source_snapshot(project, plan['source_paths']) != baseline
             or team.snapshot(project, state['baseline']) != state['baseline']):
         raise proof.ProofError('Source changed before Corporate dispatch. Preserve the original baseline.')

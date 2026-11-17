@@ -147,6 +147,8 @@ python <skill>/scripts/team.py --project . packets --team mission
 The dispatch check ties the reviewed Team state and actual pre-edit source to
 the immutable root, including the proof check and verifier hashes. If the
 check rejects the inputs, resolve the reported discrepancy before dispatch.
+Every schema-4 seal pins its exact Team state. The Team's owned-file baseline
+must agree with the Corporate source baseline collected for the same change.
 
 ### Optional Copilot CLI readiness guard
 

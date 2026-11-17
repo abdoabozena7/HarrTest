@@ -560,6 +560,19 @@ class CorporateTests(unittest.TestCase):
         self.assertTrue(evidence['corporate']['passed'])
         self.assertIn('Production team: Corporate Team state differs from the root seal', evidence['errors'])
 
+    def test_schema4_root_cannot_seal_mismatched_team_and_corporate_baselines(self):
+        state_path = team.team_path(self.project, 'mission')
+        state_path.unlink()
+        team.init(self.project, self.team_plan)  # Captures the already changed implementation.
+        content = self.source.read_text(encoding='utf-8')
+        self.source.write_text(content.replace('total(a, b=0)', 'total(a, b)'), encoding='utf-8')
+        (self.goal / 'root-seal.json').unlink()
+        args = [sys.executable, '-B', str(ROOT / 'scripts/root_gate.py'), 'seal', '--goal', str(self.goal)]
+        rejected = subprocess.run(args, capture_output=True, text=True)
+        self.assertEqual(rejected.returncode, 2, rejected.stdout + rejected.stderr)
+        self.assertIn('Team output baseline differs from the Corporate baseline', rejected.stderr)
+        self.assertFalse((self.goal / 'root-seal.json').exists())
+
     def copied_verifier(self):
         """Execute a real separate helper package without altering tracked code."""
         package = self.project / 'verifier-copy'
