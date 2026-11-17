@@ -48,6 +48,26 @@ and resilience checks follow actual impact and budgets, not an assumption that
 all persisted collections must have constant space or every refactor must add
 unrequested input modes.
 
+## Verify compatibility for existing code
+
+- **Preserved behavior.** Select relevant old successes and rejections at the
+  affected public entrypoint. Record their expected outcomes from the existing
+  contract and baseline, then replay the same inputs on the candidate. Include
+  nearby cases the change could accidentally admit or reject. Compare the
+  result, exit status or state that callers depend on, with diagnostic text only
+  when it is part of the contract. Cite the authority for any intended change
+  to these outcomes.
+- **Protected project boundaries.** Cite the repository rules, contracts or
+  approval that govern the affected paths and interfaces. Review the full diff
+  from the baseline for changes outside that authority, including new, moved
+  and deleted files. When a rule requires particular files to stay
+  byte-identical, compare their digests as well.
+- **Existing test oracles.** When tests change, trace the previous inputs and
+  assertions for preserved behavior to their current equivalents. Replay the
+  original checker or an equivalent check on the candidate. In a disposable
+  copy, confirm that the current check fails when the retained invariant is
+  violated.
+
 ## Negative controls and anti-theater checks
 
 Use safe negative controls to establish that a meaningful failure is detectable:
