@@ -777,7 +777,7 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
     if tool not in {'write_agent', 'read_agent'} or not isinstance(args, dict):
         return
     worker = by_agent.get(args.get('agent_id'))
-    if worker is None or worker['end'] is None:
+    if worker is None or worker['end'] is None or 'auxiliary_parent' in worker:
         return
     telemetry = payload.get('toolTelemetry', {})
     properties, metrics = telemetry.get('properties', {}), telemetry.get('metrics', {})
@@ -874,6 +874,7 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                 'effort': effort, 'models': set(filter(None, [model])), 'efforts': set(filter(None, [effort]))}
     coordinator = row(parent, t.instant(data['startTime']), data.get('selectedModel'), data.get('reasoningEffort'))
     rows, by_agent, calls, dispatch = {'integration': coordinator}, {}, {}, {}
+    auxiliary_calls = {}
     seen_ids = {header.get('id')}
     boundary_initialized = False
     def apply_model_transition(current, payload, record):
@@ -933,7 +934,8 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                       'Copilot session changed to a different workspace')
         elif kind == 'tool.execution_start':
             call_id = payload.get('toolCallId')
-            t.require(isinstance(call_id, str) and call_id not in calls, 'Duplicate Copilot tool call')
+            t.require(isinstance(call_id, str) and call_id not in calls and call_id not in auxiliary_calls,
+                      'Duplicate Copilot tool call')
             if agent:
                 t.require(current is not None and when >= current['start'],
                           'Copilot child tool is outside its actual task lifecycle')
@@ -952,14 +954,36 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                 dispatch[call_id] = payload
         elif kind == 'subagent.started':
             call_id = payload.get('toolCallId')
-            args = dispatch.pop(call_id, {}).get('arguments', {})
+            task_dispatch = dispatch.pop(call_id, None)
+            auxiliary_parent = None
+            if task_dispatch is None and corporate_request is not None and call_id in calls:
+                request, started = calls[call_id]
+                dispatcher = request.get('agentId')
+                candidate = request['data']
+                if dispatcher and candidate.get('toolName') == 'task':
+                    origin = by_agent[dispatcher]
+                    arguments = candidate.get('arguments')
+                    # The lifecycle payload identifies the dispatching agent.
+                    # The outer event's parentId identifies another event.
+                    t.require(call_id and call_id not in auxiliary_calls and origin['active'] is not None
+                              and origin['active'] <= started <= when
+                              and candidate.get('parentToolCallId') == origin['dispatch_call']
+                              and payload.get('parentId') == dispatcher
+                              and payload.get('executionMode') == 'sync'
+                              and isinstance(arguments, dict) and arguments.get('mode', 'sync') == 'sync',
+                              'Invalid nested Copilot task dispatch')
+                    task_dispatch = candidate
+                    auxiliary_parent = (dispatcher, origin['active'])
+            args = (task_dispatch or {}).get('arguments', {})
             label = args.get('name') if isinstance(args, dict) else None
-            t.require(label and label == payload.get('agentDisplayName')
-                      and isinstance(agent, str) and agent not in by_agent and agent != parent,
+            t.require(isinstance(label, str) and label and label == payload.get('agentDisplayName')
+                      and isinstance(agent, str) and agent and agent not in by_agent and agent != parent,
                       'Copilot subagent lacks a unique originating named task')
             role = label
-            if (label == COPILOT_COVERAGE_REVIEW and corporate_request is not None and review_team is not None
-                    and is_copilot_coverage_review(project, review_team, corporate_request, args)):
+            if auxiliary_parent is not None:
+                role = f'auxiliary:{agent}'
+            elif (label == COPILOT_COVERAGE_REVIEW and corporate_request is not None and review_team is not None
+                  and is_copilot_coverage_review(project, review_team, corporate_request, args)):
                 # Keep review activity observable without claiming an implementation role.
                 role = f'{COPILOT_COVERAGE_REVIEW}:{agent}'
             t.require(role not in rows, 'Copilot subagent lacks a unique originating named task')
@@ -968,6 +992,9 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
             current['interactions'] = set()
             current['turn_starts'].append(when)
             current['active'] = when
+            if auxiliary_parent is not None:
+                current['auxiliary_parent'] = auxiliary_parent
+                auxiliary_calls[call_id] = current
             by_agent[agent], rows[role] = current, current
         elif kind == 'subagent.configured':
             t.require(current is not None and agent, 'Copilot subagent configuration lacks identity')
@@ -993,7 +1020,8 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                 coordinator['intervals'].append((coordinator['active'], when))
                 coordinator['active'] = None
         elif kind == 'tool.execution_complete':
-            original = calls.pop(payload.get('toolCallId'), None)
+            call_id = payload.get('toolCallId')
+            original = calls.pop(call_id, None)
             t.require(original is not None, 'Copilot completion lacks its original tool call')
             request, started = original
             t.require(request.get('agentId') == agent and when >= started and current is not None,
@@ -1011,7 +1039,15 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                     resume['pending'].remove(payload['toolCallId'])
                     if payload.get('model'):
                         current['models'].add(payload['model'])
-            if payload.get('success') is not True:
+            auxiliary = auxiliary_calls.get(call_id)
+            if auxiliary is not None:
+                dispatcher, active = auxiliary['auxiliary_parent']
+                t.require(agent == dispatcher and current['active'] == active
+                          and auxiliary['end'] is not None and auxiliary['end'] <= when
+                          and isinstance(payload.get('success'), bool),
+                          'Copilot nested task lifecycle did not complete within its parent dispatch')
+                auxiliary['dispatch_completed'] = when
+            if payload.get('success') is not True and 'auxiliary_parent' not in current:
                 continue
             edits = payload.get('fileEdits', [])
             t.require(isinstance(edits, list), 'Invalid Copilot committed file edits')
@@ -1022,6 +1058,10 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                 t.require(target.is_absolute() and target.resolve().is_relative_to(project),
                           'Copilot file edit escaped project')
                 current['writes'].append((when, t.product_key(target.resolve().relative_to(project).as_posix())))
+            if 'auxiliary_parent' in current:
+                # Retain reported edits even for a failed tool. Only a direct
+                # worker may produce a role's native receipt markers.
+                continue
             call = request['data']
             args = call.get('arguments', {})
             if not agent and started >= since:
@@ -1043,6 +1083,11 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                         current['markers'].setdefault(digest, when)
     if not boundary_initialized:
         coordinator['models'], coordinator['efforts'] = {coordinator['model']}, {coordinator['effort']}
+    for auxiliary in auxiliary_calls.values():
+        if 'dispatch_completed' not in auxiliary:
+            dispatcher, active = auxiliary['auxiliary_parent']
+            t.require(by_agent[dispatcher]['active'] == active,
+                      'Copilot nested task lifecycle did not complete within its parent dispatch')
     return rows
 
 
@@ -1097,6 +1142,10 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         if role not in {'integration', 'qa', *tasks}:
             t.require(not any(not rel.startswith(proof.STATE + '/') for _, rel in source['writes']),
                       role + ': unassigned agent wrote product files')
+    pending_auxiliary = next((role for role, source in rows.items()
+                              if 'auxiliary_parent' in source and 'dispatch_completed' not in source), None)
+    if pending_auxiliary is not None:
+        raise t.NativeTurnPending(pending_auxiliary)
     plan_review = None
     if plan.get('decomposition') == 'reviewed-v1':
         plan_review = verify_native_plan_review(project, state, parent, rows)

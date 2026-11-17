@@ -889,6 +889,114 @@ class CopilotAdapter(unittest.TestCase):
         events.append(self.event('subagent.completed', sec + .05, {'toolCallId': dispatch}, actor))
         return events
 
+    def nested_task(self, parent_start, *, label='coverage-review', edit=None, success=True):
+        actor, call, edit_call = str(uuid4()), str(uuid4()), str(uuid4())
+        parent = parent_start['agentId']
+        parent_call = parent_start['data']['toolCallId']
+        return [
+            self.event('tool.execution_start', 6.025, {'toolCallId': call, 'toolName': 'task',
+                       'arguments': {'name': label, 'agent_type': 'general-purpose',
+                                     'description': 'Inspect inputs', 'prompt': 'Read the evidence.'},
+                       'parentToolCallId': parent_call, 'turnId': '1', 'model': 'fixture-model'}, parent),
+            self.event('subagent.started', 6.027, {'toolCallId': call, 'agentDisplayName': label,
+                       'agentName': 'general-purpose', 'agentType': 'general-purpose',
+                       'executionMode': 'sync', 'parentId': parent, 'model': 'fixture-model'}, actor),
+            self.event('subagent.configured', 6.028, {'model': 'fixture-model', 'reasoningEffort': 'low'}, actor),
+            self.event('tool.execution_start', 6.03, {'toolCallId': edit_call,
+                       'toolName': 'apply_patch' if edit else 'view',
+                       'parentToolCallId': call, 'turnId': '1', 'model': 'fixture-model'}, actor),
+            self.event('tool.execution_complete', 6.035, {'toolCallId': edit_call,
+                       'success': success, 'parentToolCallId': call, 'turnId': '1',
+                       'fileEdits': [{'kind': 'edit', 'path': str(self.project / edit)}] if edit else []}, actor),
+            self.event('subagent.completed', 6.04, {'toolCallId': call}, actor),
+            self.event('tool.execution_complete', 6.045, {'toolCallId': call, 'success': True,
+                       'parentToolCallId': parent_call, 'turnId': '1'}, parent),
+        ]
+
+    def test_corporate_nested_tasks_are_auxiliary_and_retain_private_writes(self):
+        reviewed_plan(self.plan)
+        self.plan['root_protocol'] = 'corporate-v1'
+        self.start()
+        approval = self.review_plan()
+        begin = team.instant(self.state['created'])
+        binding = {**corporate_seal(self.state, approval), 'sealed_at': (begin + timedelta(seconds=9)).isoformat()}
+        with patch('root_gate.require_corporate_dispatch', return_value=binding):
+            with patch.object(proof, 'now', return_value=(begin + timedelta(seconds=10)).isoformat()):
+                team.ready_packets(self.project, self.state)
+            owner, integrated, check, qa, _ = self.deliver()
+            direct = self.trace(owner, integrated, check, qa, plan_review=approval)
+            coverage = self.coverage_events(6, 1)
+            for label in ('coverage-review', 'arithmetic', 'qa', 'plan_review'):
+                with self.subTest(label=label):
+                    private = '.runtime-proof/private-observation.txt'
+                    nested = self.nested_task(coverage[1], label=label, edit=private)
+                    self.save(sorted(direct + coverage + nested, key=lambda event: event['timestamp']))
+                    result = self.verify()
+                    self.assertTrue(result['passed'], result)
+                    self.assertEqual(set(result['host_assurance']['workers']), {'arithmetic'})
+                    self.assertNotEqual(result['host_assurance']['workers']['arithmetic']['id'], nested[1]['agentId'])
+                    rows = team_v2.read_copilot_traces(self.project, self.parent, self.sessions, begin,
+                                                       review_team='fix', corporate_request=self.plan['request'])
+                    auxiliary = rows['auxiliary:' + nested[1]['agentId']]
+                    self.assertEqual([path for _, path in auxiliary['writes']], [private])
+                    self.assertEqual(auxiliary['markers'], {})
+
+            with self.assertRaisesRegex(ValueError, 'unique originating named task'):
+                team_v2.read_copilot_traces(self.project, self.parent, self.sessions, begin, review_team='fix')
+
+            self.save(sorted(direct + coverage[:-1] + nested[:-1], key=lambda event: event['timestamp']))
+            self.assertEqual(self.verify()['status'], 'pending-native-turn')
+            self.save(sorted(direct + coverage + nested[:-1], key=lambda event: event['timestamp']))
+            self.assertIn('nested task lifecycle did not complete', self.verify()['errors'][0])
+
+    def test_corporate_nested_tasks_reject_product_writes_and_wrong_lifecycles(self):
+        reviewed_plan(self.plan)
+        self.plan['root_protocol'] = 'corporate-v1'
+        self.start()
+        created = team.instant(self.state['created'])
+        header = self.event('session.start', -1, {
+            'sessionId': self.parent, 'version': 1, 'producer': 'copilot-agent',
+            'selectedModel': 'fixture-model', 'reasoningEffort': 'low',
+            'startTime': (created - timedelta(seconds=1)).isoformat(), 'context': {'cwd': str(self.project)}})
+        coverage = self.coverage_events(6, 1)
+        for changed, expected in (
+            ('foreign-parent', 'Invalid nested Copilot task dispatch'),
+            ('foreign-call', 'unique originating named task'),
+            ('wrong-enclosing-call', 'Invalid nested Copilot task dispatch'),
+            ('closed-parent', 'Invalid nested Copilot task dispatch'),
+            ('background', 'Invalid nested Copilot task dispatch'),
+            ('parent-tool-early', 'Copilot nested task lifecycle did not complete'),
+            ('parent-tool-malformed', 'Copilot nested task lifecycle did not complete'),
+            ('product-write', 'unassigned agent wrote product files'),
+            ('failed-tool-product-write', 'unassigned agent wrote product files'),
+        ):
+            with self.subTest(changed=changed):
+                edit = 'calc.py' if 'product-write' in changed else None
+                nested = self.nested_task(coverage[1], edit=edit, success=changed != 'failed-tool-product-write')
+                events = [header, *coverage]
+                if changed == 'foreign-parent':
+                    nested[1]['data']['parentId'] = str(uuid4())
+                elif changed == 'foreign-call':
+                    nested[1]['data']['toolCallId'] = str(uuid4())
+                elif changed == 'wrong-enclosing-call':
+                    nested[0]['data']['parentToolCallId'] = str(uuid4())
+                elif changed == 'closed-parent':
+                    events[-1] = self.event('subagent.completed', 6.026, coverage[-1]['data'], coverage[-1]['agentId'])
+                elif changed == 'background':
+                    nested[1]['data']['executionMode'] = 'background'
+                elif changed == 'parent-tool-early':
+                    nested[-1]['timestamp'] = nested[4]['timestamp']
+                elif changed == 'parent-tool-malformed':
+                    nested[-1]['data'].pop('success')
+                self.save(sorted(events + nested, key=lambda event: event['timestamp']))
+                with self.assertRaisesRegex(ValueError, expected):
+                    rows = team_v2.read_copilot_traces(
+                        self.project, self.parent, self.sessions, created,
+                        review_team='fix', corporate_request=self.plan['request'])
+                    if edit:
+                        team_v2.verify_native_rows(self.project, self.state, self.parent, rows,
+                                                   False, 'copilot-session-events-v1')
+
     def test_corporate_coverage_review_revisions_keep_team_identity_and_writes(self):
         reviewed_plan(self.plan)
         self.plan['root_protocol'] = 'corporate-v1'
