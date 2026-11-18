@@ -494,6 +494,45 @@ export function evaluate(text: string): string {
 ''',
 }
 
+PICK_LIST_CONTRACT = '''mergePickLines(lines: PickLine[]): PickLine[] returns a fresh array. Ignore zero-unit lines. For exact equal (zone, sku, packSize) tuples, sum units and emit one record in first positive-line occurrence order. Zone and SKU are nonempty, case-sensitive strings and may contain delimiters. Do not mutate input arrays or records.
+countPackages(lines: PickLine[]): PackageLine[] returns a fresh array in the given order; it does not merge or discard lines. Each record has exactly zone, sku, packSize, packages, unusedUnits. Use the smallest nonnegative number of whole packages that cover the units. unusedUnits is the excess capacity. A zero-unit line has zero packages and zero unused units. Do not mutate input arrays or records.
+units is a nonnegative safe integer; packSize is a positive safe integer. Inputs fit the safe integer range, including merged totals and resulting package capacity. No new input validation is required.
+The existing evaluate(text: string): string SDK and positional JSON CLI use {"op":"pick","lines":[{"zone":"north","sku":"bolt","units":7,"packSize":4}]} -> {"packages":[{"zone":"north","sku":"bolt","packSize":4,"packages":2,"unusedUnits":1}]}. Composition merges first and counts packages second. An empty list returns {"packages":[]}. line_count returns {"count":N} from the original lines, including zero and duplicate lines, without processing them.
+Keep both module exports and shared types. Only merge.ts and packages.ts may change production behavior. Keep the adapters, docs and configuration unchanged. Tests may be added or extended without weakening the original checks.
+'''
+
+PICK_LIST_FILES = {
+    'pick.ts': '''export interface PickLine { zone: string; sku: string; units: number; packSize: number }
+export interface PackageLine { zone: string; sku: string; packSize: number; packages: number; unusedUnits: number }
+''',
+    'merge.ts': '''import type { PickLine } from './pick.ts';
+
+export function mergePickLines(lines: PickLine[]): PickLine[] {
+  return lines.map(line => ({...line}));
+}
+''',
+    'packages.ts': '''import type { PackageLine, PickLine } from './pick.ts';
+
+export function countPackages(lines: PickLine[]): PackageLine[] {
+  return lines.map(({zone, sku, units, packSize}) => {
+    const packages = Math.floor(units / packSize);
+    return {zone, sku, packSize, packages, unusedUnits: packages * packSize - units};
+  });
+}
+''',
+    'rules.ts': '''import { mergePickLines } from './merge.ts';
+import { countPackages } from './packages.ts';
+import type { PickLine } from './pick.ts';
+
+export function evaluate(text: string): string {
+  const request: {op: string; lines: PickLine[]} = JSON.parse(text);
+  if (request.op === 'line_count') return JSON.stringify({count: request.lines.length});
+  if (request.op === 'pick') return JSON.stringify({packages: countPackages(mergePickLines(request.lines))});
+  throw new Error('unsupported operation');
+}
+''',
+}
+
 CUE_REPORT_CONTRACT = '''The Rules.Evaluate(string text) API and positional JSON CLI accept:
 {"op":"cues","cues":[{"id":"intro","start_ms":0,"end_ms":800}]} -> {"ids":["intro"],"covered_ms":800}.
 CueOrder.Sort(IReadOnlyList<StudioCue>) returns the same records in ascending start order. Equal start times retain input order regardless of cue ID or end time. The input order and records are unchanged.
@@ -631,6 +670,7 @@ def evaluate(text: str) -> str:
 COMPONENT_SOURCE_FILES = {
     'stock-snapshot': {'StockCsv.cs', 'StockProjection.cs'},
     'triage-queue': {'rank.ts', 'group.ts'},
+    'pick-list': {'merge.ts', 'packages.ts'},
     'cue-report': {'CueOrder.cs', 'CueCoverage.cs'},
 }
 
@@ -691,6 +731,11 @@ The original CLI takes the operation string as its first argument and prints ret
         common['CONTRACT.md'] = TRIAGE_CONTRACT
         common['ARCHITECTURE.md'] = ('rank.ts ranks Ticket records. group.ts groups Ticket records into QueueSummary. '
                                       'Keep the shared tickets.ts contracts and existing rules.ts and cli.ts adapters unchanged.\n')
+    if scenario == 'pick-list':
+        common['CONTRACT.md'] = PICK_LIST_CONTRACT
+        common['ARCHITECTURE.md'] = ('merge.ts owns line collection. packages.ts owns package arithmetic. '
+                                     'rules.ts composes them; cli.ts only adapts the positional CLI. '
+                                     'Keep both adapters and the shared pick.ts contracts unchanged.\n')
     if scenario == 'cue-report':
         common['CONTRACT.md'] = CUE_REPORT_CONTRACT
         common['ARCHITECTURE.md'] = ('CueOrder.cs owns ordering. CueCoverage.cs owns interval coverage. '
@@ -729,6 +774,10 @@ The original CLI takes the operation string as its first argument and prints ret
         smoke = (f"args=[{str(tools.get('node') or 'node')!r},'--experimental-strip-types','cli.ts',"
                  "json.dumps({'op':'queue','tickets':[{'id':'old','severity':'high','owner':'Lee'}]})]; "
                  "expected={'owners':[{'name':'Lee','ids':['old']}],'unassigned':[]}")
+    if scenario == 'pick-list':
+        smoke = (f"args=[{str(tools.get('node') or 'node')!r},'--experimental-strip-types','cli.ts',"
+                 "json.dumps({'op':'pick','lines':[{'zone':'north','sku':'bolt','units':8,'packSize':4}]})]; "
+                 "expected={'packages':[{'zone':'north','sku':'bolt','packSize':4,'packages':2,'unusedUnits':0}]}")
     if scenario == 'cue-report':
         request = {'op': 'cues', 'cues': [{'id': 'existing', 'start_ms': 12, 'end_ms': 37}]}
         smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
@@ -767,6 +816,8 @@ The original CLI takes the operation string as its first argument and prints ret
                    "package.json": '{"type":"module","private":true}\n'}
         if scenario == 'triage-queue':
             project.update(TRIAGE_FILES)
+        if scenario == 'pick-list':
+            project.update(PICK_LIST_FILES)
         if scenario == 'tile-window':
             project['rules.ts'] = TILE_WINDOW_SOURCE
         return project
@@ -1068,13 +1119,18 @@ catch { Console.WriteLine("ERROR"); }
 '''
 
 
-def triage_consumer(workspace, output):
+def typescript_imports(workspace, output, modules):
     imports = []
-    for names, module in [('evaluate', 'rules'), ('rankTickets', 'rank'), ('groupTickets', 'group'),
-                          ('type Ticket, type QueueSummary', 'tickets')]:
+    for names, module in modules:
         relative = os.path.relpath(workspace/f'{module}.ts', output).replace(os.sep, '/')
         imports.append(f'import {{ {names} }} from {json.dumps(relative)};')
-    return '\n'.join(imports) + '''
+    return '\n'.join(imports)
+
+
+def triage_consumer(workspace, output):
+    imports = typescript_imports(workspace, output, [('evaluate', 'rules'), ('rankTickets', 'rank'),
+        ('groupTickets', 'group'), ('type Ticket, type QueueSummary', 'tickets')])
+    return imports + '''
 const rank: (tickets: Ticket[]) => Ticket[] = rankTickets;
 const group: (tickets: Ticket[]) => QueueSummary = groupTickets;
 try {
@@ -1095,6 +1151,24 @@ try {
 '''
 
 
+def pick_list_consumer(workspace, output):
+    imports = typescript_imports(workspace, output, [('evaluate', 'rules'), ('mergePickLines', 'merge'),
+        ('countPackages', 'packages'), ('type PickLine, type PackageLine', 'pick')])
+    return imports + '''
+const merge: (lines: PickLine[]) => PickLine[] = mergePickLines;
+const count: (lines: PickLine[]) => PackageLine[] = countPackages;
+const text = process.argv[2];
+const {op, lines}: {op: string; lines: PickLine[]} = JSON.parse(text);
+if (op === 'external-merge' || op === 'external-packages') {
+  const original = JSON.stringify(lines);
+  const rows = op === 'external-merge' ? merge(lines) : count(lines);
+  console.log(JSON.stringify({rows, fresh: !Object.is(rows, lines), unchanged: original === JSON.stringify(lines)}));
+} else {
+  console.log(evaluate(text));
+}
+'''
+
+
 def build_program(workspace, output, lang, tools, *, scenario=None):
     output.mkdir(parents=True, exist_ok=False)
     if lang == "python":
@@ -1109,9 +1183,10 @@ def build_program(workspace, output, lang, tools, *, scenario=None):
         driver.write_text("import sys\nsys.path.insert(0, " + repr(str(workspace)) + ")\nfrom rules import evaluate\ntry: print(evaluate(sys.argv[1]))\n" + error_handlers, encoding="utf-8")
         return [tools["python"], str(driver)], []
     if lang == "typescript":
-        if scenario == 'triage-queue':
+        consumer = {'triage-queue': triage_consumer, 'pick-list': pick_list_consumer}.get(scenario)
+        if consumer:
             driver = output / 'driver.mts'
-            driver.write_text(triage_consumer(workspace, output), encoding='utf-8')
+            driver.write_text(consumer(workspace, output), encoding='utf-8')
         else:
             driver = output / 'driver.mjs'
             driver.write_text("import {evaluate} from " + json.dumps((workspace / "rules.ts").as_uri()) + ";\ntry {console.log(evaluate(process.argv[2]));} catch {console.log('ERROR');}\n", encoding="utf-8")
@@ -1119,7 +1194,7 @@ def build_program(workspace, output, lang, tools, *, scenario=None):
         if tools.get('tsc') and tools.get('node_types'):
             compiler=[tools['node'],tools['tsc']] if str(tools['tsc']).endswith('.js') else [tools['tsc']]
             sources=[str(p) for p in workspace.rglob('*.ts') if not any(part in SKIP for part in p.relative_to(workspace).parts)]
-            if scenario == 'triage-queue':
+            if consumer:
                 sources.append(str(driver))
             typing=command([*compiler,'--noEmit','--strict','--skipLibCheck','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','--allowImportingTsExtensions','--typeRoots',tools['node_types'],*sources],workspace,90)
             typing['role']='typecheck';typing['status']='PASS' if typing['exit_code']==0 else 'FAIL'
@@ -1245,6 +1320,34 @@ def triage_component_vectors():
         ('triage-composed-report', {'op': 'queue', 'tickets': composed},
          {'owners': [{'name': 'lee', 'ids': ['urgent', 'standard', 'low']}, {'name': 'Jo', 'ids': ['middle']}],
           'unassigned': ['unassigned', 'blank']}),
+    ]
+
+
+def pick_list_component_vectors():
+    def line(zone, sku, units, size):
+        return {'zone': zone, 'sku': sku, 'units': units, 'packSize': size}
+
+    def package(row, count, unused):
+        return {'zone': row['zone'], 'sku': row['sku'], 'packSize': row['packSize'],
+                'packages': count, 'unusedUnits': unused}
+
+    exact = line('A', 'B|C', 4, 4)
+    partial = line('A|B', 'C', 3, 4)
+    large = line('A|B', 'C', 7, 8)
+    zero = line('A|B', 'C', 0, 4)
+    distinct_case = line('a', 'B|C', 1, 4)
+    lines = [zero, exact, partial, line('A|B', 'C', 2, 4), large, distinct_case]
+    merged = line('A|B', 'C', 5, 4)
+    picked = [package(exact, 1, 0), package(merged, 2, 3), package(large, 1, 1), package(distinct_case, 1, 3)]
+    return [
+        ('preservation-pick-empty', {'op': 'pick', 'lines': []}, {'packages': []}),
+        ('preservation-line-count', {'op': 'line_count', 'lines': lines}, {'count': 6}),
+        ('pick-merge-exact-keys-and-order', {'op': 'external-merge', 'lines': lines},
+         {'rows': [exact, merged, large, distinct_case], 'fresh': True, 'unchanged': True}),
+        ('pick-packages-round-up-with-unused-units', {'op': 'external-packages', 'lines': [exact, merged, zero, large]},
+         {'rows': [package(exact, 1, 0), package(merged, 2, 3), package(zero, 0, 0), package(large, 1, 1)],
+          'fresh': True, 'unchanged': True}),
+        ('pick-composed-report', {'op': 'pick', 'lines': lines}, {'packages': picked}),
     ]
 
 
@@ -1568,7 +1671,7 @@ def _evaluate_attempt(attempt):
             check_monthly_report(exercise, evidence)
         elif scenario in COMPONENT_SOURCE_FILES:
             vectors = {'stock-snapshot': stock_component_vectors, 'triage-queue': triage_component_vectors,
-                       'cue-report': cue_component_vectors}[scenario]()
+                       'pick-list': pick_list_component_vectors, 'cue-report': cue_component_vectors}[scenario]()
             for label, request, expected in vectors:
                 exercise(label, json.dumps(request), expected)
             public, public_builds = build_public_cli(workspace, evidence/'public-cli', case['language'], toolchain(plan))

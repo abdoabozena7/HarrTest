@@ -23,6 +23,12 @@ skipped and zero failures. The suite includes the shared-baseline check and
 unchanged legacy root contract controls. The log is
 `output/v5-corporate/next-integrated-tests-r14.log` in the candidate worktree.
 
+After the Copilot follow-up fix and held-case rotation, the local suite ran
+532 tests in 524.685s with four skipped and zero failures, using the pinned
+local toolchains. The log is `output/v5-corporate/followup-delivery-rotated-full-suite.log`
+in the candidate worktree. This validates controller behavior and fixture
+controls, not live release qualification.
+
 ## Live comparison
 
 Eight development cases and eight separate acceptance cases cover existing
@@ -122,6 +128,44 @@ third summary is `output/v5-corporate/acceptance-v5-6/final-summary.json`,
 SHA-256 `f777a3c8c21d6d6ab86b67437ecab3d13e8acf766b3ca57b68cb07000c22b9d`.
 The archive includes an independent runtime audit with counts and a protocol
 digest. A future experiment keeps these outcomes and uses a new frozen directory.
+
+### Fourth frozen comparison
+
+The fourth comparison pinned V5 at `1f99aea`. All 96 outcomes and independent
+assessments were retained and checked against the frozen evaluator. The five
+failed and one timed-out generation remain in the denominator.
+
+| Measure | No HarrTest | 4.1 | V5 |
+| --- | ---: | ---: | ---: |
+| Executable functionality | 31/32 | 29/32 | 27/32 |
+| Independently complete artifact quality | 22/32 | 17/32 | 19/32 |
+| False accepts | 9 | 14 | 5 |
+
+This package is not qualified: V5 had five false accepts and did not exceed
+the plain control on complete artifact quality. The frozen summary is
+`output/v5-corporate/acceptance-v5-7-final-summary.json` in the main worktree,
+SHA-256 `01997e97773ed3bf631339702c44e5ed606c433f374c208c0ded4347aacdff5c`.
+The original protocol and attempt results are unchanged. This comparison
+does not validate the later candidate package.
+
+In block 4, the Luna V5 triage artifact passed all seven external checks and
+independent artifact review. Its formal root did not pass. A completed QA
+follow-up was followed by a native idle status read with no `wait` argument.
+The pinned verifier ignored that otherwise conclusive observation, left the
+old follow-up pending, and rejected the next genuine delivery against the
+old message. The candidate recognizes post-turn non-waiting reads with the
+same actor, idle, an empty queue, and the exact completed-turn count. It
+still requires the actual parent message, original dispatch and closed
+turns. Read-only replay parses both QA follow-ups, without waiving the
+coordinator's out-of-scope test edit or the independent D04 `UNVERIFIED`
+finding for missing task-level proof bindings.
+
+The triage case informed the repair and is now development-only.
+`ts-pick-list` replaces it in the next held matrix. Its separate typed
+consumer checks line merging, package arithmetic and non-mutation; the
+unchanged CLI tests the composition and the original checker is replayed.
+Fixture controls show that either isolated repair leaves the other
+defect detectable. These are evaluator controls, not live held results.
 
 ### Workflow development evidence
 
@@ -283,6 +327,56 @@ did not reach session idle within the 2400-second cap, no root was sealed, and
 the unchanged project passed 3/8 external checks. Its recorded result is a
 development failure. The third and fourth held comparisons use distinct frozen
 directories and retain their own runtime interruption evidence.
+
+The eighth guarded trial used the repaired package with the consumed C# stock
+case and the original task prompt. Copilot did not establish the required
+independent reviews and hit the pre-admission product edit guard. The unchanged
+project passed 3/8 external checks. The attempt retained its final incomplete
+claim; generation reported completed transport, not completed product work.
+
+A separate disposable Luna/low SDK probe delivered two messages to the same
+native worker after its prior turns were idle and observed all three requested
+worker outputs. The original parser left the last resume pending after the
+automatic `read_agent`, whereas the repaired parser recorded all three closed
+intervals with no pending resume. The actual probe took 43.713s and used
+0.4612105 AI credits. Raw and derived records are under
+`output/v5-corporate/development-copilot-followup-probe/` in the main worktree.
+This tests the native delivery mechanism, not the Corporate root.
+
+The ninth guarded trial used the same candidate and consumed C# case with an
+explicit development-only workflow prompt. It sealed a schema-4 root, was
+admitted, and ran the two owner scopes in parallel with 101.769s of overlap.
+Only the projection worker changed product source. The SDK did not reach idle
+within the 2400-second cap; it returned `FAILED`, with no independent QA or
+owner handoff receipts. The partial result passed 4/8 external checks and
+used 38.546648 AI credits. A read-only root replay exited 1 with
+`ROOT_GOAL_UNVERIFIED`: the plan's `projection_source` citation was bound to
+the pre-edit `StockProjection.cs`. The replay does not establish a successful
+end-to-end Corporate root. The full terminal records remain under
+`output/v5-corporate/development-corporate-guard-9/` in the main worktree.
+
+The staged disposable picker then validated the repaired package from the
+Corporate seal through parallel owner dispatch, independent QA, and root
+verification. Its first revision was rejected at coverage review for missing
+weekday classes and capacities. Its second sealed but was interrupted by
+duplicated reviewer dispatch because owner packets inherited coordinator
+instructions embedded in the request. Both attempts remain retained.
+
+The third revision supplied stronger oracles, kept the product request
+separate from coordinator instructions, and cited unchanged contracts rather
+than editable source. Luna/low implemented only `src/day.py` and
+`src/boxes.py` through distinct owners overlapping by 42.261s. Native QA ran
+all four sealed checks and completed two follow-ups on the same actor. A
+separate native Corporate reviewer supplied the current verdicts and fixed
+an omitted criterion-list field without changing those verdicts. Read-only
+replay exited 0 with `ROOT_GOAL_VERIFIED`, Team `PASS`, and Corporate `PASS`.
+The original fourth-comparison adapter rejected the exact same native log
+with its follow-up delivery error. The run took 1138.221s and used 10.271688
+AI credits. The replay is retained as
+`output/v5-corporate/development-corporate-followup-e2e-r3/independent-root-replay.json`,
+SHA-256 `747a7bcec7b3d38f5d4edcc5df67c26f8f4ca5bbe81a63903a89e50970816b8b`.
+This controlled run verifies the native mechanism and end-to-end workflow;
+it does not replace a held acceptance matrix or qualify a release.
 
 Keep failures, unavailable checks and interrupted attempts in the results. Cases
 used for refinement become development data and cannot retain a held-out label.

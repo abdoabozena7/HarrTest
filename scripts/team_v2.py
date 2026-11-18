@@ -789,8 +789,12 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
             worker['resume'] = {'sent': when, 'message': hashlib.sha256(message.encode()).digest()}
         return
     resume = worker.get('resume')
+    wait = args.get('wait', False)
+    # Copilot also emits an automatic idle-status read with no wait argument.
+    # A non-waiting read must start after the last observed turn has ended.
     if (not resume or 'turn_end' not in resume or resume.get('turn') is not None
-            or args.get('wait') is not True or properties.get('status') != 'idle'
+            or type(wait) is not bool or (not wait and started < resume['turn_end'])
+            or properties.get('status') != 'idle'
             or type(metrics.get('queue_depth')) is not int or metrics['queue_depth'] != 0
             or type(metrics.get('total_turns')) is not int or metrics['total_turns'] != len(worker['intervals']) + 1
             or started < resume['delivered'] or when < resume['turn_end']):

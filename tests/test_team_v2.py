@@ -1232,6 +1232,37 @@ class CopilotAdapter(unittest.TestCase):
         self.assertEqual(observed['intervals'][1], (team.instant(resume['turn_start']['timestamp']),
                                                     team.instant(resume['next_turn_end']['timestamp'])))
 
+    def test_idle_read_after_turn_closes_resume_for_next_delivery(self):
+        rows, first = self.followup_trace()
+        second = deepcopy(first)
+        interaction = str(uuid4())
+        for event in second.values():
+            event['id'] = str(uuid4())
+            event['timestamp'] = (team.instant(event['timestamp']) + timedelta(seconds=8)).isoformat()
+            payload = event['data']
+            if 'toolCallId' in payload:
+                payload['toolCallId'] += '-next'
+            if 'interactionId' in payload:
+                payload['interactionId'] = interaction
+        message = 'Follow up again after the host confirmed the worker was idle.'
+        second['message']['data']['content'] = message
+        second['write_start']['data']['arguments']['message'] = message
+        second['read_done']['data']['toolTelemetry']['metrics']['total_turns'] = 3
+        for wait in (None, False):
+            with self.subTest(wait=wait):
+                args = first['read_start']['data']['arguments']
+                if wait is None:
+                    del args['wait']
+                else:
+                    args['wait'] = wait
+                first['read_start']['timestamp'] = self.event('time', 17.1, {})['timestamp']
+                self.save_followup(rows + list(first.values()), second)
+                result = self.verify()
+                self.assertTrue(result['passed'], result)
+                qa = team_v2.read_copilot_traces(self.project, self.parent, self.sessions,
+                                                 team.instant(self.state['created']))['qa']
+                self.assertEqual(len(qa['intervals']), 3)
+
     def test_followup_never_attributes_coordinator_check_to_qa(self):
         rows, resume = self.followup_trace(coordinator_check=True)
         self.save_followup(rows, resume)
@@ -1241,6 +1272,9 @@ class CopilotAdapter(unittest.TestCase):
 
     def test_wrong_or_failed_followup_delivery_cannot_authorize_child_tools(self):
         rows, resume = self.followup_trace()
+        missing = {key: event for key, event in resume.items() if key != 'message'}
+        self.save_followup(rows, missing)
+        self.assertIn('follow-up turn lacks its original task identity', self.verify()['errors'][0])
         for record, field, wrong in [('write_done', 'success', False), ('message', 'source', 'unknown'),
                                      ('message', 'content', 'different message'),
                                      ('turn_start', 'interactionId', 'another interaction'),
@@ -1253,7 +1287,8 @@ class CopilotAdapter(unittest.TestCase):
 
     def test_followup_requires_confirmed_idle_with_closed_turns(self):
         rows, resume = self.followup_trace()
-        for cause in ['missing_read', 'failed_read', 'prose_only', 'busy', 'queued', 'stale_counter', 'open_turn', 'abort']:
+        for cause in ['missing_read', 'failed_read', 'prose_only', 'busy', 'queued', 'stale_counter', 'open_turn',
+                      'early_nonwaiting_read', 'abort']:
             with self.subTest(cause=cause):
                 altered = deepcopy(resume)
                 if cause == 'missing_read':
@@ -1271,6 +1306,8 @@ class CopilotAdapter(unittest.TestCase):
                     altered['read_done']['data']['toolTelemetry']['metrics']['total_turns'] = 1
                 elif cause == 'open_turn':
                     del altered['next_turn_end']
+                elif cause == 'early_nonwaiting_read':
+                    del altered['read_start']['data']['arguments']['wait']
                 else:
                     altered['abort'] = self.event('abort', 16.5, {}, resume['message']['agentId'])
                 self.save_followup(rows, altered)

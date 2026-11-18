@@ -120,15 +120,16 @@ class CorporateBenchmarkTests(unittest.TestCase):
             for language in bench.LANGUAGES:
                 self.assertEqual(sum(x['split']==split and x['language']==language for x in rows),2)
         splits = {row['id']: row['split'] for row in rows}
-        consumed = {'cs-stock-snapshot', 'ts-record-framing', 'py-monthly-report-utc', 'py-recipe-batch-scale'}
+        consumed = {'cs-stock-snapshot', 'ts-triage-queue', 'py-monthly-report-utc', 'py-recipe-batch-scale'}
         self.assertTrue(all(splits[case] == 'development' for case in consumed))
-        retained = {'cs-build-dependency-plan', 'ts-triage-queue', 'py-retry-recovery',
+        retained = {'cs-build-dependency-plan', 'py-retry-recovery',
                     'cpp-lookup-scaling', 'cpp-capacity-contract'}
-        replacements = {'cs-studio-cue-report', 'ts-tile-window', 'py-museum-route'}
+        replacements = {'cs-studio-cue-report', 'ts-pick-list', 'ts-tile-window', 'py-museum-route'}
         self.assertEqual({case for case, split in splits.items() if split == 'acceptance'}, retained | replacements)
         archive = bench.load(bench.CORPUS.with_name('retired-development.json'))
         retired = archive['cases']
-        retired_ids = {'cs-credit-validation', 'ts-path-boundary', 'py-log-redaction', 'py-batch-atomicity'}
+        retired_ids = {'cs-credit-validation', 'ts-path-boundary', 'py-log-redaction', 'py-batch-atomicity',
+                       'ts-record-framing'}
         self.assertEqual(len(retired), len(retired_ids))
         self.assertEqual({row['id'] for row in retired}, retired_ids)
         self.assertCountEqual([case for rotation in archive['rotations'] for case in rotation['retired']], retired_ids)
@@ -906,6 +907,44 @@ public static class StockCsv
         changed = bench.evaluate_attempt(attempt)
         self.assertTrue(changed['functional_passed'])
         self.assertFalse(changed['documented_contract_and_adapter_preserved'])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for TypeScript runtime')
+    def test_pick_list_separates_merge_package_arithmetic_and_public_composition(self):
+        if not self.fake_probe['tools'].get('tsc'):
+            self.skipTest('Pinned TypeScript compiler unavailable')
+        attempt = self.attempt('ts-pick-list')
+        work = attempt / 'work'
+        merge_check, pack_check = 'pick-merge-exact-keys-and-order', 'pick-packages-round-up-with-unused-units'
+        public = 'public-composed-report'
+
+        def verify(expected):
+            result = bench.evaluate_attempt(attempt)
+            checks = {row['check']: row['passed'] for row in result['checks']}
+            self.assertEqual(result['type_correctness'], 'PASS', str(result['builds']))
+            self.assertTrue(all(passed for label, passed in checks.items() if label.startswith('preservation')))
+            self.assertEqual(tuple(checks[label] for label in (merge_check, pack_check, public)), expected)
+            return result
+
+        verify((False, False, False))
+        merge = work / 'merge.ts'
+        original_merge = merge.read_text(encoding='utf-8')
+        merge_control = original_merge.replace('  return lines.map(line => ({...line}));',
+            '  const merged: PickLine[] = [];\n'
+            '  for (const line of lines) {\n'
+            '    if (!line.units) continue;\n'
+            '    const previous = merged.find(row => row.zone === line.zone && row.sku === line.sku'
+            ' && row.packSize === line.packSize);\n'
+            '    if (previous) previous.units += line.units;\n'
+            '    else merged.push({...line});\n'
+            '  }\n  return merged;')
+        merge.write_text(merge_control, encoding='utf-8')
+        verify((True, False, False))
+        merge.write_text(original_merge, encoding='utf-8')
+        packs = work / 'packages.ts'
+        packs.write_text(packs.read_text(encoding='utf-8').replace('Math.floor', 'Math.ceil'), encoding='utf-8')
+        verify((False, True, False))
+        merge.write_text(merge_control, encoding='utf-8')
+        self.assertTrue(verify((True, True, True))['automated_artifact_passed'])
 
     def test_cpp_actual_compiler_negative_and_positive_controls(self):
         if sys.platform!='win32':
