@@ -11,6 +11,7 @@ import proof
 
 ROOT_DIR = "root-goals"
 MODES = {"live", "offline", "replay", "fixture"}
+REVIEWED_TEAM = 'reviewed-v1'
 
 
 def root_dir(project: Path, goal_id: str) -> Path:
@@ -31,6 +32,8 @@ def validate(project: Path, goal: Path, contract: dict) -> None:
         raise proof.ProofError("Root protocol must be golden-v1 on a schema-3 root")
     if schema != 4 and 'corporate' in contract:
         raise proof.ProofError('Corporate binding requires a schema-4 root')
+    if 'team_decomposition' in contract and (schema != 4 or contract['team_decomposition'] != REVIEWED_TEAM):
+        raise proof.ProofError('Reviewed Team decomposition requires reviewed-v1 on a schema-4 root')
     if contract.get("goal_id") != goal.name:
         raise proof.ProofError("Root ID mismatch")
     if "production_team" in contract:
@@ -136,32 +139,131 @@ def team_outputs(binding):
     return outputs
 
 
-def check_production_team(project, contract):
+def reviewed_team_binding(project, contract):
+    import team
+    import team_v2
+
+    team_id = contract['production_team']
+    state = team.load_state(project, team_id)
+    plan = state['plan']
+    if plan.get('schema') != 2 or plan.get('decomposition') != REVIEWED_TEAM:
+        raise proof.ProofError('Corporate root requires a Team plan with reviewed-v1 decomposition')
+    team.binding(project, team_id, contract['request_sha256'])
+    review = team_v2.approved_decomposition(project, state)
+    return {'state_sha256': state['state_sha256'], 'review_sha256': review['sha256']}
+
+
+def check_production_team(project, contract, sealing):
     import team
 
+    if 'team_decomposition' in contract and sealing.get('reviewed_team') != reviewed_team_binding(project, contract):
+        raise proof.ProofError('Team plan, baseline or review differs from the Corporate root seal')
     team_id = contract["production_team"]
     binding = team.binding(project, team_id, contract["request_sha256"])
     if contract['schema'] == 4:
+        import corporate
+
         state = team.load_state(project, team_id)
-        if state['plan'].get('schema') != 2:
-            raise proof.ProofError('Corporate roots require Team schema 2')
-        plan = proof.load(proof.relative_file(project, contract['corporate']['plan']))
-        expected = {row['id']: (sorted(row['outputs']), sorted(row['depends_on']))
-                    for row in plan['tasks']}
-        actual = {row['id']: (sorted(row['outputs']), sorted(row['depends_on']))
-                  for row in state['plan']['tasks']}
-        if actual != expected:
-            raise proof.ProofError('Corporate implementation ownership/dependencies differ from the bound Team')
-        roots = [proof.relative_file(project, rel, must_exist=False) for rel in plan['source_paths']]
-        for output in team_outputs(binding):
-            path = proof.relative_file(project, output, must_exist=False)
-            if not any(path.is_relative_to(root) for root in roots):
-                raise proof.ProofError('Corporate verification scope omits Team output: ' + output)
-    child_id = contract["integration"]["task_id"]
-    path = proof.relative_file(project / proof.STATE, child_id)
-    child = proof.load(path / "contract.json")
-    require_team_sources(project, child, team_outputs(binding))
+        if sealing.get('corporate_team_sha256') != state['state_sha256']:
+            raise proof.ProofError('Corporate Team state differs from the root seal')
+        plan = _corporate_team_scope(project, contract, state, binding)
+        baseline = plan['baseline']['source']['files']
+        current = corporate.source_snapshot(project, plan['source_paths'])['files']
+        owned = {team.product_key(rel) for rel in team_outputs(binding)}
+        unowned = sorted(rel for rel in baseline.keys() | current.keys()
+                         if baseline.get(rel) != current.get(rel) and team.product_key(rel) not in owned)
+        if unowned:
+            raise proof.ProofError('Corporate source changed outside sealed Team ownership: '
+                                   + ', '.join(unowned[:10]))
+    else:
+        child_id = contract["integration"]["task_id"]
+        path = proof.relative_file(project / proof.STATE, child_id)
+        child = proof.load(path / "contract.json")
+        require_team_sources(project, child, team_outputs(binding))
     return team.verify_registered(project, team_id, require_qa=True)
+
+
+def _corporate_team_scope(project, contract, state, binding):
+    if state['plan'].get('schema') != 2:
+        raise proof.ProofError('Corporate roots require Team schema 2')
+    plan = proof.load(proof.relative_file(project, contract['corporate']['plan']))
+    expected = {row['id']: (sorted(row['outputs']), sorted(row['depends_on']))
+                for row in plan['tasks']}
+    actual = {row['id']: (sorted(row['outputs']), sorted(row['depends_on']))
+              for row in state['plan']['tasks']}
+    if actual != expected:
+        raise proof.ProofError('Corporate implementation ownership/dependencies differ from the bound Team')
+    outputs = team_outputs(binding)
+    roots = [proof.relative_file(project, rel, must_exist=False) for rel in plan['source_paths']]
+    for output in outputs:
+        target = proof.relative_file(project, output, must_exist=False)
+        if not any(target.is_relative_to(root) for root in roots):
+            raise proof.ProofError('Corporate verification scope omits Team output: ' + output)
+    baseline = plan['baseline']['source']['files']
+    if any(baseline.get(rel) != digest for rel, digest in state['baseline'].items()):
+        raise proof.ProofError('Team output baseline differs from the Corporate baseline')
+    child_id = contract['integration']['task_id']
+    task = proof.relative_file(project / proof.STATE, child_id)
+    child = proof.load(task / 'contract.json')
+    require_team_sources(project, child, outputs)
+    return plan
+
+
+def _corporate_dispatch_inputs(project, contract, state, *, baseline_current):
+    import corporate
+    import team
+
+    if (contract.get('schema') != 4 or contract.get('protocol') != corporate.PROTOCOL
+            or contract.get('production_team') != state['plan']['id']
+            or contract.get('team_decomposition') != REVIEWED_TEAM):
+        raise proof.ProofError('Corporate dispatch requires the matching reviewed schema-4 root')
+    reviewed = reviewed_team_binding(project, contract)
+    if reviewed['state_sha256'] != state.get('state_sha256'):
+        raise proof.ProofError('Team state differs from the reviewed Corporate dispatch state')
+    binding = team.binding(project, state['plan']['id'], contract['request_sha256'])
+    plan = _corporate_team_scope(project, contract, state, binding)
+    baseline = plan['baseline']['source']
+    if baseline_current and (corporate.source_snapshot(project, plan['source_paths']) != baseline
+            or team.snapshot(project, state['baseline']) != state['baseline']):
+        raise proof.ProofError('Source changed before Corporate dispatch. Preserve the original baseline.')
+    return reviewed
+
+
+def require_corporate_dispatch(project, state, *, baseline_current):
+    """Revalidate a substantive Team's root using its frozen inputs and checks."""
+    import corporate
+    import strict_io
+    import team
+
+    project = Path(project).resolve()
+    if state['plan'].get('root_protocol') != corporate.PROTOCOL:
+        raise proof.ProofError('Corporate dispatch requires the explicit Team root_protocol')
+    goal_id = state['plan']['id']
+    proof.identifier(goal_id, 'Corporate Team ID')
+    try:
+        goal = corporate.path(project, f'{proof.STATE}/{ROOT_DIR}/{goal_id}')
+        root_path = corporate.path(goal, 'root-contract.json')
+        seal_path = corporate.path(goal, 'root-seal.json')
+    except ValueError as exc:
+        raise proof.ProofError(f'Corporate dispatch needs a sealed schema-4 root for {goal_id}. '
+                               'Prepare and review the root, then run root_gate.py seal.') from exc
+    contract, seal = corporate.document(root_path), corporate.document(seal_path)
+    validate(project, goal, contract)
+    if seal.get('root_hash') != proof.digest(contract) or seal.get('request_sha256') != contract['request_sha256']:
+        raise proof.ProofError('Corporate dispatch root contract differs from its seal')
+    reviewed = _corporate_dispatch_inputs(project, contract, state, baseline_current=baseline_current)
+    if (seal.get('reviewed_team') != reviewed
+            or seal.get('corporate_team_sha256') != state['state_sha256']):
+        raise proof.ProofError('Team plan, baseline or review differs from the Corporate root seal')
+    if seal.get('corporate') != corporate.seal_binding(project, goal, contract):
+        raise proof.ProofError('Corporate dispatch plan, baseline, checks or verifier differ from the root seal')
+    reviewed_receipt = team.current_receipt(project, state, 'plan_review')
+    sealed_at = corporate.instant(seal.get('sealed_at'))
+    if not corporate.instant(reviewed_receipt['at']) <= sealed_at <= dt.datetime.now(dt.timezone.utc):
+        raise proof.ProofError('Corporate dispatch requires a root seal after the Team review')
+    return {'root_hash': seal['root_hash'], 'seal_sha256': strict_io.digest(seal),
+            'sealed_at': seal['sealed_at'], 'team_state_sha256': reviewed['state_sha256'],
+            'team_review_sha256': reviewed['review_sha256']}
 
 
 def check_root(goal: Path) -> dict:
@@ -180,7 +282,7 @@ def check_root(goal: Path) -> dict:
         production_team = None
         if "production_team" in contract:
             try:
-                production_team = check_production_team(project, contract)
+                production_team = check_production_team(project, contract, sealed)
                 if production_team.get("passed") is not True:
                     errors.extend("Production team: " + e for e in
                                   (production_team.get("errors") or ["verification is incomplete"]))
@@ -305,12 +407,25 @@ def main() -> int:
             return 0
         if args.action == "seal":
             c = proof.load(goal / "root-contract.json")
-            validate(goal.parents[2], goal, c)
-            sealed = {"root_hash": proof.digest(c), "request_sha256": c["request_sha256"],
-                      "sealed_at": proof.now()}
+            project = goal.parents[2]
+            validate(project, goal, c)
+            sealed = {"root_hash": proof.digest(c), "request_sha256": c["request_sha256"]}
             if c['schema'] == 4:
                 import corporate
-                sealed['corporate'] = corporate.seal_binding(goal.parents[2], goal, c)
+                import team
+
+                state = team.load_state(project, c['production_team'])
+                sealed['corporate_team_sha256'] = state['state_sha256']
+                reviewed = 'team_decomposition' in c
+                if reviewed and state['plan'].get('root_protocol') == 'corporate-v1':
+                    sealed['reviewed_team'] = _corporate_dispatch_inputs(project, c, state, baseline_current=True)
+                else:
+                    binding = team.binding(project, c['production_team'], c['request_sha256'])
+                    _corporate_team_scope(project, c, state, binding)
+                    if reviewed:
+                        sealed['reviewed_team'] = reviewed_team_binding(project, c)
+                sealed['corporate'] = corporate.seal_binding(project, goal, c)
+            sealed['sealed_at'] = proof.now()
             proof.save(goal / "root-seal.json", sealed, exclusive=True)
             print("Root goal sealed. Child tests cannot redefine original requirements.")
             return 0

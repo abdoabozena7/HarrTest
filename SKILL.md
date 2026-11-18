@@ -5,6 +5,19 @@ description: Change software with evidence-based planning, scoped implementation
 
 # HarrTest V5 Corporate
 
+For an implementation request, start as coordinator. Record the baseline and
+open the [Team plan](references/production-teams.md) before the first product
+edit. Dispatch the actual implementation handoffs to native owners and keep
+the coordinator within its integration scope. For substantial work, complete
+the [Corporate pre-dispatch seal](references/corporate-workflow.md) first.
+When the plan, seal, or native worker capability is missing, keep that work
+unverified and continue with authorized discovery and setup.
+When the host explicitly supplies `HARRTEST_CORPORATE_GOAL`, use that goal ID
+for the reviewed Team and Corporate root. Save the original request in the root
+first, then register the Team with `team.py init --request-from-root`. Dispatch
+the exact Team plan review and `corporate.py coverage-packet` messages as separate
+tasks. Complete the root seal before dispatching implementation or editing.
+
 ## Start from the project
 
 Read VERSION and pin the local package for the task. Check upstream only when
@@ -36,23 +49,29 @@ Never fabricate precision or treat an agent's confidence as evidence.
 
 For substantial changes follow [the Corporate workflow](references/corporate-workflow.md).
 Use a schema-4 root with `protocol: corporate-v1` and a schema-2 Team plan.
+Set `root_protocol: corporate-v1` on the reviewed Team plan. Collect the actual
+baseline, build the root draft from it, and seal the independently reviewed plan
+and checks before requesting implementation packets.
 Keep the original verification meaning of existing schema-2/3 roots and schema-1
 teams; do not migrate active contracts silently.
 
-Choose the evidence path before the first product edit. A narrow change still
-uses one native implementation owner and a distinct testing/review worker through
-Team schema2; its integration outputs can be empty. Keep its task brief, preserved
-contract/baseline, actual checks and six layer applicability/verdict observations
-in the retained QA evidence. This lightweight path relies on inspected review
-evidence; corporate-v1 is the structured six-layer root gate for substantive work.
-Small size removes unnecessary implementation splits, not independent testing.
-The coordinator must not implement the narrow change itself and substitute its
-own tests for the independent worker. If delegation is actually unavailable,
-record that capability gap and leave native acceptance UNVERIFIED.
+Before the first edit, map each requested behavior to an existing responsibility,
+the owning files, a stable input/output contract and a check it can pass alone.
+One coherent responsibility can use one native implementation owner and a distinct
+testing/review worker through Team schema2. Record why the scope cannot usefully
+split. Keep its scope, baseline, checks and six layer verdicts in the QA evidence.
+Two separately testable responsibility changes require separate implementation
+owners and the corporate-v1 root, even when they fit one feature or share an API.
+Compare the nearest viable split against real interfaces. A shared end-to-end test
+does not make components dependent if they can each pass a check against that interface.
+Small changes still require independent testing on the integrated source.
 
-Split along existing component/interface boundaries. Give each worker the
-original goal, necessary context, read/write scope, lifecycle invariants, baseline,
-risks and expected checks. A review or planning role is not an implementation owner.
+Split along existing component/interface boundaries. Agree on the interface first
+so matching implementation scopes can run in parallel. A real dependency waits
+for its prerequisite handoff when a stable shared contract cannot resolve it.
+Give each worker the original goal, necessary context, read/write scope, lifecycle
+invariants, baseline, risks and independent checks. Count implementation owners
+by their assigned product changes and actual handoffs.
 
 Use native workers for independently deliverable implementation scopes. Dispatch
 ready independent tasks together; dependent tasks wait for current handoffs.
@@ -71,10 +90,16 @@ Keep one writer per file at a time, including configuration. Route fixes to the
 existing owner, refresh dependent handoffs and reintegrate. Support real deletions
 and renames; integration can be validation-only. Inspect native status and receipts
 before repeating waits. Completed workers need a next action, not indefinite waits.
+Keep each repair within the reviewed responsibility, even when the same file
+contains unrelated behavior. If observed baseline behavior and its documented
+contract disagree, record both and resolve the impact on the request before
+changing that behavior.
 
 The coordinator resolves interfaces and integrates returned work. Independent QA
 exercises actual behavior on current source and does not edit the product.
 Independent review checks the diff, evidence relevance and project constraints.
+It also checks whether the plan grouped separable work and whether independent
+owners actually overlapped when the host had the capacity.
 These roles are distinct from the implementer. Record actual worker identities
 and capability limits; do not label unsupported host provenance verified.
 [Team contracts and host evidence](references/production-teams.md)
@@ -119,6 +144,15 @@ than treating a stricter-looking result as automatically safer.
 For multi-step behavior, establish the intermediate invariants as well as the
 final result. A valid final value or successful final response does not show
 that intermediate operations, partial failures or state transitions were legal.
+For each affected input boundary, derive checks from the whole relevant contract,
+including optional controls and failure triggers. Exercise the valid alternate
+values and malformed shapes or types the contract rejects. For a rejected
+operation that can cause side effects, assert the before/after state at the
+rejection boundary as well as the public response.
+For an affected representation or conversion, check valid boundary values that
+still have representable outputs. Cite the accepted input domain and actual
+runtime limits. If a runtime cannot honor the contract at that boundary, retain
+the failing observation and resolve the contract impact before claiming completion.
 
 Every required layer must PASS. NOT_APPLICABLE requires impact reasoning, cited
 evidence and separate review. Missing checks remain UNVERIFIED. A failed major
@@ -152,6 +186,15 @@ Reproduce, explain, repair with the owner, rerun and inspect. Preserve existing
 tests and add meaningful tests for changed behavior; test counts are not quality.
 Use [acceptance and test quality](references/acceptance-and-test-quality.md) for
 independent oracles and safe negative controls.
+For a newly found issue, replay the same observation against the pinned baseline
+and the current source. Record its impact on the agreed requirements before
+routing repair. Keep inherited out-of-scope findings visible and keep affected
+requirements open until their failures are resolved.
+For an inherited defect outside the change, cite the unchanged source, compare
+its trigger and observable result before and after, and explain why it cannot
+affect any changed requirement or trust boundary before accepting the scoped work.
+If the change interacts with the defect or project policy disallows it, keep the
+affected layer open.
 
 Load domain instructions only when actual behavior needs them:
 [visible output](references/quality-intent.md), [browser behavior](references/web-validation.md),
@@ -171,6 +214,9 @@ Keep ordinary diagnosis and repair in the active mission. A handoff, failed revi
 or attempt timebox is not completion. Respect authorization, actual resource
 limits, cancellation and host limits. Report missing capabilities honestly while
 continuing useful authorized work.
+Qualify completion claims to the behavior and inputs actually verified. If an
+applicable criterion is still open, report the affected requirement as incomplete
+alongside check results already established.
 
 For harness improvement keep product edits and task-specific repair coaching out
 of the experiment. Improve the general mechanism, pin a new version and retain

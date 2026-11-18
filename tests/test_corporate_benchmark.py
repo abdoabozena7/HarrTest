@@ -31,25 +31,85 @@ class CorporateBenchmarkTests(unittest.TestCase):
             (directory / "scripts/corporate_benchmark.py").write_text("DO NOT EXPOSE ORACLES\n")
             (directory / "assets/corporate").mkdir(parents=True)
             (directory / "assets/corporate/cases.json").write_text("DO NOT EXPOSE CASES\n")
+            (directory / "assets/corporate/retired-development.json").write_text("DO NOT EXPOSE ARCHIVE\n")
             (directory / "references").mkdir()
             for guide in ['cli-agent-validation.md','web-validation.md','simulation-validation.md']:
                 (directory/'references'/guide).write_text('Production workflow guide\n')
         self.experiment = self.root / "experiment"
         self.fake_probe = {"tools": {"python":sys.executable,"node":shutil.which("node"),"copilot":"fixture-only"},
                            "blocked":[], "assurance":"unit-test substitution, not a capability observation"}
-        tools_path=ROOT/'output/v5-corporate/evaluation-tools.json'
+        tools_path=Path(os.environ.get('HARRTEST_BENCH_TOOLS') or ROOT/'output/v5-corporate/evaluation-tools.json')
         if tools_path.is_file():
             tools=bench.load(tools_path)
             for key in ['tsc','node_types']:
                 if tools.get(key):self.fake_probe['tools'][key]=tools[key]
 
-    def freeze(self,kind='development'):
+    def freeze(self,kind='development',corpus=bench.CORPUS):
         with patch.object(bench, "preflight", return_value=self.fake_probe):
-            return bench.freeze(self.experiment,self.old,self.new,["weak-observed","normal-observed"],kind=kind)
+            return bench.freeze(self.experiment,self.old,self.new,["weak-observed","normal-observed"],kind=kind,corpus=corpus)
 
     def attempt(self, case):
-        self.freeze()
+        active = bench.cases()
+        if any(row['id'] == case for row in active):
+            self.freeze()
+        else:
+            # Exercise historical evaluator behavior without admitting a retired
+            # case to the current active corpus or a new acceptance experiment.
+            retired = bench.load(bench.CORPUS.with_name('retired-development.json'))['cases']
+            original = next(row for row in retired if row['id'] == case)
+            replaced = next(row for row in active if row['language'] == original['language']
+                            and row['split'] == 'development')
+            path = self.root / 'historical-control-corpus.json'
+            bench.save(path, {'schema': 1, 'cases': [original if row == replaced else row for row in active]})
+            self.freeze(corpus=path)
         return bench.prepare(self.experiment,case,"plain","weak-observed",1)
+
+    def summary_attempt(self):
+        # Summaries enumerate the frozen held matrix, so the synthetic receipt
+        # must be attached to an actual held slot regardless of corpus rotation.
+        plan = self.freeze()
+        held_python = {row['id'] for row in plan['cases']
+                       if row['split'] == 'acceptance' and row['language'] == 'python'}
+        slot = next(row for row in plan['execution_order'] if row['case'] in held_python and row['arm'] == 'plain')
+        return bench.prepare(self.experiment, slot['case'], slot['arm'], slot['model'], slot['repetition'])
+
+    def test_corporate_editor_guard_profile_for_v5_development(self):
+        shutil.copy2(ROOT / 'scripts/copilot_guard.py', self.new / 'scripts/copilot_guard.py')
+        with patch.object(bench, 'preflight', return_value=self.fake_probe):
+            plan = bench.freeze(self.experiment, self.old, self.new, ['weak-observed', 'normal-observed'],
+                                corporate_guard_goal='mission')
+        self.assertEqual(plan['corporate_guard_goal'], 'mission')
+        self.assertTrue((self.experiment / 'packages/v5/scripts/copilot_guard.py').is_file())
+        case = next(row['id'] for row in plan['cases']
+                    if row['split'] == 'development' and row['language'] == 'python')
+        with self.assertRaisesRegex(ValueError, 'requires the V5 package'):
+            bench.prepare(self.experiment, case, 'plain', 'weak-observed', 1)
+        slot = bench.prepare(self.experiment, case, 'v5', 'weak-observed', 1)
+        meta = bench.load(slot / 'attempt.json')
+        self.assertTrue(meta['prompt'].startswith('$harrtest\n' + meta['case']['request']))
+
+    def test_acceptance_guard_profiles_v5_on_the_frozen_substantial_cases(self):
+        shutil.copy2(ROOT / 'scripts/copilot_guard.py', self.new / 'scripts/copilot_guard.py')
+        with patch.object(bench, 'preflight', return_value=self.fake_probe):
+            plan = bench.freeze(self.experiment, self.old, self.new, ['weak-observed', 'normal-observed'],
+                                kind='acceptance', corporate_guard_goal='mission')
+        cases = [case for case in plan['cases'] if case['split'] == 'acceptance']
+        guarded = sorted(case['id'] for case in cases if case.get('complexity'))
+        self.assertEqual(plan['corporate_guard_cases'], guarded)
+        self.assertEqual(len(plan['execution_order']), 96)
+        for arm in bench.ARMS:
+            slot = bench.prepare(self.experiment, guarded[0], arm, 'weak-observed', 1)
+            metadata = bench.load(slot / 'attempt.json')
+            self.assertEqual(metadata['arm'], arm)
+            self.assertEqual(bench.attempt_guard_goal(plan, metadata), 'mission' if arm == 'v5' else None)
+            self.assertFalse((slot / 'work/.github/hooks/harrtest-corporate-guard.json').exists())
+        bounded = next(case['id'] for case in cases if case['id'] not in guarded)
+        narrow = bench.prepare(self.experiment, bounded, 'v5', 'normal-observed', 2)
+        self.assertIsNone(bench.attempt_guard_goal(plan, bench.load(narrow / 'attempt.json')))
+        summary = bench.summarize(self.experiment)
+        self.assertEqual(summary['candidate_profile'], {'corporate_guard_cases': guarded,
+                                                         'enrollment_arm': 'v5', 'goal': 'mission'})
+        self.assertFalse(summary['release_qualified'])
 
     def test_corpus_has_distinct_development_and_held_cases(self):
         rows=bench.cases()
@@ -57,6 +117,25 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(len({row['id'] for row in rows}),16)
         for split in ['development','acceptance']:
             self.assertEqual(sum(x['split']==split for x in rows),8)
+            for language in bench.LANGUAGES:
+                self.assertEqual(sum(x['split']==split and x['language']==language for x in rows),2)
+        splits = {row['id']: row['split'] for row in rows}
+        consumed = {'cs-stock-snapshot', 'ts-triage-queue', 'py-monthly-report-utc', 'py-recipe-batch-scale'}
+        self.assertTrue(all(splits[case] == 'development' for case in consumed))
+        retained = {'cs-build-dependency-plan', 'py-retry-recovery',
+                    'cpp-lookup-scaling', 'cpp-capacity-contract'}
+        replacements = {'cs-studio-cue-report', 'ts-pick-list', 'ts-tile-window', 'py-museum-route'}
+        self.assertEqual({case for case, split in splits.items() if split == 'acceptance'}, retained | replacements)
+        archive = bench.load(bench.CORPUS.with_name('retired-development.json'))
+        retired = archive['cases']
+        retired_ids = {'cs-credit-validation', 'ts-path-boundary', 'py-log-redaction', 'py-batch-atomicity',
+                       'ts-record-framing'}
+        self.assertEqual(len(retired), len(retired_ids))
+        self.assertEqual({row['id'] for row in retired}, retired_ids)
+        self.assertCountEqual([case for rotation in archive['rotations'] for case in rotation['retired']], retired_ids)
+        self.assertTrue(all(row['split'] == 'development' and row['id'] not in splits for row in retired))
+        for previously_retired in ['py-event-idempotency', 'cs-refund-boundary', 'cs-tenant-lookup', 'ts-explicit-limit']:
+            self.assertNotIn(previously_retired, splits)
 
     def test_pin_does_not_expose_evaluator_or_corpus(self):
         self.freeze()
@@ -64,8 +143,130 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertTrue((pinned/'scripts/tool.py').is_file())
         self.assertFalse((pinned/'scripts/corporate_benchmark.py').exists())
         self.assertFalse((pinned/'assets/corporate').exists())
+        self.assertEqual(bench.sha(self.experiment/'evaluator/cases.json'), bench.sha(bench.CORPUS))
+        self.assertEqual(bench.sha(self.experiment/'evaluator/corporate_benchmark.py'), bench.sha(bench.__file__))
         for guide in ['cli-agent-validation.md','web-validation.md','simulation-validation.md']:
             self.assertTrue((pinned/'references'/guide).is_file())
+
+    def test_rotated_csharp_components_have_separate_runtime_oracles_and_cli(self):
+        dotnet = Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
+        if not dotnet.is_file():
+            self.skipTest('Pinned local .NET10 SDK unavailable')
+        self.fake_probe['tools']['dotnet'] = str(dotnet)
+        attempt = self.attempt('cs-studio-cue-report')
+        work = attempt/'work'
+
+        def checks(result):
+            return {row['check']: row['passed'] for row in result['checks']}
+
+        baseline = bench.evaluate_attempt(attempt)
+        bad = checks(baseline)
+        self.assertTrue(all(value for key, value in bad.items() if key.startswith('preservation')))
+        for key in ('cue-order-stable', 'cue-coverage-union', 'public-composed-report'):
+            self.assertFalse(bad[key])
+
+        # Disposable positive controls are never copied into generated fixtures.
+        order = work/'CueOrder.cs'
+        order.write_text(order.read_text(encoding='utf-8').replace(
+            '.ThenBy(cue => cue.Id, StringComparer.Ordinal)', ''), encoding='utf-8')
+        isolated = checks(bench.evaluate_attempt(attempt))
+        self.assertTrue(isolated['cue-order-stable'])
+        self.assertFalse(isolated['cue-coverage-union'])
+        self.assertFalse(isolated['public-composed-report'])
+        (work/'CueCoverage.cs').write_text('''public static class CueCoverage
+{
+    public static long TotalMilliseconds(IReadOnlyList<StudioCue> cues)
+    {
+        long total = 0, end = 0;
+        foreach (var cue in cues.OrderBy(cue => cue.StartMs))
+        {
+            if (cue.EndMs <= end) continue;
+            total += cue.EndMs - Math.Max(end, cue.StartMs);
+            end = cue.EndMs;
+        }
+        return total;
+    }
+}
+''', encoding='utf-8')
+        fixed = bench.evaluate_attempt(attempt)
+        self.assertTrue(fixed['automated_artifact_passed'])
+        self.assertTrue(all(checks(fixed).values()))
+        self.assertTrue(fixed['unchanged_by_evaluator'])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for TypeScript runtime')
+    def test_rotated_typescript_runtime_preserves_positional_and_sdk_results(self):
+        if not self.fake_probe['tools'].get('tsc'):
+            self.skipTest('Pinned TypeScript compiler unavailable')
+        attempt = self.attempt('ts-tile-window')
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertEqual(baseline['type_correctness'], 'PASS')
+        self.assertTrue(all(value for key, value in checks.items() if key.startswith('preservation')))
+        self.assertFalse(checks['target-sdk-0'])
+        self.assertFalse(checks['target-cli-0'])
+        core = attempt/'work'/'rules.ts'
+        old = core.read_text(encoding='utf-8')
+        core.write_text(old.replace(
+            'rows.slice(top, top + height).flatMap(row => row.slice(left, left + width))',
+            'rows.slice(top, Math.max(top, y + height)).flatMap(row => row.slice(left, Math.max(left, x + width)))'),
+            encoding='utf-8')
+        fixed = bench.evaluate_attempt(attempt)
+        self.assertTrue(fixed['automated_artifact_passed'])
+        self.assertTrue(fixed['unchanged_by_evaluator'])
+
+    def test_rotated_python_runtime_checks_exact_output_and_preserves_original_oracle(self):
+        attempt = self.attempt('py-recipe-batch-scale')
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertTrue(all(value for key, value in checks.items() if key.startswith('preservation')))
+        self.assertFalse(checks['target-sdk-0'])
+        self.assertFalse(checks['target-cli-0'])
+        core = attempt/'work'/'rules.py'
+        old = core.read_text(encoding='utf-8')
+        core.write_text(old.replace("row['units'] * target // source",
+            "((row['units'] * target + source * row['step'] - 1) // (source * row['step'])) * row['step']"),
+            encoding='utf-8')
+        fixed = bench.evaluate_attempt(attempt)
+        self.assertTrue(fixed['automated_artifact_passed'])
+        self.assertTrue(fixed['unchanged_by_evaluator'])
+        self.assertFalse(fixed['existing_tests_changed'])
+
+    def test_rotated_python_shortest_path_oracle_preserves_neighbor_order(self):
+        attempt = self.attempt('py-museum-route')
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertTrue(all(passed for name, passed in checks.items() if name.startswith('preservation')))
+        self.assertFalse(checks['target-sdk-0'])
+        self.assertFalse(checks['target-cli-2'])
+        core = attempt/'work'/'rules.py'
+        source = core.read_text(encoding='utf-8')
+        implementation = '''def find_route(galleries, current, goal, path):
+    frontier = [path]
+    visited = {current}
+    while frontier:
+        route = frontier.pop(0)
+        if route[-1] == goal:
+            return route
+        for neighbor in galleries[route[-1]]:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                frontier.append([*route, neighbor])
+    return []
+
+
+'''
+        fixed_source = source[:source.index('def find_route')] + implementation + source[source.index('def evaluate'):]
+        core.write_text(fixed_source.replace('in galleries[route[-1]]:', 'in sorted(galleries[route[-1]]):'),
+                        encoding='utf-8')
+        partial = bench.evaluate_attempt(attempt)
+        self.assertFalse(partial['functional_passed'])
+        self.assertEqual({row['check'] for row in partial['checks'] if not row['passed']},
+                         {'target-sdk-1', 'target-cli-1'})
+        core.write_text(fixed_source, encoding='utf-8')
+        fixed = bench.evaluate_attempt(attempt)
+        self.assertTrue(fixed['automated_artifact_passed'])
+        self.assertTrue(fixed['unchanged_by_evaluator'])
+        self.assertFalse(fixed['existing_tests_changed'])
 
     def test_declared_toolchain_content_change_invalidates_experiment(self):
         compiler=self.root/'compiler-marker';compiler.write_text('compiler version1')
@@ -83,7 +284,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
         p=self.experiment/'protocol.json';data=bench.load(p);data['models'][0]='other'
         bench.save(p,data)
         with self.assertRaisesRegex(ValueError,'Protocol was changed'):
-            bench.prepare(self.experiment,'py-event-idempotency','plain','other',1)
+            bench.prepare(self.experiment,'py-retry-recovery','plain','other',1)
 
     def test_package_change_invalidates_attempt(self):
         self.freeze()
@@ -107,19 +308,19 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertFalse(result['release_qualified'])
 
     def test_attempt_cannot_be_silently_overwritten(self):
-        p=self.attempt('py-event-idempotency')
+        p=self.attempt('py-retry-recovery')
         with self.assertRaises(FileExistsError):
-            bench.prepare(self.experiment,'py-event-idempotency','plain','weak-observed',1)
+            bench.prepare(self.experiment,'py-retry-recovery','plain','weak-observed',1)
         self.assertEqual(bench.load(p/'attempt.json')['arm'],'plain')
 
     def test_plain_settings_are_local_and_do_not_turn_off_hooks(self):
-        p=self.attempt('py-event-idempotency')
+        p=self.attempt('py-retry-recovery')
         settings=bench.load(p/'work/.github/copilot/settings.local.json')
         self.assertEqual(settings['disabledSkills'],['harrtest'])
         self.assertNotIn('disableAllHooks',settings)
 
     def test_generation_needs_explicit_authorization(self):
-        p=self.attempt('py-event-idempotency')
+        p=self.attempt('py-retry-recovery')
         with self.assertRaisesRegex(ValueError,'explicit'):
             bench.run_attempt(p)
 
@@ -132,17 +333,19 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertTrue(bench.skill_isolation({'skills':[expected]},work,'v5'))
 
     def test_real_python_baseline_fails_duplicate_across_processes(self):
-        p=self.attempt('py-event-idempotency')
+        p=self.attempt('py-retry-recovery')
         result=bench.evaluate_attempt(p)
-        self.assertTrue(result['checks'][0]['passed'])
-        self.assertFalse(result['checks'][1]['passed'])
-        self.assertEqual(result['checks'][1]['observed']['balance'],6)
+        checks = {check['check']: check for check in result['checks']}
+        self.assertTrue(checks['ordinary-persistence']['passed'])
+        self.assertTrue(checks['partial-interruption']['passed'])
+        self.assertFalse(checks['retry-after-committed-prefix']['passed'])
+        self.assertEqual(checks['retry-after-committed-prefix']['observed']['balance'], 15)
         self.assertTrue(result['unchanged_by_evaluator'])
         self.assertFalse(result['complete_quality_passed'])
 
     def test_independent_oracle_accepts_known_positive_control(self):
         # Disposable evaluator unit control only; never enters a live arm or claim.
-        p=self.attempt('py-event-idempotency');core=p/'work/rules.py'
+        p=self.attempt('py-retry-recovery');core=p/'work/rules.py'
         text=core.read_text();text=text.replace("    for event in x['events']:\n", "    for event in x['events']:\n        if event['id'] in state['seen']:\n            continue\n")
         core.write_text(text)
         result=bench.evaluate_attempt(p)
@@ -151,12 +354,12 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertFalse(result['complete_quality_passed'])
 
     def test_contract_edit_is_detected_despite_correct_function(self):
-        p=self.attempt('py-event-idempotency');(p/'work/ARCHITECTURE.md').write_text('relaxed contract')
+        p=self.attempt('py-retry-recovery');(p/'work/ARCHITECTURE.md').write_text('relaxed contract')
         result=bench.evaluate_attempt(p)
         self.assertFalse(result['documented_contract_and_adapter_preserved'])
 
     def test_extended_existing_tests_do_not_fail_architecture_on_byte_changes(self):
-        p=self.attempt('py-event-idempotency');test=p/'work/check_existing.py'
+        p=self.attempt('py-retry-recovery');test=p/'work/check_existing.py'
         test.write_text(test.read_text()+'\nassert len([1,2,3]) == 3\n')
         result=bench.evaluate_attempt(p)
         self.assertTrue(result['existing_tests_changed'])
@@ -164,14 +367,14 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertIn('Independent',result['test_oracle_preservation'])
 
     def test_deleted_or_trivially_weakened_test_does_not_pass_architecture(self):
-        p=self.attempt('py-event-idempotency');test=p/'work/check_existing.py'
+        p=self.attempt('py-retry-recovery');test=p/'work/check_existing.py'
         test.write_text('assert True\n')
         self.assertFalse(bench.evaluate_attempt(p)['documented_contract_and_adapter_preserved'])
         test.unlink()
         self.assertFalse(bench.evaluate_attempt(p)['documented_contract_and_adapter_preserved'])
 
     def test_actual_shell_policy_edit_is_invalid_even_with_exit_zero(self):
-        p=self.attempt('py-event-idempotency');work=p/'work'
+        p=self.attempt('py-retry-recovery');work=p/'work'
         with patch.object(bench.Path,'home',return_value=self.root/'no-user-configuration'):
             before=bench.configuration_inputs(work)
             target=work/'.github/copilot/settings.local.json'
@@ -183,7 +386,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
 
     def test_python_import_cache_keeps_skill_identity_and_configuration_stable(self):
         self.freeze()
-        attempt = bench.prepare(self.experiment, 'py-event-idempotency', 'v5', 'weak-observed', 1)
+        attempt = bench.prepare(self.experiment, 'py-retry-recovery', 'v5', 'weak-observed', 1)
         work = attempt / 'work'
         package = work / '.github/skills/harrtest'
         scripts = package / 'scripts'
@@ -222,7 +425,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
         outside = {key: os.environ.get(key) for key in ('TEMP', 'TMP', 'TMPDIR')}
         for arm in bench.ARMS:
             with self.subTest(arm=arm):
-                attempt = bench.prepare(self.experiment, 'py-event-idempotency', arm, 'weak-observed', 1)
+                attempt = bench.prepare(self.experiment, 'py-retry-recovery', arm, 'weak-observed', 1)
                 workspace = attempt / 'work'
                 before = bench.tree(workspace)
                 environment = bench.generation_environment(workspace, {})
@@ -244,6 +447,112 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertTrue(by_id['invalid-batch']['passed'])
         self.assertFalse(by_id['state-unchanged']['passed'])
         self.assertEqual(by_id['state-unchanged']['observed']['balance'],8)
+
+    def test_batch_optional_control_validates_type_before_writing(self):
+        attempt = self.attempt('py-batch-atomicity')
+        core = attempt / 'work/rules.py'
+        amount_only = core.read_text(encoding='utf-8').replace(
+            "    for event in x['events']:\n",
+            "    for event in x['events']:\n        if event['amount'] < 0:\n            raise ValueError('negative amount')\n"
+            "    for event in x['events']:\n", 1)
+        core.write_text(amount_only, encoding='utf-8')
+        result = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row for row in result['checks']}
+        self.assertTrue(checks['state-unchanged']['passed'])
+        self.assertTrue(checks['control-field-false-is-valid']['passed'])
+        checkpoint = checks['control-field-true-commits-then-interrupts']
+        self.assertTrue(checkpoint['passed'])
+        self.assertEqual(checkpoint['observed'], 'RUNTIME_ERROR')
+        self.assertEqual(checkpoint['persisted_observed'], {'balance': 12, 'seen': ['old', 'prefix', 'flagged']})
+        self.assertEqual(checkpoint['persisted_sha256'],
+                         bench.sha(Path(result['evidence_directory']) / 'control-field-true.json'))
+        for label in ('string', 'integer', 'null'):
+            check = checks[f'control-field-{label}']
+            self.assertFalse(check['passed'])
+            self.assertNotEqual(check['input_file_sha256_before'], check['input_file_sha256_after'])
+        complete = amount_only.replace("        if event['amount'] < 0:\n",
+            "        if 'fail_after' in event and not isinstance(event['fail_after'], bool):\n"
+            "            raise ValueError('fail_after must be a bool')\n"
+            "        if event['amount'] < 0:\n", 1)
+        core.write_text(complete, encoding='utf-8')
+        self.assertTrue(bench.evaluate_attempt(attempt)['automated_artifact_passed'])
+        core.write_text(complete.replace("RuntimeError('injected interruption')", "ValueError('injected interruption')"),
+                        encoding='utf-8')
+        wrong_error = next(row for row in bench.evaluate_attempt(attempt)['checks']
+                           if row['check'] == 'control-field-true-commits-then-interrupts')
+        self.assertEqual(wrong_error['persisted_observed'], wrong_error['persisted_expected'])
+        self.assertEqual(wrong_error['observed'], 'VALUE_ERROR')
+        self.assertFalse(wrong_error['passed'])
+
+    def test_monthly_report_baseline_preserves_existing_checks_but_fails_utc_boundaries(self):
+        attempt = self.attempt('py-monthly-report-utc')
+        result = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row for row in result['checks']}
+        self.assertTrue(all(row['passed'] for name, row in checks.items() if name.startswith('preservation')))
+        self.assertFalse(checks['utc-march-in-ledger-order']['passed'])
+        self.assertEqual(checks['utc-march-in-ledger-order']['observed'], {'ids': ['first', 'west'], 'total_cents': 1299})
+        self.assertFalse(checks['timestamp-naive']['passed'])
+        self.assertFalse(checks['month-year-zero']['passed'])
+        self.assertFalse(checks['timestamp-year-zero']['passed'])
+        self.assertEqual(result['automated_artifact_layers']['security']['status'], 'FAIL')
+        self.assertFalse(result['automated_artifact_passed'])
+
+    def test_monthly_report_oracle_checks_read_only_ledgers_and_real_validation_errors(self):
+        # Disposable oracle controls. No solution enters the benchmark workspace templates.
+        attempt = self.attempt('py-monthly-report-utc')
+        core = attempt / 'work/rules.py'
+        source = core.read_text(encoding='utf-8')
+        reference = '''def summarize(entries, month):
+    if not isinstance(month, str) or not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month) or month.startswith('0000'):
+        raise ValueError('invalid query month')
+    selected = []
+    for entry in entries:
+        stamp = entry.get('recorded_at')
+        if not isinstance(stamp, str) or not re.fullmatch(
+            r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-](0[0-9]|1[0-9]|2[0-3]):[0-5][0-9])', stamp
+        ):
+            raise ValueError('invalid timestamp shape')
+        try:
+            utc = datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone(timezone.utc)
+        except OverflowError as error:
+            raise ValueError('out-of-range UTC date') from error
+        if f'{utc.year:04d}-{utc.month:02d}' == month:
+            selected.append(entry)
+    return {'ids': [entry['id'] for entry in selected],
+            'total_cents': sum(entry['amount_cents'] for entry in selected)}
+
+
+'''
+        candidate = ('import re\nfrom datetime import datetime, timezone\n' + source[:source.index('def summarize')]
+                     + reference + source[source.index('def evaluate'):].replace("request['month']", "request.get('month')"))
+        core.write_text(candidate, encoding='utf-8')
+        result = bench.evaluate_attempt(attempt)
+        self.assertTrue(result['automated_artifact_passed'])
+        self.assertTrue(result['unchanged_by_evaluator'])
+        security = result['automated_artifact_layers']['security']
+        self.assertEqual(security['status'], 'PASS')
+        self.assertIn('month-year-zero', security['rejection_checks'])
+        self.assertIn('timestamp-year-zero', security['rejection_checks'])
+        self.assertIn('timestamp-utc-underflow', security['rejection_checks'])
+        self.assertIn('timestamp-utc-overflow', security['rejection_checks'])
+        for label in ('accept-first-supported-year', 'accept-last-supported-year'):
+            self.assertTrue(next(row for row in result['checks'] if row['check'] == label)['passed'])
+        changed = candidate.replace("        return json.dumps(summarize(entries, request.get('month')))",
+            "        if request.get('month') == '2025-13':\n            return 'VALUE_ERROR'\n"
+            "        result = summarize(entries, request.get('month'))\n"
+            "        Path(request['ledger']).write_text(json.dumps(entries, indent=2), encoding='utf-8')\n"
+            "        return json.dumps(result)")
+        core.write_text(changed, encoding='utf-8')
+        result = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row for row in result['checks']}
+        report = checks['utc-march-in-ledger-order']
+        self.assertEqual(report['observed'], report['expected'])
+        self.assertFalse(report['passed'])
+        self.assertNotEqual(report['input_file_sha256_before'], report['input_file_sha256_after'])
+        self.assertEqual(checks['month-out-of-range']['observed'], 'VALUE_ERROR')
+        self.assertEqual(checks['month-out-of-range']['execution']['exit_code'], 0)
+        self.assertFalse(checks['month-out-of-range']['passed'])
+        self.assertEqual(result['automated_artifact_layers']['security']['status'], 'FAIL')
 
     @unittest.skipUnless(shutil.which('node'),'Node required for actual TypeScript runtime')
     def test_real_typescript_explicit_values_fail_baseline(self):
@@ -314,8 +623,85 @@ class CorporateBenchmarkTests(unittest.TestCase):
                 {'type':'model.call_start','agentId':'worker','data':{'reasoningEffort':None}}]
         self.assertEqual(bench.reasoning_pin_observation(events)['status'],'UNVERIFIED')
 
+    @unittest.skipUnless(shutil.which('node'), 'Node required for actual hook code')
+    def test_native_task_arg_pin_changes_only_explicit_overrides_and_keeps_permissions(self):
+        test = r'''
+const pins = {model: 'weak', effort: 'low', models: new Set(['weak', 'usual'])};
+const audit = [];
+const record = row => audit.push(row);
+const original = Object.freeze({model: 'usual', reasoning_effort: 'high', prompt: 'private case prompt',
+                                agent_type: 'general-purpose', mode: 'sync', name: 'worker'});
+const apply = (toolName, toolArgs) => pinNativeTaskArguments({toolName, toolArgs, toolCallId: 'native-1'}, pins, record);
+assert.deepEqual(apply('task', original), {modifiedArgs: {...original, model: 'weak', reasoning_effort: 'low'}});
+assert.equal(original.model, 'usual');
+assert.equal(original.reasoning_effort, 'high');
+assert.deepEqual(audit, [{tool: 'task', toolCallId: 'native-1', overrides: {
+  model: {requested: 'usual', applied: 'weak'}, reasoning_effort: {requested: 'high', applied: 'low'}
+}}]);
+assert.equal(apply('task', {model: 'weak', reasoning_effort: 'low'}), undefined);
+assert.equal(apply('task', {prompt: 'only'}), undefined);
+assert.equal(apply('view', original), undefined);
+assert.equal(apply('task', ['high']), undefined);
+assert.equal(audit.length, 1);
+assert.deepEqual(apply('task', {model: 'sensitive-value', reasoning_effort: {value: 'sensitive-value'}}),
+                 {modifiedArgs: {model: 'weak', reasoning_effort: 'low'}});
+assert.deepEqual(audit[1].overrides, {
+  model: {requested: '[unrecognized]', applied: 'weak'}, reasoning_effort: {requested: '[unrecognized]', applied: 'low'}
+});
+'''
+        runner = self.root / 'native-task-pin-test.mjs'
+        runner.write_text("import assert from 'node:assert/strict';\n" + bench.TASK_PIN_HOOK + test, encoding='utf-8')
+        result = bench.command([shutil.which('node'), str(runner)], self.root, 15)
+        self.assertEqual(result['exit_code'], 0, result['stderr'])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for actual permission callback code')
+    def test_sdk_permission_keeps_credential_test_text_and_distinguishes_denials(self):
+        test = r'''
+const workspace = path.resolve('work');
+const config = {workspace, readRoots: [path.resolve('tools')], exactReadFiles: [path.resolve('host/events.jsonl')]};
+const rows = [];
+const decide = (request, invocation={}) => benchmarkPermission({toolCallId:'test', ...request}, invocation, config,
+                                                             row=>rows.push(row));
+const shell = (fullCommandText, possiblePaths=[], extra={}) => decide({kind:'shell', fullCommandText, possiblePaths, ...extra});
+const narrative = "@'\n# Contract requires credentials to be omitted.\nFAIL: redact leaks credential values.\n'@ | Set-Content .runtime-proof/credential-evidence.md";
+assert.equal(shell(narrative, ['.runtime-proof/credential-evidence.md']).kind, 'approve-once');
+assert.equal(shell(narrative, [{path:'.runtime-proof/credential-evidence.md'}]).kind, 'approve-once');
+assert.equal(shell(narrative, ['../work-neighbor/credential-evidence.md']).kind, 'reject');
+assert.equal(rows.at(-1).reason, 'path-outside-scope');
+assert.equal(shell(narrative, [{}]).kind, 'reject');
+assert.equal(rows.at(-1).reason, 'path-outside-scope');
+assert.equal(shell('Get-Content $target', ['.git-credentials']).kind, 'reject');
+assert.equal(rows.at(-1).reason, 'protected-shell-path');
+for (const command of ['git credential fill', 'git credential-manager erase', 'git-credential-manager get',
+                       'git config credential.helper store', 'gh auth token', 'cmdkey /list', 'Get-StoredCredential',
+                       'Get-Content .git-credentials', 'Get-Content .ssh/id_rsa', 'Get-Content .copilot/settings.json',
+                       'git push', 'npm install --global foo', 'Invoke-WebRequest example.invalid',
+                       'curl example.invalid', 'wget example.invalid']) {
+  assert.equal(shell(command).kind, 'reject', command);
+  assert.equal(rows.at(-1).reason, 'blocked-shell-pattern');
+}
+assert.equal(shell(narrative, [], {managedApprovalRequired:true}).kind, 'no-result');
+assert.equal(shell(narrative, [], {requestSandboxBypass:true}).kind, 'no-result');
+assert.equal(decide({kind:'read',path:'rules.py'}, {managedSettingsEnabled:true}).kind, 'no-result');
+assert.equal(rows.at(-1).reason, 'host-approval-required');
+assert.equal(decide({kind:'read',path:path.resolve('tools/compiler')}).kind, 'approve-once');
+assert.equal(decide({kind:'read',path:path.resolve('host/events.jsonl')}).kind, 'approve-once');
+assert.equal(decide({kind:'read',path:path.resolve('host/other.jsonl')}).kind, 'reject');
+assert.equal(decide({kind:'write',fileName:'.github/skills/harrtest/SKILL.md'}).kind, 'reject');
+assert.equal(decide({kind:'write',fileName:'.github/copilot/settings.local.json'}).kind, 'reject');
+assert.equal(decide({kind:'write',fileName:'rules.py'}).kind, 'approve-once');
+assert.ok(rows.every(row=>Object.keys(row).length===5 && row.toolCallId==='test'));
+assert.ok(!JSON.stringify(rows).includes('credential'));
+'''
+        runner = self.root / 'sdk-permission-test.mjs'
+        runner.write_text("import assert from 'node:assert/strict';\nimport path from 'node:path';\n"
+                          + bench.SDK_PERMISSION + test, encoding='utf-8')
+        result = bench.command([shutil.which('node'), str(runner)], self.root, 15)
+        self.assertEqual(result['exit_code'], 0, result['stderr'])
+
     def test_frozen_execution_order_is_complete_reproducible_and_rotated(self):
         plan=self.freeze('acceptance');order=plan['execution_order']
+        self.assertIn('All arms', plan['native_task_pin_policy'])
         self.assertEqual(len(order),96)
         self.assertEqual(order,bench.balanced_execution_order(plan['cases'],plan['models'],plan['execution_seed']))
         self.assertEqual(len({(x['case'],x['model'],x['repetition'],x['arm']) for x in order}),96)
@@ -361,26 +747,204 @@ class CorporateBenchmarkTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('node'),'Node required for actual TypeScript runtime')
     def test_typescript_oracle_accepts_positive_control(self):
-        p=self.attempt('ts-explicit-limit');core=p/'work/rules.ts'
-        core.write_text(core.read_text().replace(' || ', ' ?? '))
+        p=self.attempt('ts-record-framing');core=p/'work/rules.ts'
+        original = core.read_text()
+        old = next(line for line in original.splitlines() if "x.op === 'framing'" in line)
+        core.write_text(original.replace(old, "  if (x.op === 'framing') return JSON.stringify({message: x.message}) + '\\n';"))
         result=bench.evaluate_attempt(p)
         self.assertTrue(result['functional_passed'])
 
     def test_csharp_actual_compiler_negative_and_positive_controls(self):
-        dotnet=ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe'
+        dotnet=Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
         if not dotnet.is_file():self.skipTest('Pinned local .NET10SDK unavailable')
         self.fake_probe['tools']['dotnet']=str(dotnet)
-        p=self.attempt('cs-refund-boundary')
+        p=self.attempt('cs-credit-validation')
         probe = bench.command([sys.executable, '-B', 'check_existing.py'], p/'work')
         self.assertEqual(probe['exit_code'], 0, probe['stderr'])
         bad=bench.evaluate_attempt(p)
         self.assertTrue(all(x['exit_code']==0 for x in bad['builds']))
         self.assertFalse(bad['functional_passed'])
         core=p/'work/Rules.cs';text=core.read_text()
-        text=text.replace('<x.GetProperty("window")','<=x.GetProperty("window")')
+        text=text.replace('new {balance=left+amount,accepted=true}',
+                          'new {balance=amount>0 ? left+amount : left,accepted=amount>0}')
         core.write_text(text)
         good=bench.evaluate_attempt(p)
         self.assertTrue(good['functional_passed'],str(good['builds']))
+
+    def test_csharp_build_plan_preserves_existing_behavior_and_rejects_partial_errors(self):
+        dotnet = Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
+        if not dotnet.is_file():
+            self.skipTest('Pinned local .NET10 SDK unavailable')
+        self.fake_probe['tools']['dotnet'] = str(dotnet)
+        attempt = self.attempt('cs-build-dependency-plan')
+        baseline = bench.evaluate_attempt(attempt)
+        self.assertTrue(all(row['passed'] for row in baseline['checks'] if row['check'].startswith('preservation')))
+        self.assertFalse(baseline['functional_passed'])
+        self.assertEqual(baseline['automated_artifact_layers']['resilience']['status'], 'FAIL')
+        # Disposable oracle control, outside the frozen generator's project and skill.
+        core = attempt / 'work/Rules.cs'
+        old = core.read_text(encoding='utf-8')
+        implementation = '''        var items = jobs.EnumerateArray().Select(job => (
+            Id: job.GetProperty("id").GetString()!,
+            Dependencies: job.GetProperty("depends_on").EnumerateArray().Select(value => value.GetString()!).ToArray()
+        )).ToList();
+        var known = items.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        static string Failure(string error) => JsonSerializer.Serialize(new { order = Array.Empty<string>(), error });
+        if (known.Count != items.Count)
+            return Failure("duplicate-id");
+        if (items.Any(item => item.Dependencies.Any(dep => !known.Contains(dep))))
+            return Failure("missing-dependency");
+        var order = new System.Collections.Generic.List<string>();
+        var completed = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        while (order.Count < items.Count)
+        {
+            var next = items.FindIndex(item => !completed.Contains(item.Id) && item.Dependencies.All(completed.Contains));
+            if (next < 0)
+                return Failure("cycle");
+            order.Add(items[next].Id);
+            completed.Add(items[next].Id);
+        }
+'''
+        fixed = old[:old.index('        var order =')] + implementation + old[old.index('        return JsonSerializer.Serialize(new { order,'):]
+        core.write_text(fixed, encoding='utf-8')
+        correct = bench.evaluate_attempt(attempt)
+        self.assertTrue(correct['automated_artifact_passed'], str([row['check'] for row in correct['checks'] if not row['passed']]))
+        self.assertTrue(correct['unchanged_by_evaluator'])
+        partial = fixed.replace('return Failure("cycle");', 'return JsonSerializer.Serialize(new { order, error = "cycle" });')
+        core.write_text(partial, encoding='utf-8')
+        partial_result = bench.evaluate_attempt(attempt)
+        failures = [row for row in partial_result['checks'] if not row['passed']]
+        self.assertEqual(len(failures), 2)
+        self.assertTrue(all(row['observed'] == {'order': ['first'], 'error': 'cycle'} for row in failures))
+        self.assertEqual(partial_result['automated_artifact_layers']['resilience']['status'], 'FAIL')
+
+    def test_stock_components_have_independent_dotnet_oracles_and_real_cli_composition(self):
+        dotnet = Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
+        if not dotnet.is_file():
+            self.skipTest('Pinned local .NET10 SDK unavailable')
+        self.fake_probe['tools']['dotnet'] = str(dotnet)
+        attempt = self.attempt('cs-stock-snapshot')
+        workspace = attempt / 'work'
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertTrue(all(passed for name, passed in checks.items() if name.startswith('preservation')))
+        self.assertFalse(checks['stock-csv-quoted-fields'])
+        self.assertFalse(checks['stock-projection-latest-case-sensitive-wide-total'])
+        self.assertFalse(checks['public-composed-report'])
+        # Disposable evaluator controls, never copied into the model workspace templates.
+        (workspace/'StockCsv.cs').write_text('''using Microsoft.VisualBasic.FileIO;
+
+public static class StockCsv
+{
+    public static StockRow[] Parse(string csv)
+    {
+        using var parser = new TextFieldParser(new System.IO.StringReader(csv));
+        parser.SetDelimiters(",");
+        parser.TrimWhiteSpace = false;
+        var rows = new System.Collections.Generic.List<StockRow>();
+        while (!parser.EndOfData)
+        {
+            var fields = parser.ReadFields()!;
+            rows.Add(new StockRow(fields[0], fields[1], int.Parse(fields[2])));
+        }
+        return rows.ToArray();
+    }
+}
+''', encoding='utf-8')
+        isolated = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in isolated['checks']}
+        self.assertTrue(checks['stock-csv-quoted-fields'])
+        self.assertTrue(checks['stock-csv-retains-field-values'])
+        self.assertFalse(checks['stock-projection-latest-case-sensitive-wide-total'])
+        self.assertFalse(checks['public-composed-report'])
+        projection = workspace/'StockProjection.cs'
+        old = projection.read_text(encoding='utf-8')
+        projection.write_text(old.replace('.Sum(row => (long)row.Units)',
+            '.GroupBy(row => row.Sku, StringComparer.Ordinal).Sum(group => (long)group.Last().Units)'), encoding='utf-8')
+        passed = bench.evaluate_attempt(attempt)
+        self.assertTrue(passed['automated_artifact_passed'], str([row['check'] for row in passed['checks'] if not row['passed']]))
+        self.assertTrue(passed['unchanged_by_evaluator'])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for TypeScript runtime')
+    def test_triage_components_have_independent_typed_oracles_and_real_cli_composition(self):
+        if not self.fake_probe['tools'].get('tsc'):
+            self.skipTest('Pinned TypeScript compiler unavailable')
+        attempt = self.attempt('ts-triage-queue')
+        workspace = attempt / 'work'
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in baseline['checks']}
+        self.assertTrue(all(passed for name, passed in checks.items() if name.startswith('preservation')))
+        self.assertEqual(baseline['type_correctness'], 'PASS', str(baseline['builds']))
+        self.assertFalse(checks['triage-rank-stable-and-nonmutating'])
+        self.assertFalse(checks['triage-group-owner-normalization'])
+        self.assertFalse(checks['public-composed-report'])
+        group = workspace/'group.ts'
+        group_control = group.read_text(encoding='utf-8').replace('    if (ticket.owner === null) {',
+            "    const name = ticket.owner?.trim() ?? '';\n    if (!name) {")
+        group_control = group_control.replace('      const group = owners.get(ticket.owner)',
+            '      const key = name.toLowerCase();\n      const group = owners.get(key)')
+        group_control = group_control.replace('{name: ticket.owner,', '{name,').replace('owners.set(ticket.owner, group)', 'owners.set(key, group)')
+        group.write_text(group_control, encoding='utf-8')
+        isolated = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row['passed'] for row in isolated['checks']}
+        self.assertTrue(checks['triage-group-owner-normalization'])
+        self.assertFalse(checks['triage-rank-stable-and-nonmutating'])
+        self.assertFalse(checks['public-composed-report'])
+        rank = workspace/'rank.ts'
+        original = rank.read_text(encoding='utf-8')
+        rank.write_text(original.replace('  return tickets.sort((left, right) => left.severity.localeCompare(right.severity));',
+            "  const names = ['critical', 'high', 'normal', 'low'];\n"
+            '  const rank = (ticket: Ticket) => {\n'
+            '    const position = names.indexOf(ticket.severity.trim().toLowerCase());\n'
+            '    return position < 0 ? names.length : position;\n'
+            '  };\n'
+            '  return [...tickets].sort((left, right) => rank(left) - rank(right));'), encoding='utf-8')
+        passed = bench.evaluate_attempt(attempt)
+        self.assertTrue(passed['automated_artifact_passed'], str([row['check'] for row in passed['checks'] if not row['passed']]))
+        self.assertEqual(passed['type_correctness'], 'PASS')
+        types = workspace/'tickets.ts'
+        types.write_text(types.read_text(encoding='utf-8') + '\n// Candidate edited the frozen interface file.\n', encoding='utf-8')
+        changed = bench.evaluate_attempt(attempt)
+        self.assertTrue(changed['functional_passed'])
+        self.assertFalse(changed['documented_contract_and_adapter_preserved'])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for TypeScript runtime')
+    def test_pick_list_separates_merge_package_arithmetic_and_public_composition(self):
+        if not self.fake_probe['tools'].get('tsc'):
+            self.skipTest('Pinned TypeScript compiler unavailable')
+        attempt = self.attempt('ts-pick-list')
+        work = attempt / 'work'
+        merge_check, pack_check = 'pick-merge-exact-keys-and-order', 'pick-packages-round-up-with-unused-units'
+        public = 'public-composed-report'
+
+        def verify(expected):
+            result = bench.evaluate_attempt(attempt)
+            checks = {row['check']: row['passed'] for row in result['checks']}
+            self.assertEqual(result['type_correctness'], 'PASS', str(result['builds']))
+            self.assertTrue(all(passed for label, passed in checks.items() if label.startswith('preservation')))
+            self.assertEqual(tuple(checks[label] for label in (merge_check, pack_check, public)), expected)
+            return result
+
+        verify((False, False, False))
+        merge = work / 'merge.ts'
+        original_merge = merge.read_text(encoding='utf-8')
+        merge_control = original_merge.replace('  return lines.map(line => ({...line}));',
+            '  const merged: PickLine[] = [];\n'
+            '  for (const line of lines) {\n'
+            '    if (!line.units) continue;\n'
+            '    const previous = merged.find(row => row.zone === line.zone && row.sku === line.sku'
+            ' && row.packSize === line.packSize);\n'
+            '    if (previous) previous.units += line.units;\n'
+            '    else merged.push({...line});\n'
+            '  }\n  return merged;')
+        merge.write_text(merge_control, encoding='utf-8')
+        verify((True, False, False))
+        merge.write_text(original_merge, encoding='utf-8')
+        packs = work / 'packages.ts'
+        packs.write_text(packs.read_text(encoding='utf-8').replace('Math.floor', 'Math.ceil'), encoding='utf-8')
+        verify((False, True, False))
+        merge.write_text(merge_control, encoding='utf-8')
+        self.assertTrue(verify((True, True, True))['automated_artifact_passed'])
 
     def test_cpp_actual_compiler_negative_and_positive_controls(self):
         if sys.platform!='win32':
@@ -414,17 +978,34 @@ class CorporateBenchmarkTests(unittest.TestCase):
         return path
 
     def test_reviewed_timeout_is_a_failed_retained_denominator_not_a_dead_end(self):
-        p=self.attempt('py-batch-atomicity');review=self.timeout_review(p)
+        p=self.summary_attempt();review=self.timeout_review(p)
         assessment=bench.record_assessment(p,review)
         self.assertFalse(assessment['complete_quality_passed'])
         self.assertFalse(assessment['false_accept'])
-        counts=bench.summarize(self.experiment)['counts']['plain']
+        summary=bench.summarize(self.experiment)
+        observed=next(row for row in summary['attempts'] if row['status']=='TIMEOUT')
+        self.assertEqual(observed['case'],bench.load(p/'attempt.json')['case']['id'])
+        self.assertEqual(observed['completion_claim'],'INCOMPLETE')
+        counts=summary['counts']['plain']
         self.assertEqual(counts['denominator'],32)
         self.assertEqual(counts['unreviewed'],31)
         self.assertEqual(counts['false_accepts'],0)
 
+    def test_monthly_report_review_requires_applicable_security_with_passing_controls(self):
+        attempt = self.attempt('py-monthly-report-utc')
+        report = self.timeout_review(attempt)
+        review = bench.load(report)
+        security = next(row for row in review['layers'] if row['id'] == 'security')
+        for verdict, error in [('NOT_APPLICABLE', 'layers are required'),
+                               ('PASS', 'scoped security controls cannot become PASS')]:
+            with self.subTest(verdict=verdict):
+                security['status'] = verdict
+                bench.save(report, review)
+                with self.assertRaisesRegex(ValueError, error):
+                    bench.record_assessment(attempt, report)
+
     def test_failed_generation_cannot_be_upgraded_by_positive_layer_assertions(self):
-        p=self.attempt('py-event-idempotency');core=p/'work/rules.py'
+        p=self.attempt('py-retry-recovery');core=p/'work/rules.py'
         core.write_text(core.read_text().replace("    for event in x['events']:\n", "    for event in x['events']:\n        if event['id'] in state['seen']:\n            continue\n"))
         review=self.timeout_review(p,'FAILED');data=bench.load(review)
         for layer in data['layers']:layer['status']='PASS'
@@ -432,14 +1013,14 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertFalse(bench.record_assessment(p,review)['complete_quality_passed'])
 
     def test_post_review_generation_changes_invalidate_summary(self):
-        p=self.attempt('py-batch-atomicity');review=self.timeout_review(p)
+        p=self.summary_attempt();review=self.timeout_review(p)
         bench.record_assessment(p,review)
         bench.save(p/'generation.json',{'status':'COMPLETED'})
         with self.assertRaisesRegex(ValueError,'generation record changed'):
             bench.summarize(self.experiment)
 
     def test_original_check_replay_detects_regression_after_generated_test_weakening(self):
-        attempt = self.attempt('py-event-idempotency')
+        attempt = self.attempt('py-retry-recovery')
         workspace = attempt / 'work'
         core = workspace / 'rules.py'
         core.write_text(core.read_text().replace("state['balance'] += event['amount']", "state['balance'] += event['amount'] + 1"))
@@ -455,7 +1036,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(bench.tree(workspace), before)
 
     def test_summary_reports_reviewed_layer_failures_and_bound_credit_receipts(self):
-        attempt = self.attempt('py-batch-atomicity')
+        attempt = self.summary_attempt()
         report = self.timeout_review(attempt)
         review = bench.load(report)
         for row in review['layers']:
@@ -463,9 +1044,10 @@ class CorporateBenchmarkTests(unittest.TestCase):
                 row['status'] = 'FAIL'
         bench.save(report, review)
         usage_path = attempt / 'usage.json'
+        model = bench.load(attempt / 'attempt.json')['model']
         usage = {'aiCreditsStatus': 'complete', 'totalNanoAiu': 1_500_000_000,
                  'agentMetrics': {'main': {'totalNanoAiu': 1_000_000_000}, 'child': {'totalNanoAiu': 500_000_000}},
-                 'modelMetrics': {'weak-observed': {'totalNanoAiu': 1_500_000_000}}}
+                 'modelMetrics': {model: {'totalNanoAiu': 1_500_000_000}}}
         bench.save(usage_path, usage)
         generation_path = attempt / 'generation.json'
         generation = bench.load(generation_path)
@@ -524,8 +1106,11 @@ class CorporateBenchmarkTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('node'),'Node required')
     def test_runtime_success_does_not_hide_typescript_type_error(self):
         if not self.fake_probe['tools'].get('tsc'):self.skipTest('Pinned TypeScript compiler unavailable')
-        p=self.attempt('ts-explicit-limit');core=p/'work/rules.ts'
-        core.write_text(core.read_text().replace(' || ',' ?? ')+'\nconst typeOnlyDefect: number = "wrong type";\n')
+        p=self.attempt('ts-record-framing');core=p/'work/rules.ts'
+        original = core.read_text()
+        old = next(line for line in original.splitlines() if "x.op === 'framing'" in line)
+        core.write_text(original.replace(old, "  if (x.op === 'framing') return JSON.stringify({message: x.message}) + '\\n';")
+                        + '\nconst typeOnlyDefect: number = "wrong type";\n')
         result=bench.evaluate_attempt(p)
         self.assertTrue(result['functional_passed'])
         self.assertEqual(result['type_correctness'],'FAIL')

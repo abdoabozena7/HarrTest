@@ -168,10 +168,12 @@ def validation_message(project, state):
         return ''
     rows = '\n'.join(f'- {strict_io.scoped_path(project, rel).as_posix()} (SHA-256 {digest})'
                      for rel, digest in expected.items())
-    return ('Sealed validation context: read these explicit local inputs before design or checks.\n'
-            f'{rows}\nUse the supplied full runtime/profile and acceptance constraints for your '
-            'component and integrated checks; do not substitute defaults. Coordinate exclusive '
-            'runtime ownership with the coordinator.\n')
+    message = ('Sealed validation context: read these explicit local inputs before design or checks.\n'
+               f'{rows}\nUse the supplied full runtime/profile and acceptance constraints for your '
+               'component and integrated checks; do not substitute defaults.')
+    if state['plan'].get('schema') != 2:
+        message += ' Coordinate exclusive runtime ownership with the coordinator.'
+    return message + '\n'
 
 
 def snapshot(project, paths):
@@ -369,6 +371,9 @@ def ready_packets(project, state):
 
 def repair(project, state, tid, evidence, observation):
     """Bind a failed integrated observation to an existing implementation owner."""
+    if state['plan'].get('schema') == 2 and state['plan'].get('root_protocol') == 'corporate-v1':
+        import team_v2
+        team_v2.corporate_admission(project, state)
     validation_message(project, state)
     tasks = {row['id']: row for row in state['plan']['tasks']}
     require(tid in tasks, 'Repair must return to a declared implementation owner')
@@ -757,6 +762,56 @@ def team_command(command):
     return actual
 
 
+def plan_review_command(command, project, team_id, *, cwd=None, engine=None):
+    """Match the pinned review invocation and its observed literal evidence-write prefix."""
+    if not isinstance(command, str):
+        return False
+    command = command.strip()
+    prefix = command.startswith(("@'\n", "@'\r\n"))
+    if prefix:
+        terminator = re.search(r"(?m)^'@(?=[ \t|])", command)
+        if not terminator or RECEIPT.strip() in command[:terminator.start()]:
+            return False
+        command = command[terminator.end():]
+    if any(character in command for character in '\r\n`$<>'):
+        return False
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|')
+    lexer.whitespace_split, lexer.commenters, lexer.escape = True, '', ''
+    try:
+        words = list(lexer)
+        evidence = f'{proof.STATE}/teams/{team_id}/plan-review.txt'
+        if prefix:
+            if (len(words) < 7 or [word.lower() for word in words[:4]] != ['|', 'set-content', '-encoding', 'utf8']
+                    or words[4].replace('\\', '/') != evidence or words[5] != ';'):
+                return False
+            words = words[6:]
+        if words[:1] == ['&']:
+            words = words[1:]
+        if not words:
+            return False
+        interpreter, *args = words
+        executable = Path(interpreter)
+        if not re.fullmatch(r'(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?', executable.name.lower()):
+            return False
+        if executable.is_absolute():
+            if executable.resolve() != Path(sys.executable).resolve():
+                return False
+        elif executable.name != interpreter:
+            return False
+        if args[:1] == ['-B']:
+            args = args[1:]
+        if (len(args) != 10 or args[1] != '--project' or args[3:] !=
+                ['review-plan', '--team', team_id, '--evidence', evidence, '--verdict', 'pass']):
+            return False
+        root = Path(project).resolve()
+        actual_cwd = Path(cwd).resolve() if cwd else root
+        return ((actual_cwd / args[0]).resolve() == Path(engine or __file__).resolve()
+                and (actual_cwd / args[2]).resolve() == root
+                and (not prefix or actual_cwd == root))
+    except (ValueError, OSError, RuntimeError):
+        return False
+
+
 def command_result(value):
     """Decode one bounded native exec envelope, preserving the patch parser's raw text."""
     raw = result_text(value)
@@ -786,7 +841,7 @@ def command_result(value):
         if sid is not None and (type(sid) is not int or sid <= 0):
             return None
         return {'output': row['output'], 'session_id': sid,
-                'complete': type(row.get('exit_code')) is int}
+                'complete': type(row.get('exit_code')) is int, 'exit_code': row.get('exit_code')}
     # Stdout may contain a JSON diagnostic before a literal receipt line. Do
     # not mistake that mixed text for a transport envelope, or search inside
     # arbitrary JSON values for an embedded/escaped receipt.
@@ -800,9 +855,10 @@ def command_result(value):
             if not re.search(r'^' + RECEIPT + r'[0-9a-f]{64}\s*$', candidate[end:], re.M):
                 return None
     running = re.search(r'Process running with session ID (\d+)', raw)
+    completed = re.search(r'(?m)^Process exited with code (-?\d+)\s*$', raw)
     complete = bool(re.search(r'Process exited with code -?\d+', raw))
     return {'output': raw, 'session_id': int(running[1]) if running else None,
-            'complete': complete or not running}
+            'complete': complete or not running, 'exit_code': int(completed[1]) if completed else None}
 
 
 def patch_paths(project, call, output):
@@ -858,7 +914,7 @@ def patch_paths(project, call, output):
     return paths
 
 
-def native_completed_command(project, payload):
+def native_completed_command(project, payload, *, review_team=None):
     """Read host command completion, including stdout omitted by display budgets."""
     item = payload.get('item', {})
     if (payload.get('type') != 'item_completed' or not isinstance(item, dict)
@@ -874,8 +930,7 @@ def native_completed_command(project, payload):
                 and all(isinstance(part, str) for part in command), 'Missing actual command')
         executable = command[0].replace('\\', '/').rsplit('/', 1)[-1].lower().removesuffix('.exe')
         require(executable in {'powershell', 'pwsh', 'sh', 'bash', 'zsh'}
-                and command[-2].lower() in {'-command', '-c', '-lc'}
-                and team_command(command[-1]), 'Not a literal native Team command')
+                and command[-2].lower() in {'-command', '-c', '-lc'}, 'Not a native shell command')
         uri = urlsplit(item['cwd'])
         require(uri.scheme == 'file' and uri.netloc in {'', 'localhost'}
                 and not uri.query and not uri.fragment, 'Unsupported command workspace')
@@ -884,15 +939,25 @@ def native_completed_command(project, payload):
             local = local[1:]
         cwd = Path(local).resolve()
         require(cwd == project or cwd.is_relative_to(project), 'Command used a different project')
+        if review_team is None:
+            require(team_command(command[-1]), 'Not a literal native Team command')
+        else:
+            require(item['exit_code'] == 0 and plan_review_command(command[-1], project, review_team, cwd=cwd),
+                    'Not a successful pinned plan review command')
         require(len(item['aggregated_output']) <= MAX_ROLLOUT_BYTES, 'Native stdout too large')
         return item['aggregated_output']
     except (ValueError, TypeError, KeyError, AttributeError, OSError):
         return None
 
 
-def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None):
+def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None, review_team=None):
     if events is None:
         require(path.stat().st_size <= MAX_ROLLOUT_BYTES, 'Native rollout exceeds the supported size')
+    def matches(args):
+        if review_team is None:
+            return team_command(args.get('cmd'))
+        return plan_review_command(args.get('cmd'), project, review_team, cwd=args.get('workdir') or meta['cwd'])
+
     writes, markers, calls, running_commands, running_cells = [], {}, {}, {}, {}
     finished, context = None, {}
     turn_starts = []
@@ -916,7 +981,7 @@ def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None)
             if when < since:
                 continue
             if event['type'] == 'event_msg':
-                actual = native_completed_command(project, payload)
+                actual = native_completed_command(project, payload, review_team=review_team)
                 if actual is not None:
                     for digest in re.findall(r'^' + RECEIPT + r'([0-9a-f]{64})\s*$', actual, re.M):
                         markers.setdefault(digest, when)
@@ -960,7 +1025,7 @@ def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None)
                 if yielded:
                     if waited_cell is not None and yielded[1] != waited_cell:
                         continue
-                    if operation and (operation == 'write_stdin' or team_command(args.get('cmd'))):
+                    if operation and (operation == 'write_stdin' or matches(args)):
                         running_cells[yielded[1]] = (operation, args)
                     continue
                 result = command_result(payload.get('output')) if operation else None
@@ -970,7 +1035,7 @@ def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None)
                 if operation == 'exec_command':
                     if sid is not None:
                         running_commands.pop(sid, None)
-                    if not team_command(args.get('cmd')):
+                    if not matches(args):
                         continue
                     pending = set()
                 else:
@@ -982,8 +1047,9 @@ def read_trace(project, meta, path, since, *, events=None, lifecycle_limit=None)
                     sid = requested
                 pending.update(re.findall(r'^' + RECEIPT + r'([0-9a-f]{64})\s*$', result['output'], re.M))
                 if result['complete']:
-                    for digest in pending:
-                        markers.setdefault(digest, when)
+                    if review_team is None or type(result['exit_code']) is int and result['exit_code'] == 0:
+                        for digest in pending:
+                            markers.setdefault(digest, when)
                     if sid is not None:
                         running_commands.pop(sid, None)
                 elif sid is not None:
@@ -1148,19 +1214,44 @@ def verify_registered(project, team_id, *, require_qa=True, parent=None, session
         time.sleep(min(0.2, remaining))
 
 
+def request_from_root(project, plan):
+    """Bind an unregistered Corporate plan to its existing original request."""
+    from root_gate import ROOT_DIR
+
+    require(isinstance(plan, dict) and type(plan.get('schema')) is int and plan['schema'] == 2
+            and plan.get('root_protocol') == 'corporate-v1' and plan.get('decomposition') == 'reviewed-v1',
+            '--request-from-root requires a reviewed Corporate Team schema 2 plan')
+    team_id = plan.get('id')
+    proof.identifier(team_id, 'Corporate Team and root goal ID')
+    require(not team_path(project, team_id, must_exist=False).exists(),
+            'The Team plan is already registered. Continue with its existing state.')
+    root = strict_io.scoped_path(project, f'{proof.STATE}/{ROOT_DIR}/{team_id}')
+    seal = strict_io.scoped_path(root, 'root-seal.json', must_exist=False)
+    require(not seal.exists(), 'The Corporate root is already sealed. Keep its bound Team state.')
+    original = strict_io.scoped_path(root, 'original-request.txt')
+    require(original.is_file(), 'The matching Corporate root needs an original request file')
+    request = original.read_bytes().decode('utf-8')
+    require('request' not in plan or plan['request'] == request,
+            'The Team request differs from the saved original request. Omit request when using --request-from-root.')
+    return {**plan, 'request': request}
+
+
 def main(argv=None):
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project', type=Path, default=Path('.'))
     commands = parser.add_subparsers(dest='command', required=True)
-    commands.add_parser('init').add_argument('--plan', required=True)
-    for action in ('packets', 'handoff', 'integrate', 'check', 'review', 'repair', 'verify'):
+    initialize = commands.add_parser('init')
+    initialize.add_argument('--plan', required=True)
+    initialize.add_argument('--request-from-root', action='store_true',
+                            help='Copy the saved original request into a new reviewed Corporate Team plan')
+    for action in ('packets', 'handoff', 'integrate', 'check', 'review', 'repair', 'verify', 'review-plan'):
         command = commands.add_parser(action)
         command.add_argument('--team', required=True)
         if action == 'handoff':
             command.add_argument('--task', required=True)
-        if action == 'review':
+        if action in {'review', 'review-plan'}:
             command.add_argument('--evidence', required=True)
             command.add_argument('--verdict', choices=('pass', 'fail'), required=True)
         if action == 'repair':
@@ -1178,7 +1269,10 @@ def main(argv=None):
     project = args.project.resolve()
     try:
         if args.command == 'init':
-            result = init(project, proof.load(strict_io.scoped_path(project, args.plan)))
+            plan = proof.load(strict_io.scoped_path(project, args.plan))
+            if args.request_from_root:
+                plan = request_from_root(project, plan)
+            result = init(project, plan)
         elif args.command == 'verify':
             result = verify_registered(project, args.team, require_qa=not args.production_only,
                                        parent=args.parent, sessions=args.sessions, wait_seconds=args.wait_seconds)
@@ -1204,6 +1298,10 @@ def main(argv=None):
                 result['passed'] = result['exit_code'] == 0
             elif args.command == 'repair':
                 result = repair(project, state, args.task, args.evidence, args.observation)
+            elif args.command == 'review-plan':
+                import team_v2
+                result = team_v2.review_plan(project, state, args.evidence, args.verdict)
+                result = {**result, 'passed': args.verdict == 'pass'}
             else:
                 result = review(project, state, args.evidence, args.verdict)
                 if args.verdict == 'fail':

@@ -207,6 +207,7 @@ def generation_environment(workspace, tools):
         environment['DOTNET_ROOT'] = str(Path(tools['dotnet']).parent)
         environment['DOTNET_NOLOGO'] = '1'
         environment['DOTNET_CLI_TELEMETRY_OPTOUT'] = '1'
+        environment['DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE'] = 'true'
     return environment
 
 
@@ -237,21 +238,32 @@ def replay_original_checks(workspace, evidence, meta, tools, candidate_manifest)
             'status': 'UNVERIFIED' if not baseline_passed else 'PASS' if candidate_passed else 'FAIL'}
 
 
-def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400, credits=120, corpus=CORPUS, kind='development', seed=20261114):
+def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400, credits=120, corpus=CORPUS,
+           kind='development', seed=20261114, corporate_guard_goal=None):
     destination = Path(destination).resolve()
     if destination.exists():
         raise ValueError("Use a new immutable experiment directory")
     if kind not in {'development','acceptance'}:raise ValueError('Declare development or acceptance experiment')
+    if corporate_guard_goal is not None and (not isinstance(corporate_guard_goal, str)
+            or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}', corporate_guard_goal)):
+        raise ValueError('Declare a valid goal ID for the explicitly enrolled Corporate profile')
     if type(seed) is not int:raise ValueError('Execution-order seed must be an integer')
     if len(models) != 2 or len(set(models)) != 2 or any(not m or m == "auto" for m in models):
         raise ValueError("Pin two distinct concrete model IDs; Auto is not allowed")
     if not isinstance(seconds, int) or not 60 <= seconds <= 7200 or not isinstance(credits, int) or credits < 30:
         raise ValueError("Invalid common attempt bounds")
     rows = cases(corpus)
+    guard_cases = None
+    if corporate_guard_goal and kind == 'acceptance':
+        guard_cases = sorted(case['id'] for case in rows if case['split'] == 'acceptance' and case.get('complexity'))
+        if not guard_cases:
+            raise ValueError('Guarded comparison requires predeclared substantial held cases')
     baseline, candidate = Path(baseline).resolve(), Path(candidate).resolve()
     for p, version in ((baseline, "4.1.0"), (candidate, "5.0.0")):
         if (p / "VERSION").read_text().strip() != version or not (p / "SKILL.md").is_file():
             raise ValueError("Wrong skill version: " + str(p))
+    if corporate_guard_goal and not (candidate / 'scripts/copilot_guard.py').is_file():
+        raise ValueError('The pinned candidate does not include the Corporate editor guard')
     probe = preflight(tools)
     if probe["blocked"]:
         raise ValueError("Missing live toolchain: " + ", ".join(probe["blocked"]))
@@ -273,13 +285,18 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
             "evaluator_sha256": sha(__file__), "models": models, "arms": list(ARMS), "repetitions": 2,
             "execution_seed":seed,"execution_order":balanced_execution_order(rows,models,seed),
             "execution_policy":"One generation then its independent evaluation at a time. Follow the frozen rotated arm order inside case/model/repetition blocks; no heavy tests during paired performance measurements.",
+            "native_task_pin_policy":"All arms normalize explicit native task model and reasoning-effort overrides to the frozen session pins. Actual actor model and effort remain independently checked after execution.",
             "acceptance_attempts": 96, "budget": {"seconds": seconds, "max_ai_credits": credits},
             "packages": packages, "preflight": probe,
             "limits": ["Same wall/credit caps are not equal realized generation cost.",
                        "All task product modifications must come from actual Copilot tools.",
                        "Local source provenance is cooperative, not a hostile-writer sandbox.",
-                       "Mixed complexity: two multi-component SDK/domain and CLI additions, six bounded acceptance changes. Related synthetic codebase families share existing APIs across development and acceptance; no unseen-family or enterprise-scale claim.",
+                       "Mixed complexity: two changes across independent existing components and six bounded acceptance changes. Synthetic projects exercise defined contracts and consumers at fixture scale.",
                        "Any acceptance case used to tune the harness becomes development data and requires a fresh declared comparison."]}
+    if corporate_guard_goal:
+        plan['corporate_guard_goal'] = corporate_guard_goal
+    if guard_cases is not None:
+        plan['corporate_guard_cases'] = guard_cases
     runtime_files = {}
     declared=[]
     for key in ('copilot','node','python','dotnet','tsc','msvc_env'):
@@ -337,6 +354,327 @@ def frozen(experiment):
     return experiment, plan
 
 
+BUILD_PLAN_CONTRACT = '''Public wire contract (UTF-8 JSON in, one JSON value out):
+plan: {"op":"plan","jobs":[{"id":"compile","depends_on":[]},{"id":"pack","depends_on":["compile"]}]} -> {"order":["compile","pack"],"error":null}.
+Job IDs are nonempty strings and case-sensitive. Each job includes a depends_on array of job ID strings, which may be empty. Repeated prerequisite references to the same ID impose one dependency. At each position select the earliest job in input order whose prerequisites have all been scheduled. An empty job array returns {"order":[],"error":null}.
+Reject duplicate job IDs with {"order":[],"error":"duplicate-id"}, then reject unknown prerequisite IDs with {"order":[],"error":"missing-dependency"}, then reject any cycle, including self-dependency, with {"order":[],"error":"cycle"}. Never return a partial plan on error.
+job_count: {"op":"job_count","jobs":[{"id":"compile","depends_on":[]}]} -> {"count":1}. This operation counts input records without validating dependency edges or unique IDs.
+The public library entrypoint and the existing positional JSON CLI both return the same response shape. Planning does not execute jobs.
+'''
+
+
+BUILD_PLAN_SOURCE = '''using System;
+using System.Linq;
+using System.Text.Json;
+
+public static class Rules
+{
+    public static string Evaluate(string text)
+    {
+        using var request = JsonDocument.Parse(text);
+        var root = request.RootElement;
+        var jobs = root.GetProperty("jobs");
+        if (root.GetProperty("op").GetString() == "job_count")
+            return JsonSerializer.Serialize(new { count = jobs.GetArrayLength() });
+
+        var order = jobs.EnumerateArray().Select(job => job.GetProperty("id").GetString()).ToArray();
+        return JsonSerializer.Serialize(new { order, error = (string?)null });
+    }
+}
+'''
+
+
+MONTHLY_REPORT_CONTRACT = '''Public wire contract (evaluate accepts JSON text and returns JSON text):
+month: {"op":"month","ledger":"<file-path>","month":"2025-03"} -> {"ids":["entry"],"total_cents":12} for a ledger containing [{"id":"entry","recorded_at":"2025-03-16T14:01:00Z","amount_cents":12}].
+The queried month must be a string of the form YYYY-MM with year 0001 through 9999 and month 01 through 12. Missing or malformed month values raise ValueError.
+Each recorded_at must be a valid calendar date and whole-second time in the form YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS±HH:MM. Offsets have hours 00 to 23 and minutes 00 to 59. Hours 24 and leap seconds are invalid. Missing, non-string, malformed, or timezone-less timestamps anywhere in the ledger raise ValueError. A timestamp whose UTC result is out of the supported year range also raises ValueError.
+Month membership uses UTC. For example, 2025-04-01T00:10:00+01:00 belongs to March UTC. Return matching IDs in ledger order and sum their signed integer amount_cents. An empty result returns {"ids":[],"total_cents":0}.
+entry_count: {"op":"entry_count","ledger":"<file-path>"} -> {"count":1} for the one-entry ledger above. This operation counts the records without parsing timestamps.
+Both operations are read-only. The CLI takes JSON text as its first positional argument and prints the returned JSON.
+'''
+
+
+MONTHLY_REPORT_SOURCE = '''import json
+from pathlib import Path
+
+
+def summarize(entries, month):
+    selected = [entry for entry in entries if entry['recorded_at'][:7] == month]
+    return {'ids': [entry['id'] for entry in selected],
+            'total_cents': sum(entry['amount_cents'] for entry in selected)}
+
+
+def evaluate(text):
+    request = json.loads(text)
+    entries = json.loads(Path(request['ledger']).read_text(encoding='utf-8'))
+    if request['op'] == 'entry_count':
+        return json.dumps({'count': len(entries)})
+    if request['op'] == 'month':
+        return json.dumps(summarize(entries, request['month']))
+    raise ValueError('unsupported operation')
+'''
+
+
+STOCK_CONTRACT = '''StockCsv.Parse(string csv) -> StockRow[] retains row order from headerless sku,warehouse,units CSV. Documents use LF or CRLF, may end with one newline, and can be empty. The first two fields may be quoted and contain commas or escaped double quotes written as two double quotes. Do not trim values or casing; fields contain no line breaks. Units are an unquoted nonnegative Int32.
+StockProjection.Balance(StockRow[] rows, string warehouse) -> long sums the latest row for each distinct SKU in the chosen warehouse. The last row in input order wins, including zero. SKU and warehouse comparisons are case-sensitive. An absent warehouse or empty rows returns 0. Input arrays are unchanged.
+Rules.Evaluate and the positional JSON CLI accept {"op":"balance","warehouse":"west","csv":"A,west,5"} and return {"total":5}. The Rules adapter composes the existing reader and projection. Keep both module exports and the StockRow record constructor and fields.
+'''
+
+STOCK_FILES = {
+    'StockRow.cs': 'public sealed record StockRow(string Sku, string Warehouse, int Units);\n',
+    'StockCsv.cs': r'''public static class StockCsv
+{
+    public static StockRow[] Parse(string csv) => csv.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        .Select(line => line.TrimEnd('\r').Split(','))
+        .Select(fields => new StockRow(fields[0], fields[1], int.Parse(fields[2])))
+        .ToArray();
+}
+''',
+    'StockProjection.cs': '''public static class StockProjection
+{
+    public static long Balance(StockRow[] rows, string warehouse) =>
+        rows.Where(row => row.Warehouse == warehouse).Sum(row => (long)row.Units);
+}
+''',
+    'Rules.cs': '''using System.Text.Json;
+
+public static class Rules
+{
+    public static string Evaluate(string text)
+    {
+        using var request = JsonDocument.Parse(text);
+        var root = request.RootElement;
+        var rows = StockCsv.Parse(root.GetProperty("csv").GetString()!);
+        return JsonSerializer.Serialize(new { total = StockProjection.Balance(rows, root.GetProperty("warehouse").GetString()!) });
+    }
+}
+''',
+}
+
+TRIAGE_CONTRACT = '''rankTickets(tickets: Ticket[]): Ticket[] returns a new array ranked critical, high, normal, low, and then all other severities. Compare severity after trim().toLowerCase(). Keep input order within each rank and preserve every Ticket field. Do not mutate the original array or ticket objects.
+groupTickets(tickets: Ticket[]): QueueSummary preserves input order of ticket IDs within an owner and owner groups in first occurrence order. Trim owner whitespace and compare names with toLowerCase(), preserving the first trimmed spelling for display. Null or blank owners go into unassigned in input order. Do not change input.
+QueueSummary has {owners: [{name: string, ids: string[]}], unassigned: string[]}. The existing evaluate(text: string): string SDK and positional JSON CLI accept {"op":"queue","tickets":[{"id":"one","severity":"high","owner":"Lee"}]} -> {"owners":[{"name":"Lee","ids":["one"]}],"unassigned":[]}. Composition ranks then groups. Empty input returns two empty arrays. Keep both module exports and shared type declarations.
+'''
+
+TRIAGE_FILES = {
+    'tickets.ts': '''export interface Ticket { id: string; severity: string; owner: string | null }
+export interface QueueSummary { owners: {name: string; ids: string[]}[]; unassigned: string[] }
+''',
+    'rank.ts': '''import type { Ticket } from './tickets.ts';
+
+export function rankTickets(tickets: Ticket[]): Ticket[] {
+  return tickets.sort((left, right) => left.severity.localeCompare(right.severity));
+}
+''',
+    'group.ts': '''import type { QueueSummary, Ticket } from './tickets.ts';
+
+export function groupTickets(tickets: Ticket[]): QueueSummary {
+  const owners = new Map<string, {name: string; ids: string[]}>();
+  const unassigned: string[] = [];
+  for (const ticket of tickets) {
+    if (ticket.owner === null) {
+      unassigned.push(ticket.id);
+    } else {
+      const group = owners.get(ticket.owner) ?? {name: ticket.owner, ids: []};
+      group.ids.push(ticket.id);
+      owners.set(ticket.owner, group);
+    }
+  }
+  return {owners: [...owners.values()], unassigned};
+}
+''',
+    'rules.ts': '''import { rankTickets } from './rank.ts';
+import { groupTickets } from './group.ts';
+import type { Ticket } from './tickets.ts';
+
+export function evaluate(text: string): string {
+  const request: {tickets: Ticket[]} = JSON.parse(text);
+  return JSON.stringify(groupTickets(rankTickets(request.tickets)));
+}
+''',
+}
+
+PICK_LIST_CONTRACT = '''mergePickLines(lines: PickLine[]): PickLine[] returns a fresh array. Ignore zero-unit lines. For exact equal (zone, sku, packSize) tuples, sum units and emit one record in first positive-line occurrence order. Zone and SKU are nonempty, case-sensitive strings and may contain delimiters. Do not mutate input arrays or records.
+countPackages(lines: PickLine[]): PackageLine[] returns a fresh array in the given order; it does not merge or discard lines. Each record has exactly zone, sku, packSize, packages, unusedUnits. Use the smallest nonnegative number of whole packages that cover the units. unusedUnits is the excess capacity. A zero-unit line has zero packages and zero unused units. Do not mutate input arrays or records.
+units is a nonnegative safe integer; packSize is a positive safe integer. Inputs fit the safe integer range, including merged totals and resulting package capacity. No new input validation is required.
+The existing evaluate(text: string): string SDK and positional JSON CLI use {"op":"pick","lines":[{"zone":"north","sku":"bolt","units":7,"packSize":4}]} -> {"packages":[{"zone":"north","sku":"bolt","packSize":4,"packages":2,"unusedUnits":1}]}. Composition merges first and counts packages second. An empty list returns {"packages":[]}. line_count returns {"count":N} from the original lines, including zero and duplicate lines, without processing them.
+Keep both module exports and shared types. Only merge.ts and packages.ts may change production behavior. Keep the adapters, docs and configuration unchanged. Tests may be added or extended without weakening the original checks.
+'''
+
+PICK_LIST_FILES = {
+    'pick.ts': '''export interface PickLine { zone: string; sku: string; units: number; packSize: number }
+export interface PackageLine { zone: string; sku: string; packSize: number; packages: number; unusedUnits: number }
+''',
+    'merge.ts': '''import type { PickLine } from './pick.ts';
+
+export function mergePickLines(lines: PickLine[]): PickLine[] {
+  return lines.map(line => ({...line}));
+}
+''',
+    'packages.ts': '''import type { PackageLine, PickLine } from './pick.ts';
+
+export function countPackages(lines: PickLine[]): PackageLine[] {
+  return lines.map(({zone, sku, units, packSize}) => {
+    const packages = Math.floor(units / packSize);
+    return {zone, sku, packSize, packages, unusedUnits: packages * packSize - units};
+  });
+}
+''',
+    'rules.ts': '''import { mergePickLines } from './merge.ts';
+import { countPackages } from './packages.ts';
+import type { PickLine } from './pick.ts';
+
+export function evaluate(text: string): string {
+  const request: {op: string; lines: PickLine[]} = JSON.parse(text);
+  if (request.op === 'line_count') return JSON.stringify({count: request.lines.length});
+  if (request.op === 'pick') return JSON.stringify({packages: countPackages(mergePickLines(request.lines))});
+  throw new Error('unsupported operation');
+}
+''',
+}
+
+CUE_REPORT_CONTRACT = '''The Rules.Evaluate(string text) API and positional JSON CLI accept:
+{"op":"cues","cues":[{"id":"intro","start_ms":0,"end_ms":800}]} -> {"ids":["intro"],"covered_ms":800}.
+CueOrder.Sort(IReadOnlyList<StudioCue>) returns the same records in ascending start order. Equal start times retain input order regardless of cue ID or end time. The input order and records are unchanged.
+CueCoverage.TotalMilliseconds(IReadOnlyList<StudioCue>) returns the number of covered milliseconds across the union of all half-open intervals [start_ms,end_ms). Cues may be unsorted, disjoint, touching, overlapping, repeated, entirely contained in another cue, or zero-length. Zero-length cues still appear in ids.
+Times are nonnegative signed 64-bit integer milliseconds with end_ms >= start_ms. Cue IDs are nonempty strings; duplicate IDs are allowed. An empty list gives {"ids":[],"covered_ms":0}.
+cue_count returns {"count":N} for the number of input records, without evaluating cue order or coverage.
+Preserve the shared StudioCue record and both component signatures. Only change CueOrder.cs and CueCoverage.cs for production behavior. Keep docs, adapters and project configuration unchanged. Tests may be added or extended without weakening existing checks.
+'''
+
+CUE_REPORT_FILES = {
+    'StudioCue.cs': 'public sealed record StudioCue(string Id, long StartMs, long EndMs);\n',
+    'CueOrder.cs': '''public static class CueOrder
+{
+    public static StudioCue[] Sort(IReadOnlyList<StudioCue> cues)
+        => cues.OrderBy(cue => cue.StartMs).ThenBy(cue => cue.Id, StringComparer.Ordinal).ToArray();
+}
+''',
+    'CueCoverage.cs': '''public static class CueCoverage
+{
+    public static long TotalMilliseconds(IReadOnlyList<StudioCue> cues)
+        => cues.Sum(cue => cue.EndMs - cue.StartMs);
+}
+''',
+    'Rules.cs': '''using System.Text.Json;
+
+public static class Rules
+{
+    public static string Evaluate(string text)
+    {
+        using var document = JsonDocument.Parse(text);
+        var request = document.RootElement;
+        var input = request.GetProperty("cues");
+        switch (request.GetProperty("op").GetString())
+        {
+            case "cue_count":
+                return JsonSerializer.Serialize(new { count = input.GetArrayLength() });
+            case "cues":
+                var cues = input.EnumerateArray().Select(cue => new StudioCue(
+                    cue.GetProperty("id").GetString()!,
+                    cue.GetProperty("start_ms").GetInt64(),
+                    cue.GetProperty("end_ms").GetInt64())).ToArray();
+                return JsonSerializer.Serialize(new {
+                    ids = CueOrder.Sort(cues).Select(cue => cue.Id),
+                    covered_ms = CueCoverage.TotalMilliseconds(cues)
+                });
+            default:
+                throw new ArgumentException("unsupported operation");
+        }
+    }
+}
+''',
+}
+
+TILE_WINDOW_CONTRACT = '''The evaluate(text: string): string API and positional JSON CLI accept:
+{"op":"tiles","grid":[["a","b"],["c","d"]],"x":0,"y":0,"width":1,"height":2} -> {"tiles":["a","c"]}.
+The grid is a rectangular array of string rows, possibly empty or of zero width. Coordinates are zero-based, x for columns and y for rows. Coordinates, nonnegative extents, and x+width and y+height are safe integers.
+Intersect the original half-open rectangle [x,x+width) by [y,y+height) with the grid. Return the intersected cells in row-major order, retaining duplicates and empty cell strings. A zero extent or an empty intersection returns {"tiles":[]}.
+tile_count returns {"count":N} for the total number of cells without applying a window.
+Keep the exported SDK and CLI unchanged. Production changes belong in rules.ts. Keep docs, adapters and project configuration unchanged. Tests may be added or extended without weakening existing checks.
+'''
+
+TILE_WINDOW_SOURCE = '''export function evaluate(text: string): string {
+  const { op, grid, x, y, width, height } = JSON.parse(text);
+  const rows: string[][] = grid;
+  if (op === 'tile_count') return JSON.stringify({count: rows.reduce((n, row) => n + row.length, 0)});
+  if (op !== 'tiles') throw new Error('unsupported operation');
+  const left = Math.max(0, x);
+  const top = Math.max(0, y);
+  return JSON.stringify({tiles: rows.slice(top, top + height).flatMap(row => row.slice(left, left + width))});
+}
+'''
+
+RECIPE_SCALE_CONTRACT = '''The rules.evaluate(text: str) -> str API and positional JSON CLI accept:
+{"op":"scale","from_servings":2,"to_servings":4,"ingredients":[{"label":"rice","units":4,"step":2}]} -> {"ingredients":[{"label":"rice","units":8}]}.
+The source and target serving counts and each ingredient step are positive integers; units are nonnegative integers. For each ingredient, the scaled amount is the least integer multiple of step that is at least units * to_servings / from_servings. This is exact integer-rational scaling, including for large integer values. An exact multiple is kept, and zero stays zero.
+Return a result row for each input ingredient in the same order. Preserve labels exactly, including duplicate labels. The empty ingredient list returns {"ingredients":[]}.
+ingredient_count returns {"count":N} for the number of input ingredients. It does not require either serving count or inspect ingredients.
+Keep the exported SDK and CLI unchanged. Production changes belong in rules.py. Keep docs, adapters and project configuration unchanged. Tests may be added or extended without weakening existing checks.
+'''
+
+RECIPE_SCALE_SOURCE = '''import json
+
+
+def evaluate(text: str) -> str:
+    request = json.loads(text)
+    rows = request['ingredients']
+    if request['op'] == 'ingredient_count':
+        return json.dumps({'count': len(rows)})
+    if request['op'] != 'scale':
+        raise ValueError('unsupported operation')
+    source, target = request['from_servings'], request['to_servings']
+    return json.dumps({'ingredients': [
+        {'label': row['label'], 'units': row['units'] * target // source}
+        for row in rows
+    ]})
+'''
+
+MUSEUM_ROUTE_CONTRACT = '''The rules.evaluate(text: str) -> str API and positional JSON CLI accept:
+{"op":"route","galleries":{"hall":["prints"],"prints":[]},"start":"hall","goal":"prints"} -> {"path":["hall","prints"]}.
+galleries maps gallery ID strings to ordered lists of one-way crossings to existing galleries. Crossings may repeat and may form cycles.
+The path includes both endpoints and has the fewest crossings among directed routes. For equal-length paths, compare the positions of their crossings in each gallery's neighbor list at the first differing choice. Prefer the earlier listed crossing. The order of keys in galleries has no effect.
+A known start equal to the goal returns a path containing only that gallery. Unreachable or unknown endpoints return {"path":[]}.
+gallery_count returns {"count":N} from the number of keys in galleries. It does not require endpoints or inspect the neighbor lists.
+Keep the exported SDK, CLI, and result shapes unchanged. Production changes belong in rules.py. Keep docs, adapters and project configuration unchanged. Tests may be added or extended without weakening existing checks.
+'''
+
+MUSEUM_ROUTE_SOURCE = '''import json
+
+
+def find_route(galleries, current, goal, path):
+    if current == goal:
+        return path
+    for neighbor in galleries[current]:
+        if neighbor in path:
+            continue
+        route = find_route(galleries, neighbor, goal, [*path, neighbor])
+        if route:
+            return route
+    return []
+
+
+def evaluate(text: str) -> str:
+    request = json.loads(text)
+    galleries = request['galleries']
+    if request['op'] == 'gallery_count':
+        return json.dumps({'count': len(galleries)})
+    if request['op'] != 'route':
+        raise ValueError('unsupported operation')
+    start, goal = request['start'], request['goal']
+    if start not in galleries or goal not in galleries:
+        return json.dumps({'path': []})
+    return json.dumps({'path': find_route(galleries, start, goal, [start])})
+'''
+
+COMPONENT_SOURCE_FILES = {
+    'stock-snapshot': {'StockCsv.cs', 'StockProjection.cs'},
+    'triage-queue': {'rank.ts', 'group.ts'},
+    'pick-list': {'merge.ts', 'packages.ts'},
+    'cue-report': {'CueOrder.cs', 'CueCoverage.cs'},
+}
+
+
 def fixture(case, tools=None):
     """Pre-existing defective project and ordinary public contract; no target fixes."""
     tools = tools or {}
@@ -377,6 +715,38 @@ The original CLI takes the operation string as its first argument and prints ret
 ''',
     }
     common['CONTRACT.md']=contracts[lang]
+    scenario = case.get('scenario')
+    if scenario == 'atomic':
+        common['CONTRACT.md'] += ('When present, fail_after must be a JSON boolean. A non-boolean value raises ValueError during '
+                                  'batch validation and leaves the store unchanged. False behaves like omission.\n')
+    if scenario == 'month-report':
+        common['CONTRACT.md'] = MONTHLY_REPORT_CONTRACT
+    if scenario == 'build-plan':
+        common['CONTRACT.md'] = BUILD_PLAN_CONTRACT
+    if scenario == 'stock-snapshot':
+        common['CONTRACT.md'] = STOCK_CONTRACT
+        common['ARCHITECTURE.md'] = ('StockCsv.cs reads CSV into StockRow records. StockProjection.cs consumes those records and owns stock calculations. '
+                                      'Keep the existing Rules.cs and Program.cs adapters and the shared StockRow.cs contract unchanged.\n')
+    if scenario == 'triage-queue':
+        common['CONTRACT.md'] = TRIAGE_CONTRACT
+        common['ARCHITECTURE.md'] = ('rank.ts ranks Ticket records. group.ts groups Ticket records into QueueSummary. '
+                                      'Keep the shared tickets.ts contracts and existing rules.ts and cli.ts adapters unchanged.\n')
+    if scenario == 'pick-list':
+        common['CONTRACT.md'] = PICK_LIST_CONTRACT
+        common['ARCHITECTURE.md'] = ('merge.ts owns line collection. packages.ts owns package arithmetic. '
+                                     'rules.ts composes them; cli.ts only adapts the positional CLI. '
+                                     'Keep both adapters and the shared pick.ts contracts unchanged.\n')
+    if scenario == 'cue-report':
+        common['CONTRACT.md'] = CUE_REPORT_CONTRACT
+        common['ARCHITECTURE.md'] = ('CueOrder.cs owns ordering. CueCoverage.cs owns interval coverage. '
+                                     'Rules.cs composes them and Program.cs adapts the positional CLI. '
+                                     'Keep both adapters and the shared StudioCue.cs record unchanged.\n')
+    if scenario == 'tile-window':
+        common['CONTRACT.md'] = TILE_WINDOW_CONTRACT
+    if scenario == 'recipe-scale':
+        common['CONTRACT.md'] = RECIPE_SCALE_CONTRACT
+    if scenario == 'museum-route':
+        common['CONTRACT.md'] = MUSEUM_ROUTE_CONTRACT
     if tools:
         common['RUNTIME.md']+='Pinned executable paths: '+json.dumps({key:tools[key] for key in ['python','node','dotnet','cxx'] if tools.get(key)},sort_keys=True)+'\n'
     smoke = {
@@ -385,19 +755,83 @@ The original CLI takes the operation string as its first argument and prints ret
         'csharp': f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj','--verbosity','quiet','--',json.dumps({{'op':'refund','age':2,'window':30}})]; expected=True",
         'cpp': "build=Path('.runtime-proof');build.mkdir(exist_ok=True); binary=build/('existing.exe' if os.name=='nt' else 'existing'); compiler=shutil.which('cl') if os.name=='nt' else (shutil.which('c++') or shutil.which('g++')); command=[compiler,'/nologo','/std:c++17','/EHsc','main.cpp','/Fo:'+str(build/'main.obj'),'/Fe:'+str(binary)] if os.name=='nt' else [compiler,'-std=c++17','main.cpp','-o',str(binary)];subprocess.run(command,check=True,capture_output=True);args=[str(binary.resolve()),'total 1 2 3'];expected=6",
     }[lang]
+    if scenario == 'month-report':
+        smoke = ("ledger=Path(temp)/'ledger.json'; "
+                 "ledger.write_text(json.dumps([{'id':'old','recorded_at':'2025-03-16T14:01:00Z','amount_cents':12}])); "
+                 "args=[sys.executable,'cli.py',json.dumps({'op':'month','ledger':str(ledger),'month':'2025-03'})]; "
+                 "expected={'ids':['old'],'total_cents':12}")
+    if scenario == 'build-plan':
+        ordinary_plan = {'op': 'plan', 'jobs': [{'id': 'compile', 'depends_on': []},
+                                                 {'id': 'pack', 'depends_on': ['compile']}]}
+        smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
+                 f"'--verbosity','quiet','--',json.dumps({ordinary_plan!r})]; "
+                 "expected={'order':['compile','pack'],'error':None}")
+    if scenario == 'stock-snapshot':
+        request = {'op': 'balance', 'warehouse': 'west', 'csv': 'A,west,5\nB,west,3'}
+        smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
+                 f"'--verbosity','quiet','--',json.dumps({request!r})]; expected={{'total':8}}")
+    if scenario == 'triage-queue':
+        smoke = (f"args=[{str(tools.get('node') or 'node')!r},'--experimental-strip-types','cli.ts',"
+                 "json.dumps({'op':'queue','tickets':[{'id':'old','severity':'high','owner':'Lee'}]})]; "
+                 "expected={'owners':[{'name':'Lee','ids':['old']}],'unassigned':[]}")
+    if scenario == 'pick-list':
+        smoke = (f"args=[{str(tools.get('node') or 'node')!r},'--experimental-strip-types','cli.ts',"
+                 "json.dumps({'op':'pick','lines':[{'zone':'north','sku':'bolt','units':8,'packSize':4}]})]; "
+                 "expected={'packages':[{'zone':'north','sku':'bolt','packSize':4,'packages':2,'unusedUnits':0}]}")
+    if scenario == 'cue-report':
+        request = {'op': 'cues', 'cues': [{'id': 'existing', 'start_ms': 12, 'end_ms': 37}]}
+        smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
+                 f"'--verbosity','quiet','--',json.dumps({request!r})]; "
+                 "expected={'ids':['existing'],'covered_ms':25}")
+    if scenario == 'tile-window':
+        request = {'op': 'tiles', 'grid': [['old', 'edge'], ['next', 'other']], 'x': 1, 'y': 0,
+                   'width': 1, 'height': 2}
+        smoke = (f"args=[{str(tools.get('node') or 'node')!r},'--experimental-strip-types','cli.ts',"
+                 f"json.dumps({request!r})]; expected={{'tiles':['edge','other']}}")
+    if scenario == 'recipe-scale':
+        request = {'op': 'scale', 'from_servings': 2, 'to_servings': 6,
+                   'ingredients': [{'label': 'flour', 'units': 4, 'step': 2}]}
+        smoke = f"args=[sys.executable,'cli.py',json.dumps({request!r})]; expected={{'ingredients':[{{'label':'flour','units':12}}]}}"
+    if scenario == 'museum-route':
+        request = {'op': 'route', 'galleries': {'lobby': ['ink'], 'ink': []}, 'start': 'lobby', 'goal': 'ink'}
+        smoke = f"args=[sys.executable,'cli.py',json.dumps({request!r})]; expected={{'path':['lobby','ink']}}"
     common['check_existing.py']='import json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nscratch = Path(".runtime-proof/scratch")\nscratch.mkdir(parents=True, exist_ok=True)\nwith tempfile.TemporaryDirectory(dir=scratch) as temp:\n    '+smoke+'\n    result=subprocess.run(args,capture_output=True,text=True,check=True);lines=result.stdout.strip().splitlines();actual=json.loads(lines[-1]);assert actual==expected,(actual,expected);print("Existing public behavior checked")\n'
     if case.get('scenario')=='lookup':
         common['PERFORMANCE.md']='For lookup30000 sorted keys and20000 queries, preserve exact results and reduce median command wall time to at most70% of the unchanged baseline on the same machine/compiler/options. Use one warmup and five measurements per version; retain raw values and noise.\n'
     if lang == "python":
+        if scenario == 'month-report':
+            return {**common, 'rules.py': MONTHLY_REPORT_SOURCE,
+                    'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
+        if scenario == 'recipe-scale':
+            return {**common, 'rules.py': RECIPE_SCALE_SOURCE,
+                    'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
+        if scenario == 'museum-route':
+            return {**common, 'rules.py': MUSEUM_ROUTE_SOURCE,
+                    'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
         core = '''import json\nfrom pathlib import Path\n\ndef evaluate(text):\n    x = json.loads(text)\n    if x['op'] == 'redact':\n        return json.dumps(x['data'], sort_keys=True)\n    p = Path(x['store'])\n    state = json.loads(p.read_text()) if p.exists() else {'balance': 0, 'seen': []}\n    for event in x['events']:\n        state['balance'] += event['amount']\n        if event['amount'] < 0:\n            raise ValueError('negative amount')\n        state['seen'].append(event['id'])\n        p.write_text(json.dumps(state, sort_keys=True))\n        if event.get('fail_after'):\n            raise RuntimeError('injected interruption')\n    return json.dumps(state, sort_keys=True)\n'''
         return {**common, "rules.py": core, "cli.py": "from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n"}
     if lang == "typescript":
         core = '''import path from 'node:path';\nexport function evaluate(text: string): string {\n  const x = JSON.parse(text);\n  if (x.op === 'limit') return JSON.stringify({limit: x.limit || 10});\n  if (x.op === 'config') return JSON.stringify({enabled: x.enabled || true, limit: x.limit || 10, label: x.label || 'default'});\n  if (x.op === 'path') {\n    const p = path.resolve(x.root, x.name);\n    if (!p.startsWith(path.resolve(x.root))) throw new Error('outside root');\n    return p;\n  }\n  if (x.op === 'framing') return '{"message":"' + x.message + '"}\\n';\n  throw new Error('unsupported operation');\n}\n'''
-        return {**common, "rules.ts": core, "cli.ts": "import { evaluate } from './rules.ts';\nconsole.log(evaluate(process.argv[2]));\n", "package.json": '{"type":"module","private":true}\n'}
+        project = {**common, "rules.ts": core, "cli.ts": "import { evaluate } from './rules.ts';\nconsole.log(evaluate(process.argv[2]));\n",
+                   "package.json": '{"type":"module","private":true}\n'}
+        if scenario == 'triage-queue':
+            project.update(TRIAGE_FILES)
+        if scenario == 'pick-list':
+            project.update(PICK_LIST_FILES)
+        if scenario == 'tile-window':
+            project['rules.ts'] = TILE_WINDOW_SOURCE
+        return project
     if lang == "csharp":
         core = '''using System;\nusing System.Text.Json;\npublic static class Rules {\n public static string Evaluate(string text) {\n  using var d = JsonDocument.Parse(text); var x = d.RootElement; string op=x.GetProperty("op").GetString()!;\n  if(op=="refund") return (x.GetProperty("age").GetInt32()<x.GetProperty("window").GetInt32()).ToString().ToLowerInvariant();\n  if(op=="tenant") { foreach(var a in x.GetProperty("accounts").EnumerateArray()) if(a.GetProperty("id").GetString()==x.GetProperty("id").GetString()) return a.GetProperty("balance").GetRawText(); return "null"; }\n  long left=x.GetProperty("left").GetInt64(), amount=x.GetProperty("amount").GetInt64();\n  if(op=="credit") return JsonSerializer.Serialize(new {balance=left+amount,accepted=true});\n  long right=x.GetProperty("right").GetInt64(); left-=amount;\n  if(left<0) return JsonSerializer.Serialize(new {left,right,accepted=false});\n  return JsonSerializer.Serialize(new {left,right=right+amount,accepted=true});\n }\n}\n'''
         project = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>\n'
-        return {**common, "Rules.cs": core, "Program.cs": "Console.WriteLine(Rules.Evaluate(args[0]));\n", "Existing.csproj": project}
+        if scenario == 'build-plan':
+            core = BUILD_PLAN_SOURCE
+        files = {**common, "Rules.cs": core, "Program.cs": "Console.WriteLine(Rules.Evaluate(args[0]));\n", "Existing.csproj": project}
+        if scenario == 'stock-snapshot':
+            files.update(STOCK_FILES)
+        if scenario == 'cue-report':
+            files.update(CUE_REPORT_FILES)
+        return files
     core = r'''#pragma once
 #include <algorithm>
 #include <cstdint>
@@ -422,6 +856,23 @@ def pin_settings(workspace, arm, model):
     # hooks and managed policy are never modified or copied.
     save(workspace / ".github/copilot/settings.local.json", {
         "disabledSkills": ["harrtest"] if arm == "plain" else [], "model": model})
+
+
+def prepare_corporate_guard(workspace, python, goal, session_id):
+    script = workspace / '.github/skills/harrtest/scripts/copilot_guard.py'
+    result = command([python, '-B', script, 'config', '--project', workspace, '--goal', goal,
+                      '--session', session_id], workspace, 20)
+    if result['exit_code'] != 0:
+        raise ValueError('Could not configure the frozen Corporate editor guard')
+    save(workspace / '.github/hooks/harrtest-corporate-guard.json', json.loads(result['stdout']), exclusive=True)
+
+
+def attempt_guard_goal(plan, attempt):
+    goal = plan.get('corporate_guard_goal')
+    if goal and attempt['arm'] == 'v5' and (
+            plan['kind'] == 'development' or attempt['case']['id'] in plan['corporate_guard_cases']):
+        return goal
+    return None
 
 
 def configuration_inputs(workspace):
@@ -536,6 +987,8 @@ def prepare(experiment, case_id, arm, model, repetition):
     experiment, plan = frozen(experiment)
     if arm not in ARMS or model not in plan["models"] or repetition not in (1, 2):
         raise ValueError("Attempt is outside the declared matrix")
+    if plan.get('corporate_guard_goal') and plan['kind'] == 'development' and arm != 'v5':
+        raise ValueError('The guarded development profile requires the V5 package')
     case = next((r for r in plan["cases"] if r["id"] == case_id), None)
     if not case:
         raise ValueError("Unknown case")
@@ -602,19 +1055,147 @@ def toolchain(plan):
     return plan["preflight"]["tools"]
 
 
-def build_program(workspace, output, lang, tools):
+PYTHON_EXCEPTION_EXITS = {'VALUE_ERROR': 65, 'RUNTIME_ERROR': 66}
+
+
+STOCK_CONSUMER = '''using System.Text.Json;
+
+try
+{
+    using var request = JsonDocument.Parse(args[0]);
+    var input = request.RootElement;
+    Func<string, StockRow[]> parse = StockCsv.Parse;
+    Func<StockRow[], string, long> balance = StockProjection.Balance;
+    switch (input.GetProperty("op").GetString())
+    {
+        case "external-parse":
+            Console.WriteLine(JsonSerializer.Serialize(parse(input.GetProperty("csv").GetString()!)));
+            break;
+        case "external-balance":
+            var rows = JsonSerializer.Deserialize<StockRow[]>(input.GetProperty("rows").GetRawText())!;
+            var original = JsonSerializer.Serialize(rows);
+            var total = balance(rows, input.GetProperty("warehouse").GetString()!);
+            Console.WriteLine(JsonSerializer.Serialize(new { total, unchanged = original == JsonSerializer.Serialize(rows) }));
+            break;
+        default:
+            Console.WriteLine(Rules.Evaluate(args[0]));
+            break;
+    }
+}
+catch { Console.WriteLine("ERROR"); }
+'''
+
+
+CUE_REPORT_CONSUMER = '''using System.Text.Json;
+
+try
+{
+    using var document = JsonDocument.Parse(args[0]);
+    var request = document.RootElement;
+    var op = request.GetProperty("op").GetString();
+    if (op != "external-cue-order" && op != "external-cue-coverage")
+    {
+        Console.WriteLine(Rules.Evaluate(args[0]));
+        return;
+    }
+
+    var cues = request.GetProperty("cues").EnumerateArray().Select(cue => new StudioCue(
+        cue.GetProperty("id").GetString()!,
+        cue.GetProperty("start_ms").GetInt64(),
+        cue.GetProperty("end_ms").GetInt64())).ToArray();
+    var original = cues.ToArray();
+    if (op == "external-cue-order")
+    {
+        StudioCue[] ordered = CueOrder.Sort(cues);
+        Console.WriteLine(JsonSerializer.Serialize(new { ordered, unchanged = cues.SequenceEqual(original) }));
+    }
+    else
+    {
+        long covered_ms = CueCoverage.TotalMilliseconds(cues);
+        Console.WriteLine(JsonSerializer.Serialize(new { covered_ms, unchanged = cues.SequenceEqual(original) }));
+    }
+}
+catch { Console.WriteLine("ERROR"); }
+'''
+
+
+def typescript_imports(workspace, output, modules):
+    imports = []
+    for names, module in modules:
+        relative = os.path.relpath(workspace/f'{module}.ts', output).replace(os.sep, '/')
+        imports.append(f'import {{ {names} }} from {json.dumps(relative)};')
+    return '\n'.join(imports)
+
+
+def triage_consumer(workspace, output):
+    imports = typescript_imports(workspace, output, [('evaluate', 'rules'), ('rankTickets', 'rank'),
+        ('groupTickets', 'group'), ('type Ticket, type QueueSummary', 'tickets')])
+    return imports + '''
+const rank: (tickets: Ticket[]) => Ticket[] = rankTickets;
+const group: (tickets: Ticket[]) => QueueSummary = groupTickets;
+try {
+  const text = process.argv[2];
+  const input: {op: string; tickets: Ticket[]} = JSON.parse(text);
+  const original = JSON.stringify(input.tickets);
+  if (input.op === 'external-rank') {
+    const ranked = rank(input.tickets);
+    console.log(JSON.stringify({ranked, fresh: ranked !== input.tickets,
+                                unchanged: original === JSON.stringify(input.tickets)}));
+  } else if (input.op === 'external-group') {
+    const summary = group(input.tickets);
+    console.log(JSON.stringify({summary, unchanged: original === JSON.stringify(input.tickets)}));
+  } else {
+    console.log(evaluate(text));
+  }
+} catch { console.log('ERROR'); }
+'''
+
+
+def pick_list_consumer(workspace, output):
+    imports = typescript_imports(workspace, output, [('evaluate', 'rules'), ('mergePickLines', 'merge'),
+        ('countPackages', 'packages'), ('type PickLine, type PackageLine', 'pick')])
+    return imports + '''
+const merge: (lines: PickLine[]) => PickLine[] = mergePickLines;
+const count: (lines: PickLine[]) => PackageLine[] = countPackages;
+const text = process.argv[2];
+const {op, lines}: {op: string; lines: PickLine[]} = JSON.parse(text);
+if (op === 'external-merge' || op === 'external-packages') {
+  const original = JSON.stringify(lines);
+  const rows = op === 'external-merge' ? merge(lines) : count(lines);
+  console.log(JSON.stringify({rows, fresh: !Object.is(rows, lines), unchanged: original === JSON.stringify(lines)}));
+} else {
+  console.log(evaluate(text));
+}
+'''
+
+
+def build_program(workspace, output, lang, tools, *, scenario=None):
     output.mkdir(parents=True, exist_ok=False)
     if lang == "python":
         driver = output / "driver.py"
-        driver.write_text("import sys\nsys.path.insert(0, " + repr(str(workspace)) + ")\nfrom rules import evaluate\ntry: print(evaluate(sys.argv[1]))\nexcept Exception: print('ERROR')\n", encoding="utf-8")
+        error_handlers = "except Exception: print('ERROR')\n"
+        if scenario in {'atomic', 'month-report'}:
+            error_handlers = (
+                f"except ValueError: print('VALUE_ERROR'); sys.exit({PYTHON_EXCEPTION_EXITS['VALUE_ERROR']})\n"
+                f"except RuntimeError: print('RUNTIME_ERROR'); sys.exit({PYTHON_EXCEPTION_EXITS['RUNTIME_ERROR']})\n"
+                + error_handlers
+            )
+        driver.write_text("import sys\nsys.path.insert(0, " + repr(str(workspace)) + ")\nfrom rules import evaluate\ntry: print(evaluate(sys.argv[1]))\n" + error_handlers, encoding="utf-8")
         return [tools["python"], str(driver)], []
     if lang == "typescript":
-        driver = output / "driver.mjs"
-        driver.write_text("import {evaluate} from " + json.dumps((workspace / "rules.ts").as_uri()) + ";\ntry {console.log(evaluate(process.argv[2]));} catch {console.log('ERROR');}\n", encoding="utf-8")
+        consumer = {'triage-queue': triage_consumer, 'pick-list': pick_list_consumer}.get(scenario)
+        if consumer:
+            driver = output / 'driver.mts'
+            driver.write_text(consumer(workspace, output), encoding='utf-8')
+        else:
+            driver = output / 'driver.mjs'
+            driver.write_text("import {evaluate} from " + json.dumps((workspace / "rules.ts").as_uri()) + ";\ntry {console.log(evaluate(process.argv[2]));} catch {console.log('ERROR');}\n", encoding="utf-8")
         typing={'role':'typecheck','exit_code':None,'stdout':'','stderr':'Pinned TypeScript compiler and Node declaration files unavailable','timed_out':False,'status':'UNVERIFIED'}
         if tools.get('tsc') and tools.get('node_types'):
             compiler=[tools['node'],tools['tsc']] if str(tools['tsc']).endswith('.js') else [tools['tsc']]
             sources=[str(p) for p in workspace.rglob('*.ts') if not any(part in SKIP for part in p.relative_to(workspace).parts)]
+            if consumer:
+                sources.append(str(driver))
             typing=command([*compiler,'--noEmit','--strict','--skipLibCheck','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','--allowImportingTsExtensions','--typeRoots',tools['node_types'],*sources],workspace,90)
             typing['role']='typecheck';typing['status']='PASS' if typing['exit_code']==0 else 'FAIL'
         return [tools["node"], "--experimental-strip-types", str(driver)], [typing]
@@ -622,7 +1203,9 @@ def build_program(workspace, output, lang, tools):
         for src in workspace.rglob('*.cs'):
             if src.name=='Program.cs' or any(part in SKIP for part in src.relative_to(workspace).parts):continue
             target=output/src.relative_to(workspace);target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(src,target)
-        (output / "Program.cs").write_text('try {Console.WriteLine(Rules.Evaluate(args[0]));} catch {Console.WriteLine("ERROR");}\n', encoding="utf-8")
+        driver = {'stock-snapshot': STOCK_CONSUMER, 'cue-report': CUE_REPORT_CONSUMER}.get(
+            scenario, 'try {Console.WriteLine(Rules.Evaluate(args[0]));} catch {Console.WriteLine("ERROR");}\n')
+        (output / "Program.cs").write_text(driver, encoding="utf-8")
         (output / "Evaluator.csproj").write_text(fixture({"language": "csharp"})["Existing.csproj"], encoding="utf-8")
         built = command([tools["dotnet"], "build", "--nologo", "-v:q", "-o", str(output / "app")], output, 150)
         return [tools["dotnet"], str(output / "app/Evaluator.dll")], [built]
@@ -644,18 +1227,261 @@ def build_program(workspace, output, lang, tools):
 
 def build_public_cli(workspace, output, lang, tools):
     """Exercise the real adapter in addition to the independently compiled API consumer."""
+    if lang=='python':return [tools['python'],'-B',str(workspace/'cli.py')],[]
     if lang=='typescript':return [tools['node'],'--experimental-strip-types',str(workspace/'cli.ts')],[]
     output.mkdir(parents=True)
-    for src in workspace.glob('*.cs'):shutil.copy2(src,output/src.name)
+    for src in workspace.rglob('*.cs'):
+        relative = src.relative_to(workspace)
+        if any(part in SKIP for part in relative.parts):
+            continue
+        target = output / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)
     shutil.copy2(workspace/'Existing.csproj',output/'Existing.csproj')
     built=command([tools['dotnet'],'build','--nologo','-v:q','-o',str(output/'app')],output,150)
     return [tools['dotnet'],str(output/'app/Existing.dll')],[built]
+
+
+def build_plan_vectors():
+    def request(op, jobs):
+        return json.dumps({'op': op, 'jobs': [
+            {'id': job, 'depends_on': dependencies} for job, dependencies in jobs]})
+
+    def plan(jobs, order=(), error=None):
+        return request('plan', jobs), {'order': list(order), 'error': error}
+
+    ordinary = [
+        plan([('compile', []), ('pack', ['compile'])], ['compile', 'pack']),
+        plan([]),
+        (request('job_count', [('repeat', ['missing']), ('repeat', [])]), {'count': 2}),
+    ]
+    target = [
+        plan([('publish', ['archive']), ('package', ['compile']), ('docs', []), ('compile', []),
+              ('test', ['compile']), ('archive', ['package', 'test']), ('audit', [])],
+             ['docs', 'compile', 'package', 'test', 'archive', 'publish', 'audit']),
+        plan([('clean', ['Build', 'Build']), ('build', []), ('Build', []), ('sign', [])],
+             ['build', 'Build', 'clean', 'sign']),
+        plan([('first', []), ('duplicate', []), ('duplicate', [])], error='duplicate-id'),
+        plan([('duplicate', ['missing']), ('duplicate', [])], error='duplicate-id'),
+        plan([('first', []), ('needs-build', ['Build']), ('build', [])], error='missing-dependency'),
+        plan([('cycle', ['cycle']), ('invalid', ['missing'])], error='missing-dependency'),
+        plan([('first', []), ('cycle-a', ['cycle-b']), ('cycle-b', ['cycle-a'])], error='cycle'),
+        plan([('first', []), ('self', ['self'])], error='cycle'),
+    ]
+    return ordinary, target
+
+
+def stock_component_vectors():
+    quoted = '"A,1","South ""West""",5\r\n"A,1","South ""West""",0\r\nB,"South ""West""",8\r\n'
+    ledger = [{'Sku': sku, 'Warehouse': warehouse, 'Units': units} for sku, warehouse, units in [
+        ('A', 'west', 9), ('A', 'east', 11), ('B', 'west', 2147483647),
+        ('A', 'west', 0), ('a', 'west', 7), ('C', 'west', 2), ('B', 'West', 1),
+    ]]
+    return [
+        ('preservation-stock-parse-empty', {'op': 'external-parse', 'csv': ''}, []),
+        ('preservation-stock-absent-warehouse', {'op': 'external-balance', 'rows': ledger, 'warehouse': 'none'},
+         {'total': 0, 'unchanged': True}),
+        ('stock-csv-quoted-fields', {'op': 'external-parse', 'csv': quoted}, [
+            {'Sku': 'A,1', 'Warehouse': 'South "West"', 'Units': 5},
+            {'Sku': 'A,1', 'Warehouse': 'South "West"', 'Units': 0},
+            {'Sku': 'B', 'Warehouse': 'South "West"', 'Units': 8},
+        ]),
+        ('stock-csv-retains-field-values', {'op': 'external-parse', 'csv': '" SKU ",East,2\n"q""r",East,7'}, [
+            {'Sku': ' SKU ', 'Warehouse': 'East', 'Units': 2}, {'Sku': 'q"r', 'Warehouse': 'East', 'Units': 7},
+        ]),
+        ('stock-projection-latest-case-sensitive-wide-total', {'op': 'external-balance', 'rows': ledger, 'warehouse': 'west'},
+         {'total': 2147483656, 'unchanged': True}),
+        ('stock-composed-report', {'op': 'balance', 'warehouse': 'South "West"', 'csv': quoted}, {'total': 8}),
+    ]
+
+
+def triage_component_vectors():
+    def tickets(names):
+        return [{'id': ticket, 'severity': severity, 'owner': owner} for ticket, severity, owner in names]
+
+    rank = tickets([('low', 'low', 'Lee'), ('unknown1', 'none', None), ('high1', ' HIGH ', 'Jo'),
+                    ('critical', 'Critical', 'Lee'), ('high2', 'high', 'Jo'), ('normal', ' normal ', None),
+                    ('unknown2', '', None)])
+    group = tickets([('first', 'low', ' Dan '), ('second', 'high', 'dan'), ('third', 'normal', ' DANA'),
+                     ('blank', 'low', ''), ('null', 'low', None), ('space', 'low', '\t'),
+                     ('last', 'low', 'DaNa  '), ('safe-key', 'low', '__proto__')])
+    composed = tickets([('low', 'low', ' Lee '), ('middle', 'high', 'Jo'), ('blank', 'low', ' '),
+                        ('urgent', ' CRITICAL ', 'lee'), ('unassigned', 'HIGH', None), ('standard', 'normal', 'Lee')])
+    return [
+        ('preservation-triage-empty', {'op': 'queue', 'tickets': []}, {'owners': [], 'unassigned': []}),
+        ('triage-rank-stable-and-nonmutating', {'op': 'external-rank', 'tickets': rank},
+         {'ranked': [rank[i] for i in [3, 2, 4, 5, 0, 1, 6]], 'fresh': True, 'unchanged': True}),
+        ('triage-rank-empty-new-array', {'op': 'external-rank', 'tickets': []},
+         {'ranked': [], 'fresh': True, 'unchanged': True}),
+        ('triage-group-owner-normalization', {'op': 'external-group', 'tickets': group},
+         {'summary': {'owners': [{'name': 'Dan', 'ids': ['first', 'second']},
+                                  {'name': 'DANA', 'ids': ['third', 'last']}, {'name': '__proto__', 'ids': ['safe-key']}],
+                      'unassigned': ['blank', 'null', 'space']}, 'unchanged': True}),
+        ('triage-composed-report', {'op': 'queue', 'tickets': composed},
+         {'owners': [{'name': 'lee', 'ids': ['urgent', 'standard', 'low']}, {'name': 'Jo', 'ids': ['middle']}],
+          'unassigned': ['unassigned', 'blank']}),
+    ]
+
+
+def pick_list_component_vectors():
+    def line(zone, sku, units, size):
+        return {'zone': zone, 'sku': sku, 'units': units, 'packSize': size}
+
+    def package(row, count, unused):
+        return {'zone': row['zone'], 'sku': row['sku'], 'packSize': row['packSize'],
+                'packages': count, 'unusedUnits': unused}
+
+    exact = line('A', 'B|C', 4, 4)
+    partial = line('A|B', 'C', 3, 4)
+    large = line('A|B', 'C', 7, 8)
+    zero = line('A|B', 'C', 0, 4)
+    distinct_case = line('a', 'B|C', 1, 4)
+    lines = [zero, exact, partial, line('A|B', 'C', 2, 4), large, distinct_case]
+    merged = line('A|B', 'C', 5, 4)
+    picked = [package(exact, 1, 0), package(merged, 2, 3), package(large, 1, 1), package(distinct_case, 1, 3)]
+    return [
+        ('preservation-pick-empty', {'op': 'pick', 'lines': []}, {'packages': []}),
+        ('preservation-line-count', {'op': 'line_count', 'lines': lines}, {'count': 6}),
+        ('pick-merge-exact-keys-and-order', {'op': 'external-merge', 'lines': lines},
+         {'rows': [exact, merged, large, distinct_case], 'fresh': True, 'unchanged': True}),
+        ('pick-packages-round-up-with-unused-units', {'op': 'external-packages', 'lines': [exact, merged, zero, large]},
+         {'rows': [package(exact, 1, 0), package(merged, 2, 3), package(zero, 0, 0), package(large, 1, 1)],
+          'fresh': True, 'unchanged': True}),
+        ('pick-composed-report', {'op': 'pick', 'lines': lines}, {'packages': picked}),
+    ]
+
+
+def cue_component_vectors():
+    def request(op, rows):
+        return {'op': op, 'cues': [
+            {'id': identifier, 'start_ms': start, 'end_ms': end}
+            for identifier, start, end in rows
+        ]}
+
+    def ordered(rows):
+        return {'ordered': [
+            {'Id': identifier, 'StartMs': start, 'EndMs': end}
+            for identifier, start, end in rows
+        ], 'unchanged': True}
+
+    def covered(total):
+        return {'covered_ms': total, 'unchanged': True}
+
+    tied = [('later', 30, 35), ('zulu', 5, 14), ('alpha', 5, 15),
+            ('zulu', 5, 7), ('zero', 0, 0)]
+    intervals = [('island', 40, 50), ('inner', 2, 5), ('whole', 0, 12),
+                 ('touch', 12, 20), ('bridge', 18, 28), ('repeat', 0, 12),
+                 ('zero', 97, 97)]
+    large = [('second', 6_000_000_000, 9_000_000_000), ('first', 0, 4_000_000_000),
+             ('nested', 1_000_000_000, 2_000_000_000)]
+    composed = [('tail', 21, 24), ('zulu', 3, 9), ('alpha', 3, 14), ('middle', 12, 21)]
+    return [
+        ('preservation-cue-report-empty', request('cues', []), {'ids': [], 'covered_ms': 0}),
+        ('preservation-cue-count', request('cue_count', tied), {'count': 5}),
+        ('preservation-cue-order-distinct', request('external-cue-order', [('next', 48, 61), ('first', 2, 9)]),
+         ordered([('first', 2, 9), ('next', 48, 61)])),
+        ('preservation-cue-coverage-disjoint', request('external-cue-coverage', [('b', 7, 9), ('a', 0, 3)]),
+         covered(5)),
+        ('cue-order-stable', request('external-cue-order', tied), ordered([tied[i] for i in [4, 1, 2, 3, 0]])),
+        ('cue-coverage-union', request('external-cue-coverage', intervals), covered(38)),
+        ('cue-coverage-wide', request('external-cue-coverage', large), covered(7_000_000_000)),
+        ('cue-composed-report', request('cues', composed), {'ids': ['zulu', 'alpha', 'middle', 'tail'], 'covered_ms': 21}),
+    ]
+
+
+def tile_window_vectors():
+    grid = [['a', 'b', 'c', 'd'], ['e', '', 'g', 'h'], ['i', 'j', 'g', 'l']]
+
+    def view(x, y, width, height, tiles, *, rows=grid):
+        return json.dumps({'op': 'tiles', 'grid': rows, 'x': x, 'y': y, 'width': width, 'height': height}), {'tiles': tiles}
+
+    ordinary = [
+        view(1, 0, 2, 2, ['b', 'c', '', 'g']),
+        view(0, 0, 1, 1, [], rows=[]),
+        (json.dumps({'op': 'tile_count', 'grid': grid}), {'count': 12}),
+    ]
+    target = [
+        view(-2, -1, 3, 3, ['a', 'e']),
+        view(2, 1, 7, 8, ['g', 'h', 'g', 'l']),
+        view(-6, 1, 4, 1, []),
+        view(0, -4, 2, 4, []),
+        view(4, 0, 2, 2, []),
+        view(1, 3, 2, 2, []),
+        view(-2, -2, 9, 0, []),
+        view(3, 1, 0, 3, []),
+        view(-1, -1, 3, 4, [], rows=[[], []]),
+    ]
+    return ordinary, target
+
+
+def recipe_scale_vectors():
+    def scaled(source, target, rows, amounts):
+        request = {'op': 'scale', 'from_servings': source, 'to_servings': target,
+                   'ingredients': [{'label': label, 'units': units, 'step': step} for label, units, step in rows]}
+        expected = {'ingredients': [{'label': label, 'units': amount}
+                                    for (label, _, _), amount in zip(rows, amounts, strict=True)]}
+        return json.dumps(request), expected
+
+    ordinary = [
+        scaled(2, 6, [('flour', 4, 2)], [12]),
+        scaled(3, 2, [], []),
+        (json.dumps({'op': 'ingredient_count', 'ingredients': [{}, {}]}), {'count': 2}),
+    ]
+    target = [
+        scaled(6, 7, [('tea', 4, 3), ('น้ำ', 12, 7), ('tea', 0, 4), (' sugar ', 9, 4), ('salt', 1, 5)],
+               [6, 14, 0, 12, 5]),
+        scaled(5, 2, [('exact', 30, 4), ('near', 31, 4), ('whole', 50, 7)], [12, 16, 21]),
+        scaled(2, 1, [('wide', 18_014_398_509_481_985, 1)], [9_007_199_254_740_993]),
+        scaled(7, 7, [('multiple', 14, 7), ('adjusted', 15, 7)], [14, 21]),
+    ]
+    return ordinary, target
+
+
+def museum_route_vectors():
+    def route(galleries, start, goal, path):
+        return json.dumps({'op': 'route', 'galleries': galleries, 'start': start, 'goal': goal}), {'path': path}
+
+    simple = {'lobby': ['ink'], 'ink': []}
+    scenic = {'prints': [], 'ramp': ['prints'], 'courtyard': ['ramp'], 'stairs': ['prints'],
+              'entrance': ['courtyard', 'stairs']}
+    ordered = {'exit': [], 'ceramics': ['exit'], 'albums': ['exit'],
+               'bronze': ['ceramics', 'albums'], 'amber': ['albums'], 'entry': ['bronze', 'amber']}
+    cycles = {'entry': ['loop', 'loop', 'bridge'], 'loop': ['entry', 'quiet'],
+              'quiet': ['loop'], 'bridge': ['entry', 'exit'], 'exit': [], 'island': ['island']}
+    converging = {'entry': ['long', 'short'], 'long': ['bend'], 'bend': ['joint'],
+                  'short': ['joint'], 'joint': ['exit'], 'exit': []}
+    ordinary = [
+        route(simple, 'lobby', 'ink', ['lobby', 'ink']),
+        route(simple, 'ink', 'lobby', []),
+        (json.dumps({'op': 'gallery_count', 'galleries': {'entry': None, 'exit': []}}), {'count': 2}),
+    ]
+    target = [
+        route(scenic, 'entrance', 'prints', ['entrance', 'stairs', 'prints']),
+        route(ordered, 'entry', 'exit', ['entry', 'bronze', 'ceramics', 'exit']),
+        route(converging, 'entry', 'exit', ['entry', 'short', 'joint', 'exit']),
+        route(cycles, 'entry', 'exit', ['entry', 'bridge', 'exit']),
+        route(cycles, 'entry', 'island', []),
+        route(cycles, 'loop', 'loop', ['loop']),
+        route(simple, 'unknown', 'unknown', []),
+        route(simple, 'lobby', 'unknown', []),
+        route({}, 'lobby', 'ink', []),
+    ]
+    return ordinary, target
+
+
+SDK_AND_CLI_VECTORS = {
+    'tile-window': tile_window_vectors,
+    'recipe-scale': recipe_scale_vectors,
+    'museum-route': museum_route_vectors,
+}
 
 
 def test_vectors(case, sandbox):
     scenario = case["scenario"]
     def j(x): return json.dumps(x, separators=(",", ":"))
     if case["language"] == "csharp":
+        if scenario == 'build-plan':
+            return build_plan_vectors()
         ordinary = [(j({"op":"refund","age":2,"window":30}), "true"), (j({"op":"refund","age":31,"window":30}), "false")]
         if scenario == "refund": return ordinary, [(j({"op":"refund","age":30,"window":30}), "true"), (j({"op":"refund","age":0,"window":0}), "true")]
         if scenario == "tenant":
@@ -714,6 +1540,93 @@ def nonsensitive_structure(value):
     return value
 
 
+def state_file_unchanged(check, path, original_sha256):
+    check['input_file_sha256_before'] = original_sha256
+    check['input_file_sha256_after'] = sha(path) if path.is_file() else None
+    check['passed'] = check['passed'] and check['input_file_sha256_after'] == original_sha256
+
+
+def check_monthly_report(exercise, evidence):
+    initial = [
+        {'id': 'first', 'recorded_at': '2025-03-08T12:00:00Z', 'amount_cents': 300},
+        {'id': 'east', 'recorded_at': '2025-04-01T00:10:00+01:00', 'amount_cents': -40},
+        {'id': 'west', 'recorded_at': '2025-03-31T23:45:00-02:00', 'amount_cents': 999},
+        {'id': 'previous', 'recorded_at': '2025-02-28T22:00:00-03:30', 'amount_cents': 60},
+    ]
+
+    def report(label, entries, query, expected):
+        ledger = evidence / f'{label}.json'
+        ledger.write_text(json.dumps(entries), encoding='utf-8')
+        before = sha(ledger)
+        check = exercise(label, json.dumps({'ledger': str(ledger), **query}), expected)
+        state_file_unchanged(check, ledger, before)
+
+    report('preservation-entry-count', initial, {'op': 'entry_count'}, {'count': 4})
+    report('preservation-empty-report', [], {'op': 'month', 'month': '2025-03'}, {'ids': [], 'total_cents': 0})
+    report('utc-march-in-ledger-order', initial, {'op': 'month', 'month': '2025-03'},
+           {'ids': ['first', 'east', 'previous'], 'total_cents': 320})
+    report('utc-april-offset', initial, {'op': 'month', 'month': '2025-04'}, {'ids': ['west'], 'total_cents': 999})
+    report('accept-valid-leap-day', [{'id': 'leap', 'recorded_at': '2024-02-29T23:00:00+00:00', 'amount_cents': -12}],
+           {'op': 'month', 'month': '2024-02'}, {'ids': ['leap'], 'total_cents': -12})
+    report('accept-first-supported-year', [{'id': 'first', 'recorded_at': '0001-01-01T00:00:00Z', 'amount_cents': 2}],
+           {'op': 'month', 'month': '0001-01'}, {'ids': ['first'], 'total_cents': 2})
+    report('accept-last-supported-year', [{'id': 'last', 'recorded_at': '9999-12-31T23:59:59Z', 'amount_cents': 3}],
+           {'op': 'month', 'month': '9999-12'}, {'ids': ['last'], 'total_cents': 3})
+    for label, month in [('month-out-of-range', '2025-13'), ('month-not-string', 202503),
+                         ('month-shape', '2025-3'), ('month-year-zero', '0000-01')]:
+        report(label, initial, {'op': 'month', 'month': month}, 'VALUE_ERROR')
+    report('month-missing', initial, {'op': 'month'}, 'VALUE_ERROR')
+    invalid = [('timestamp-naive', '2025-02-18T12:00:00'), ('timestamp-offset', '2025-02-18T12:00:00+00:99'),
+               ('timestamp-calendar', '2025-02-29T12:00:00Z'), ('timestamp-not-string', 1),
+               ('timestamp-year-zero', '0000-01-01T00:00:00Z'),
+               ('timestamp-utc-underflow', '0001-01-01T00:00:00+01:00'),
+               ('timestamp-utc-overflow', '9999-12-31T23:59:59-00:01')]
+    for label, recorded_at in invalid:
+        report(label, [initial[0], {'id': 'invalid', 'amount_cents': 3, 'recorded_at': recorded_at}],
+               {'op': 'month', 'month': '2025-03'}, 'VALUE_ERROR')
+    unparseable = [initial[0], {'id': 'missing', 'amount_cents': 3}]
+    report('timestamp-missing', unparseable, {'op': 'month', 'month': '2025-03'}, 'VALUE_ERROR')
+    report('preservation-count-does-not-parse-timestamps', unparseable, {'op': 'entry_count'}, {'count': 2})
+
+
+def check_typed_batch_control(exercise, evidence):
+    # Independent store copies ensure each malformed value follows a valid prefix.
+    initial = b'{"balance":3,"seen":["old"]}'
+    for label, invalid in [('string', 'false'), ('integer', 0), ('null', None)]:
+        store = evidence / f'control-field-{label}.json'
+        store.write_bytes(initial)
+        before = sha(store)
+        request = {'op': 'batch', 'store': str(store), 'events': [
+            {'id': 'prefix', 'amount': 2}, {'id': 'final', 'amount': 7, 'fail_after': invalid}]}
+        check = exercise(f'control-field-{label}', json.dumps(request), 'VALUE_ERROR')
+        state_file_unchanged(check, store, before)
+    store = evidence / 'control-field-false.json'
+    exercise('control-field-false-is-valid', json.dumps({'op': 'batch', 'store': str(store),
+             'events': [{'id': 'first', 'amount': 5, 'fail_after': False}]}), {'balance': 5, 'seen': ['first']})
+    store = evidence / 'control-field-true.json'
+    store.write_bytes(initial)
+    request = {'op': 'batch', 'store': str(store), 'events': [
+        {'id': 'prefix', 'amount': 2}, {'id': 'flagged', 'amount': 7, 'fail_after': True},
+        {'id': 'unreached', 'amount': 11}]}
+    check = exercise('control-field-true-commits-then-interrupts', json.dumps(request), 'RUNTIME_ERROR')
+    committed_bytes = store.read_bytes() if store.is_file() else b''
+    committed_state = parse_output(committed_bytes.decode('utf-8', errors='replace'))
+    expected_state = {'balance': 12, 'seen': ['old', 'prefix', 'flagged']}
+    check.update(persisted_expected=expected_state, persisted_observed=committed_state,
+                 persisted_sha256=hashlib.sha256(committed_bytes).hexdigest() if committed_bytes else None)
+    check['passed'] = check['passed'] and same_value(committed_state, expected_state)
+
+
+def report_security_checks(checks, scope):
+    rejected = [check for check in checks if check.get('expected') == 'VALUE_ERROR']
+    ledger_reads = [check for check in checks if 'input_file_sha256_before' in check]
+    ledger_intact = all(check['input_file_sha256_before'] == check['input_file_sha256_after'] for check in ledger_reads)
+    passed = bool(rejected and ledger_reads) and all(check['passed'] for check in rejected) and ledger_intact
+    return {'status': 'PASS' if passed else 'FAIL', 'scope': scope,
+            'rejection_checks': [check['check'] for check in rejected],
+            'integrity_checks': [check['check'] for check in ledger_reads]}
+
+
 def evaluate_attempt(attempt):
     attempt = Path(attempt).resolve()
     experiment, plan = frozen(attempt.parents[1])
@@ -737,23 +1650,48 @@ def _evaluate_attempt(attempt):
     before = tree(workspace)
     evidence = attempt / ("evaluation-" + uuid.uuid4().hex)
     evidence.mkdir()
-    invocation, builds = build_program(workspace, evidence / "build", meta["case"]["language"], toolchain(plan))
+    case = meta['case']
+    scenario = case['scenario']
+    invocation, builds = build_program(workspace, evidence / "build", case['language'], toolchain(plan),
+                                       scenario=scenario)
     checks = []
     performance = {'status':'UNVERIFIED','reason':'Independent applicability review/measurement required for non-benchmark-critical performance.'}
     build_ok = all(x["exit_code"] == 0 and not x["timed_out"] for x in builds if x.get('role')!='typecheck')
     typecheck=next((x for x in builds if x.get('role')=='typecheck'),None)
-    def exercise(label, text, expected):
-        raw = command([*invocation,text], evidence, 20)
+    def exercise(label, text, expected, *, program=invocation):
+        raw = command([*program,text], evidence, 20)
         observed = raw["stdout"].strip() if isinstance(expected, str) else parse_output(raw["stdout"])
-        checks.append({"check":label,"input":text,"expected":expected,"observed":observed,"execution":raw,
-                       "passed":raw["exit_code"]==0 and not raw["timed_out"] and same_value(observed,expected)})
+        exit_code = PYTHON_EXCEPTION_EXITS.get(expected, 0) if isinstance(expected, str) else 0
+        check = {"check":label,"input":text,"expected":expected,"observed":observed,"execution":raw,
+                 "passed":raw["exit_code"]==exit_code and not raw["timed_out"] and same_value(observed,expected)}
+        checks.append(check)
+        return check
     if build_ok:
-        case = meta["case"]
-        if case["language"] == "python":
+        if scenario == 'month-report':
+            check_monthly_report(exercise, evidence)
+        elif scenario in COMPONENT_SOURCE_FILES:
+            vectors = {'stock-snapshot': stock_component_vectors, 'triage-queue': triage_component_vectors,
+                       'pick-list': pick_list_component_vectors, 'cue-report': cue_component_vectors}[scenario]()
+            for label, request, expected in vectors:
+                exercise(label, json.dumps(request), expected)
+            public, public_builds = build_public_cli(workspace, evidence/'public-cli', case['language'], toolchain(plan))
+            builds.extend(public_builds)
+            if all(row['exit_code'] == 0 and not row['timed_out'] for row in public_builds):
+                _, request, expected = vectors[-1]
+                exercise('public-composed-report', json.dumps(request), expected, program=public)
+            else:
+                checks.append({'check': 'public-cli-build', 'passed': False})
+        elif scenario in SDK_AND_CLI_VECTORS:
+            ordinary, target = SDK_AND_CLI_VECTORS[scenario]()
+            public, _ = build_public_cli(workspace, evidence/'public-cli', case['language'], toolchain(plan))
+            for prefix, vectors in (('preservation', ordinary), ('target', target)):
+                for index, (text, expected) in enumerate(vectors):
+                    exercise(f'{prefix}-sdk-{index}', text, expected)
+                    exercise(f'{prefix}-cli-{index}', text, expected, program=public)
+        elif case["language"] == "python":
             store=evidence/'state.json'
             def event(events,expected,label): exercise(label,json.dumps({"op":"batch","store":str(store),"events":events}),expected)
             event([{"id":"old","amount":3}],{"balance":3,"seen":["old"]},"ordinary-persistence")
-            scenario=case['scenario']
             if scenario=='redact':
                 text=json.dumps({'op':'redact','data':{'user':'Ada','password':'secret-A','nested':{'token':'secret-B','safe':4},
                     'items':[{'api_key':'secret-C','label':'invoice','active':False,'count':0},
@@ -773,8 +1711,9 @@ def _evaluate_attempt(attempt):
                 event([{'id':'new','amount':5,'fail_after':True}],'ERROR','partial-interruption')
                 event([{'id':'new','amount':5},{'id':'last','amount':2}],{'balance':10,'seen':['old','new','last']},'retry-after-committed-prefix')
             else:
-                event([{'id':'good','amount':5},{'id':'bad','amount':-2}],'ERROR','invalid-batch')
+                event([{'id':'good','amount':5},{'id':'bad','amount':-2}],'VALUE_ERROR','invalid-batch')
                 exercise('state-unchanged',json.dumps({'op':'batch','store':str(store),'events':[]}),{'balance':3,'seen':['old']})
+                check_typed_batch_control(exercise, evidence)
         else:
             ordinary,target=test_vectors(case,evidence)
             for i,(text,expected) in enumerate(ordinary): exercise('preservation-'+str(i),text,expected)
@@ -826,6 +1765,8 @@ def _evaluate_attempt(attempt):
     after=tree(workspace)
     baseline=meta['baseline']
     allowed={'rules.py','rules.ts','Rules.cs','rules.hpp'}
+    if scenario in COMPONENT_SOURCE_FILES:
+        allowed = set(COMPONENT_SOURCE_FILES[scenario])
     allowed.add('check_existing.py')
     if meta['case']['scenario']=='config':allowed.add('cli.ts')
     if meta['case']['scenario']=='transfer':allowed.add('Program.cs')
@@ -850,16 +1791,23 @@ def _evaluate_attempt(attempt):
     functionality=build_ok and bool(checks) and all(x['passed'] for x in checks)
     preservation=[x for x in checks if x['check'].startswith('preservation') or x['check'] in {'ordinary-persistence','public-positional-preserved'}]
     targeted=[x for x in checks if x not in preservation]
-    scenario=meta['case']['scenario']
     security_relevant=scenario in {'tenant','path','redact','framing','credit','transfer','atomic','bounds'}
-    resilience_relevant=scenario in {'dedupe','retry','atomic','transfer'}
+    resilience_relevant=scenario in {'dedupe','retry','atomic','transfer','build-plan'}
+    resilience_checks = targeted
+    if scenario == 'build-plan':
+        resilience_checks = [check for check in targeted if isinstance(check.get('expected'), dict)
+                             and check['expected'].get('error')]
+    security = {'status': ('PASS' if targeted and all(x['passed'] for x in targeted) else 'FAIL') if security_relevant else 'NOT_APPLICABLE',
+                'scope': 'Only case-specific isolation, input validation, framing, disclosure or bounds behavior; no general security certification.'}
+    if case.get('security_scope'):
+        security = report_security_checks(checks, case['security_scope'])
     layers={
         'functionality':{'status':'PASS' if functionality else 'FAIL','scope':'Independent public-API/CLI cases listed below; not all conceivable inputs.'},
         'preservation':{'status':'UNVERIFIED' if replay['status']=='UNVERIFIED' else 'PASS' if all(x['passed'] for x in preservation) else 'FAIL','checks':[x['check'] for x in preservation]},
         'architecture':{'status':'PASS' if architecture else 'FAIL','scope':'Frozen documented contract, build/dependency files and existing tests preserved; independent API consumer compiles/runs. Semantic architecture/clean-code review remains separate.'},
-        'security':{'status':('PASS' if targeted and all(x['passed'] for x in targeted) else 'FAIL') if security_relevant else 'NOT_APPLICABLE','scope':'Only case-specific isolation, input validation, framing, disclosure or bounds behavior; no general security certification.'},
+        'security':security,
         'performance':performance if scenario=='lookup' else {'status':'NOT_APPLICABLE','reason':'This frozen case declares no measured performance change; independent applicability review still required.'},
-        'resilience':{'status':('PASS' if targeted and all(x['passed'] for x in targeted) else 'FAIL') if resilience_relevant else 'NOT_APPLICABLE','scope':'Only the declared state, interruption, replay or atomicity behaviors.'},
+        'resilience':{'status':('PASS' if resilience_checks and all(x['passed'] for x in resilience_checks) else 'FAIL') if resilience_relevant else 'NOT_APPLICABLE','scope':'Only the declared state, interruption, replay or atomicity behaviors.'},
     }
     result={'schema':1,'attempt':meta['id'],'case':meta['case']['id'],'arm':meta['arm'],'model':meta['model'],
             'builds':builds,'checks':checks,'source_before':before,'source_after':after,'unchanged_by_evaluator':before==after,
@@ -878,45 +1826,105 @@ def _evaluate_attempt(attempt):
     return result
 
 
+TASK_PIN_HOOK = r'''
+const recognizedEfforts = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+function pinNativeTaskArguments(input, pins, audit) {
+  const args = input.toolArgs;
+  if (input.toolName !== 'task' || !args || typeof args !== 'object' || Array.isArray(args)) return;
+  const modifiedArgs = {...args};
+  const overrides = {};
+  const fields = [
+    ['model', pins.model, pins.models],
+    ['reasoning_effort', pins.effort, recognizedEfforts],
+  ];
+  for (const [field, pinned, known] of fields) {
+    if (!Object.hasOwn(args, field) || args[field] === pinned) continue;
+    overrides[field] = {requested: known.has(args[field]) ? args[field] : '[unrecognized]', applied: pinned};
+    modifiedArgs[field] = pinned;
+  }
+  if (!Object.keys(overrides).length) return;
+  audit({tool: 'task', toolCallId: input.toolCallId ?? null, overrides});
+  return {modifiedArgs};
+}
+'''
+
+
+SDK_PERMISSION = r'''
+const protectedShellPath = /(?:^|[\\/])(?:\.copilot|\.ssh|\.git-credentials|\.git-credential-cache|[._]netrc)(?:$|[\\/])/i;
+const blockedShellPatterns = [
+  /\.copilot|\.ssh|git\s+push|--global|Invoke-WebRequest|curl\s|wget\s/i,
+  /\bgit(?:\.exe)?\s+(?:credential(?:-[\w-]+)?\b|config\s+credential\.)|\bgit-credential(?:-[\w-]+)?\b/i,
+  /\bgh(?:\.exe)?\s+auth\b|\b(?:cmdkey|vaultcmd|Get-Credential|(?:Get|New|Set|Remove)-StoredCredential)\b/i,
+  /(?:^|[\s'"=\\/])(?:\.git-credentials|\.git-credential-cache|[._]netrc)(?=$|[\s'"\\/])/i,
+];
+
+function benchmarkPermission(request, invocation, c, audit) {
+  const decide = (kind, reason) => {
+    audit({kind:request.kind, toolCallId:request.toolCallId, allowed:kind==='approve-once', decision:kind, reason});
+    return kind === 'reject'
+      ? {kind, feedback:'Outside this benchmark permission scope; use only the project, selected skill and supplied toolchain.'}
+      : {kind};
+  };
+  if (request.managedApprovalRequired || invocation.managedSettingsEnabled || request.requestSandboxBypass) {
+    return decide('no-result', 'host-approval-required');
+  }
+  const contained = (value, root) => {
+    if (typeof value !== 'string' || !value) return false;
+    const p = path.resolve(c.workspace, value);
+    const r = path.resolve(root);
+    return p === r || p.startsWith(r + path.sep);
+  };
+  const readable = p => contained(p,c.workspace) || (c.readRoots || []).some(r=>contained(p,r)) ||
+    (typeof p === 'string' && !!p && (c.exactReadFiles || []).some(f=>path.resolve(c.workspace,p)===path.resolve(f)));
+  let allowed = false;
+  if (request.kind === 'read') allowed = readable(request.path);
+  if (request.kind === 'write') {
+    const files = [request.fileName, ...(request.fileEdits || []).flatMap(x=>[x.before?.path,x.after?.path])].filter(Boolean);
+    allowed = files.length > 0 && files.every(p=>contained(p,c.workspace) &&
+      !contained(p,c.workspace+'/.github/skills') && !contained(p,c.workspace+'/.github/copilot'));
+  }
+  if (request.kind === 'shell') {
+    const paths = (request.possiblePaths || []).map(p=>typeof p === 'string' ? p : p?.path);
+    if (paths.some(p=>!readable(p))) return decide('reject', 'path-outside-scope');
+    if (paths.some(p=>protectedShellPath.test(p))) return decide('reject', 'protected-shell-path');
+    if (blockedShellPatterns.some(pattern=>pattern.test(request.fullCommandText || ''))) {
+      return decide('reject', 'blocked-shell-pattern');
+    }
+    allowed = true;
+  }
+  return allowed ? decide('approve-once', 'within-scope') : decide('reject', 'kind-or-path-outside-scope');
+}
+'''
+
+
 SDK_DRIVER = r'''import fs from 'node:fs';
 import {pathToFileURL} from 'node:url';
 import path from 'node:path';
+''' + TASK_PIN_HOOK + SDK_PERMISSION + r'''
 const c=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const {CopilotClient,RuntimeConnection}=await import(pathToFileURL(c.sdk).href);
+const env={...process.env,HARRTEST_PARENT_SESSION_ID:c.sessionId};
+if(c.corporateGuardGoal)env.HARRTEST_CORPORATE_GOAL=c.corporateGuardGoal;
 const client=new CopilotClient({mode:'copilot-cli',workingDirectory:c.workspace,
- env:{...process.env,HARRTEST_PARENT_SESSION_ID:c.sessionId},
+ env,
  connection:RuntimeConnection.forStdio({path:c.runtime[0],args:[...c.runtime.slice(1),'--no-auto-update']})});
 const write=(name,value)=>fs.writeFileSync(c.output+'/'+name,JSON.stringify(value,null,2));
-const contained=(value,root)=>{const p=path.resolve(c.workspace,value);const r=path.resolve(root);return p===r||p.startsWith(r+path.sep);};
-const permission=(request,invocation)=>{
- if(request.managedApprovalRequired||invocation.managedSettingsEnabled)return {kind:'no-result'};
- let allowed=false;
- const readable=p=>contained(p,c.workspace)||(c.readRoots||[]).some(r=>contained(p,r))||(c.exactReadFiles||[]).some(f=>path.resolve(c.workspace,p)===path.resolve(f));
- if(request.kind==='read')allowed=!!request.path&&readable(request.path);
- if(request.kind==='write'){
-  const files=[request.fileName,...(request.fileEdits||[]).flatMap(x=>[x.before?.path,x.after?.path])].filter(Boolean);
-  allowed=files.length>0&&files.every(p=>contained(p,c.workspace)&&!contained(p,c.workspace+'/.github/skills')&&!contained(p,c.workspace+'/.github/copilot'));
- }
- if(request.kind==='shell'){
-  const text=request.fullCommandText||'';
-  const paths=request.possiblePaths||[];
-  allowed=paths.every(p=>readable(typeof p==='string'?p:p.path||''))&&
-   !/(?:\.copilot|\.ssh|credential|git\s+push|--global|Invoke-WebRequest|curl\s|wget\s)/i.test(text);
- }
- fs.appendFileSync(c.output+'/permission-decisions.jsonl',JSON.stringify({kind:request.kind,allowed,toolCallId:request.toolCallId})+'\n');
- return allowed?{kind:'approve-once'}:{kind:'reject',feedback:'Outside this benchmark permission scope; use only the project, selected skill and supplied toolchain.'};
-};
+const permission=(request,invocation)=>benchmarkPermission(request,invocation,c,
+ row=>fs.appendFileSync(c.output+'/permission-decisions.jsonl',JSON.stringify(row)+'\n'));
 let session;let header;let headerResolve;
 const nativeHeaderReady=new Promise(resolve=>{headerResolve=resolve;});
 try {
  await client.start();
  const models=await client.listModels();write('models-observed.json',models);
  if(!models.some(m=>m.id===c.model))throw new Error('Pinned model not in authenticated catalog');
+ const taskPins={model:c.model,effort:c.effort,models:new Set(models.map(m=>m.id))};
+ const taskPinAudit=row=>fs.appendFileSync(c.output+'/task-pin-overrides.jsonl',JSON.stringify(row)+'\n');
  session=await client.createSession({sessionId:c.sessionId,model:c.model,allowedModels:[c.model],reasoningEffort:c.effort,workingDirectory:c.workspace,
  enableConfigDiscovery:true,enableFileHooks:true,enableHostGitOperations:true,enableSkills:true,
  trustWorkingDirectory:'session',disabledSkills:c.arm==='plain'?['harrtest']:[],
  skillDirectories:c.arm==='plain'?[]:[c.workspace+'/.github/skills'],
  sessionLimits:{maxAiCredits:c.maxAiCredits},onPermissionRequest:permission,
+ hooks:{onPreToolUse: input=>pinNativeTaskArguments(input,taskPins,taskPinAudit)},
  onEvent:e=>{fs.appendFileSync(c.output+'/generation.jsonl',JSON.stringify(e)+'\n');if(e.type==='session.start'&&!header){header=e.data;headerResolve(header);}}});
  write('sdk-session.json',{id:session.sessionId,cwd:c.workspace,model:c.model,effort:c.effort,mode:'copilot-cli'});
  let headerTimer;
@@ -974,6 +1982,10 @@ def _run_attempt(attempt, *, permit_generation=False):
                    'timeoutMs':budget['seconds']*1000,'maxAiCredits':budget['max_ai_credits'],
                    'readRoots':[str(Path(tools[key]).parent) for key in ('node','python','dotnet') if tools.get(key)]}
     configuration['sessionId']=str(uuid.uuid4())
+    guard_goal = attempt_guard_goal(plan, meta)
+    if guard_goal:
+        configuration['corporateGuardGoal'] = guard_goal
+        prepare_corporate_guard(workspace, tools['python'], guard_goal, configuration['sessionId'])
     host_home=Path(os.environ.get('COPILOT_HOME',Path.home()/'.copilot')).resolve()
     configuration['exactReadFiles']=[str(host_home/'session-state'/configuration['sessionId']/'events.jsonl')]
     save(attempt/'sdk-config.json',configuration)
@@ -992,6 +2004,8 @@ def _run_attempt(attempt, *, permit_generation=False):
                settings_before=before_settings,settings_after={p:sha(p) for p in before_settings},
                source=tree(workspace),native_events_sha256=sha(attempt/'generation.jsonl') if (attempt/'generation.jsonl').exists() else None,
                transport='Copilot SDK session over the actual authenticated Copilot CLI process; same transport all arms')
+    if 'corporateGuardGoal' in configuration:
+        raw['corporate_guard_goal'] = configuration['corporateGuardGoal']
     sdk_result=load(attempt/'sdk-result.json') if (attempt/'sdk-result.json').exists() else {}
     if sdk_result.get('status')!='COMPLETED':raw['status']='FAILED' if not raw['timed_out'] else 'TIMEOUT'
     if before_settings!=raw['settings_after']:
@@ -1013,6 +2027,8 @@ def _run_attempt(attempt, *, permit_generation=False):
         invoked=[row.get('data',{}).get('arguments') for row in events if row.get('type')=='tool.execution_start' and row.get('data',{}).get('toolName')=='skill']
         raw['native_observations']={'models':models,'completed_subagents':len(children),'subagents':children,'skill_invocations':invoked,
                                     'parent_identity_matches_requested':identity_valid,
+                                    'task_pin_overrides_sha256':sha(attempt/'task-pin-overrides.jsonl') if (attempt/'task-pin-overrides.jsonl').is_file() else None,
+                                    'permission_decisions_sha256':sha(attempt/'permission-decisions.jsonl') if (attempt/'permission-decisions.jsonl').is_file() else None,
                                     'usage_file_sha256':sha(attempt/'usage.json') if (attempt/'usage.json').is_file() else None}
         effort=reasoning_pin_observation(events,configuration['effort'])
         raw['native_observations']['reasoning_pin']=effort
@@ -1078,10 +2094,11 @@ def record_assessment(attempt, report_file):
         raise ValueError('Review every quality layer exactly once')
     statuses = {'PASS','FAIL','UNVERIFIED','NOT_APPLICABLE'}
     checked = {c['check']:c for c in result['checks']}
-    scenario=load(attempt/'attempt.json')['case']['scenario']
+    case=load(attempt/'attempt.json')['case']
+    scenario=case['scenario']
     required={'functionality','preservation','architecture'}
-    if scenario in {'tenant','path','redact','framing','credit','transfer','atomic'}:required.add('security')
-    if scenario in {'dedupe','retry','atomic'}:required.add('resilience')
+    if case.get('security_scope') or scenario in {'tenant','path','redact','framing','credit','transfer','atomic'}:required.add('security')
+    if scenario in {'dedupe','retry','atomic','build-plan'}:required.add('resilience')
     if scenario=='lookup':required.add('performance')
     layers = []
     for row in rows:
@@ -1089,6 +2106,12 @@ def record_assessment(attempt, report_file):
             raise ValueError('Layer needs status, concrete rationale and evidence')
         if row['id'] in required and row['status']=='NOT_APPLICABLE':
             raise ValueError('Core existing-code layers are required')
+        if row['id'] == 'security' and case.get('security_scope') and row['status'] == 'PASS':
+            if result['automated_artifact_layers']['security']['status'] != 'PASS':
+                raise ValueError('Failed or missing scoped security controls cannot become PASS')
+        if scenario == 'build-plan' and row['id'] == 'resilience' and row['status'] == 'PASS':
+            if result['automated_artifact_layers']['resilience']['status'] != 'PASS':
+                raise ValueError('Failed invalid-plan controls cannot become PASS')
         if scenario=='lookup' and row['id']=='performance' and row['status']=='PASS' and result['performance']['status']!='PASS':
             raise ValueError('Failed or missing paired performance cannot become PASS')
         for evidence in row['evidence']:
@@ -1275,15 +2298,20 @@ def summarize(experiment):
     qualified=(plan.get('kind')=='acceptance' and all(x['missing']==0 and x['unreviewed']==0 for x in counts.values())
                and counts['v5']['false_accepts']==0
                and counts['v5']['complete_quality_passed']>max(counts['plain']['complete_quality_passed'],counts['v4.1']['complete_quality_passed']))
-    return {'schema':1,'kind':plan.get('kind','development'),'declared_attempts':96,'attempts':rows,'counts':counts,'release_qualified':qualified,
+    result = {'schema':1,'kind':plan.get('kind','development'),'declared_attempts':96,'attempts':rows,'counts':counts,'release_qualified':qualified,
             'metric_scope':'Regression, security and architecture counts are failed independent layer verdicts per attempt, not distinct findings. Credit totals cover the reported subtotal only. Time and performance summaries identify their observed denominators.',
             'limitation':'Independent operator-supplied six-layer assessments on current source and actual completion claims required for all attempts; functional counts alone cannot qualify Corporate release. Attribution remains cooperative local evidence.'}
+    if 'corporate_guard_cases' in plan:
+        result['candidate_profile'] = {'corporate_guard_cases': plan['corporate_guard_cases'],
+                                       'enrollment_arm': 'v5', 'goal': plan['corporate_guard_goal']}
+    return result
 
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='action',required=True)
     pre=sub.add_parser('preflight');pre.add_argument('--tools',type=Path)
     fr=sub.add_parser('freeze');fr.add_argument('--output',type=Path,required=True);fr.add_argument('--baseline-skill',type=Path,required=True);fr.add_argument('--candidate-skill',type=Path,required=True);fr.add_argument('--models',nargs=2,required=True);fr.add_argument('--tools',type=Path);fr.add_argument('--seconds',type=int,default=2400);fr.add_argument('--credits',type=int,default=120);fr.add_argument('--kind',choices=['development','acceptance'],default='development');fr.add_argument('--seed',type=int,default=20261114)
+    fr.add_argument('--corporate-guard-goal', help='Enroll V5 on substantial held cases or in a development trial')
     prep=sub.add_parser('prepare');prep.add_argument('--experiment',type=Path,required=True);prep.add_argument('--case',required=True);prep.add_argument('--arm',choices=ARMS,required=True);prep.add_argument('--model',required=True);prep.add_argument('--repetition',type=int,choices=[1,2],required=True)
     ev=sub.add_parser('evaluate');ev.add_argument('--attempt',type=Path,required=True)
     run=sub.add_parser('run');run.add_argument('--attempt',type=Path,required=True);run.add_argument('--permit-generation',action='store_true')
@@ -1294,7 +2322,7 @@ def main(argv=None):
     args=parser.parse_args(argv)
     try:
         if args.action=='preflight': result=preflight(load(args.tools) if args.tools else None)
-        elif args.action=='freeze': result=freeze(args.output,args.baseline_skill,args.candidate_skill,args.models,tools=load(args.tools) if args.tools else None,seconds=args.seconds,credits=args.credits,kind=args.kind,seed=args.seed)
+        elif args.action=='freeze': result=freeze(args.output,args.baseline_skill,args.candidate_skill,args.models,tools=load(args.tools) if args.tools else None,seconds=args.seconds,credits=args.credits,kind=args.kind,seed=args.seed,corporate_guard_goal=args.corporate_guard_goal)
         elif args.action=='prepare': result={'attempt':str(prepare(args.experiment,args.case,args.arm,args.model,args.repetition))}
         elif args.action=='evaluate': result=evaluate_attempt(args.attempt)
         elif args.action=='run': result=run_attempt(args.attempt,permit_generation=args.permit_generation)

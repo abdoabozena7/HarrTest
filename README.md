@@ -12,7 +12,23 @@ an aggregate score cannot waive a failed quality layer.
 [Corporate workflow](references/corporate-workflow.md) ·
 [V5 validation status](references/v5-validation.md)
 
-The following results describe the released **4.1** adaptive experiment, not V5.
+## V5 on existing code
+
+The second frozen comparison ran 96 Copilot attempts on existing C#, TypeScript,
+Python and C++ projects using GPT-6 Luna and GPT-6.1 Sol at low reasoning effort.
+Independent reviewers checked actual behavior and compatibility, the project diff,
+and applicable safety, performance and failure cases.
+
+| Measure | No HarrTest | 4.1 | V5 candidate |
+| --- | ---: | ---: | ---: |
+| Artifacts passing independent quality review | 12/32 | 12/32 | 18/32 |
+| False accepts | 20 | 19 | 4 |
+| Median generation time | 73s | 101s | 741s |
+
+Release requires zero V5 false accepts. The [validation record](references/v5-validation.md)
+includes costs, security and architecture outcomes, and the exact comparison scope.
+
+## Released 4.1 workflow
 
 HarrTest is a skill and local workflow coordinator for coding agents. Gold
 preserves what the user asked for, ties consequential decisions to evidence,

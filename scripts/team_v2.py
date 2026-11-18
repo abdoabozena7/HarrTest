@@ -21,6 +21,7 @@ MAX_NATIVE_WINDOW_BYTES = 32 * 1024 * 1024
 MAX_NATIVE_WINDOW_EVENTS = 100_000
 MAX_NATIVE_PENDING_CALLS = 4096
 MAX_NATIVE_SCAN_BYTES = 1024 * 1024 * 1024
+COPILOT_COVERAGE_REVIEW = 'coverage_review'
 
 
 class HostEvidenceUnavailable(ValueError):
@@ -172,6 +173,11 @@ def validate_plan(project, plan):
     t.concrete(plan.get('request'), 'Original request')
     t.concrete(plan.get('contract'), 'Shared contract')
     t.validation_files(project, plan)
+    reviewed = plan.get('decomposition') == 'reviewed-v1'
+    t.require('decomposition' not in plan or reviewed, 'Unknown Team decomposition policy')
+    if 'root_protocol' in plan:
+        t.require(plan['root_protocol'] == 'corporate-v1' and reviewed,
+                  'Team root_protocol corporate-v1 requires reviewed-v1 decomposition')
     outcomes = plan.get('outcomes')
     t.require(isinstance(outcomes, dict) and outcomes, 'Declare original outcomes')
     for rid, value in outcomes.items():
@@ -183,7 +189,8 @@ def validate_plan(project, plan):
     for row in rows:
         t.require(isinstance(row, dict), 'Invalid implementation scope')
         tid = t.name(row.get('id'))
-        t.require(tid not in tasks and tid not in {'qa', 'check', 'integration'}, 'Duplicate/reserved owner')
+        reserved = {'qa', 'check', 'integration'} | ({'plan_review'} if reviewed else set())
+        t.require(tid not in tasks and tid not in reserved, 'Duplicate/reserved owner')
         t.require(row.get('role', 'implement') == 'implement', 'An owner must implement product files')
         t.concrete(row.get('brief'), tid + ' brief')
         outputs = t.file_list(project, row.get('outputs'), tid)
@@ -222,7 +229,8 @@ def validate_plan(project, plan):
               'Each product path needs exactly one owner')
     t.ancestors(tasks)
     capacity = plan.get('max_parallel_workers', 1)
-    t.require(type(capacity) is int and 1 <= capacity <= 128, 'Invalid observed worker capacity')
+    t.require(type(capacity) is int and 1 <= capacity <= 128,
+              'Invalid planned worker capacity' if reviewed else 'Invalid observed worker capacity')
     if capacity == 1 and independent_pairs(tasks):
         t.concrete(plan.get('execution_rationale'), 'Explain serial execution of independent scopes')
     timeout = integration.get('timeout_seconds', 120)
@@ -233,7 +241,28 @@ def validate_plan(project, plan):
     for field in ('model', 'reasoning_effort'):
         if field in plan:
             t.require(isinstance(plan[field], str) and bool(plan[field].strip()), 'Invalid pinned ' + field)
+    if reviewed:
+        validate_decomposition(plan, tasks, owned)
     return tasks, owned
+
+
+def validate_decomposition(plan, tasks, owned):
+    t = common()
+    sources = set(owned) | set(plan.get('validation_context', []))
+    if len(tasks) == 1:
+        t.concrete(plan.get('scope_rationale'), 'Explain why one implementation responsibility is sufficient')
+    for tid, task in tasks.items():
+        for field in ('responsibility', 'interface', 'check'):
+            t.concrete(task.get(field), f'{tid}: define {field}')
+        refs = task.get('scope_evidence')
+        t.require(isinstance(refs, list) and refs and all(isinstance(ref, str) and ref in sources for ref in refs)
+                  and len(refs) == len(set(refs)) <= t.MAX_VALIDATION_FILES,
+                  tid + ': cite distinct paths bound by the old owned files or validation context')
+        reasons = task.get('dependency_rationale', {})
+        t.require(isinstance(reasons, dict) and set(reasons) == set(task['depends_on']),
+                  tid + ': explain why each declared predecessor needs to finish first')
+        for dep, reason in reasons.items():
+            t.concrete(reason, f'{tid}: dependency on {dep}')
 
 
 def independent_pairs(tasks):
@@ -245,7 +274,23 @@ def independent_pairs(tasks):
 def init(project, plan):
     t = common()
     tasks, owned = validate_plan(project, plan)
+    if plan.get('root_protocol') == 'corporate-v1' and plan.get('host', {}).get('kind') == 'copilot':
+        t.require(COPILOT_COVERAGE_REVIEW not in tasks, 'Reserved Corporate coverage reviewer name')
+    validation_inputs = t.validation_snapshot(project, plan)
+    root = Path(project).resolve()
+    outputs = {rel: (root / rel).resolve() for rel in owned}
+    for context in validation_inputs:
+        path = (root / context).resolve()
+        for rel, output in outputs.items():
+            t.require(not (path.is_relative_to(output) or output.is_relative_to(path)),
+                      f'validation_context file {context} overlaps owned output {rel}. '
+                      'Keep validation context unchanged. If the output needs editing, keep its '
+                      'original baseline and checks as separate evidence.')
     baseline = t.snapshot(project, owned)
+    if plan.get('decomposition') == 'reviewed-v1':
+        for tid, task in tasks.items():
+            t.require(all(validation_inputs.get(ref) or baseline.get(ref) for ref in task['scope_evidence']),
+                      tid + ': scope evidence needs an existing source file before implementation')
     if plan['kind'] == 'greenfield':
         t.require(not any(baseline.values()), 'Seal greenfield scopes before product creation')
     for task in tasks.values():
@@ -254,9 +299,12 @@ def init(project, plan):
         for move in task.get('renames', []):
             t.require(baseline[move['to']] is None, 'Rename destination must be absent at baseline')
     state = {'plan': plan, 'plan_sha256': strict_io.digest(plan), 'baseline': baseline,
-             'created': proof.now(), 'validation_inputs': t.validation_snapshot(project, plan)}
+             'created': proof.now(), 'validation_inputs': validation_inputs}
     state['state_sha256'] = strict_io.digest(state)
     proof.save(t.team_path(project, plan['id'], must_exist=False), state, exclusive=True)
+    if plan.get('decomposition') == 'reviewed-v1':
+        return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
+                'plan_review': plan_review_packet(project, state), 'ready': []}
     return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
             'ready': [packet(project, state, row) for row in tasks.values() if not row['depends_on']]}
 
@@ -289,9 +337,62 @@ def deleted_paths(task):
     return set(task.get('deletions', [])) | {r['from'] for r in task.get('renames', [])}
 
 
-def packet(project, state, task):
+def dispatch_packet(plan, task_name, message):
+    result = {'task_name': task_name, 'fork_turns': 'none', 'message': message}
+    if plan.get('host', {}).get('kind') == 'copilot':
+        result['dispatch_note'] = (
+            'For an initial Copilot dispatch when this actor may need follow-up, use task with '
+            'mode: background. Retain the returned agent_id and use read_agent with wait: true. '
+            'For repair or re-review, send the complete message with write_agent to the original '
+            'agent_id, then wait for that ID with read_agent.')
+    return result
+
+
+def plan_review_packet(project, state):
+    t = common()
+    plan = state['plan']
+    path = t.team_path(project, plan['id']).as_posix()
+    evidence = f'{proof.STATE}/teams/{plan["id"]}/plan-review.txt'
+    command = t.worker_command(project, plan['id'], 'review-plan')
+    split_check = ''
+    if plan.get('root_protocol') == 'corporate-v1':
+        split_check = ('Compare the proposed owner map against the nearest viable split. For each changed boundary, '
+                       'state whether its owner could implement and check it against the existing interface while '
+                       'another owner works. An integration test needed at the end does not block either component. '
+                       'For a single owner, identify the shared write path, coupled invariant or unavailable interface '
+                       'that prevents a split. If neither scope needs the other to produce its first testable result, '
+                       'return fail and identify the separately testable responsibilities. Keep product files read-only. ')
+    message = (f'Review the sealed decomposition independently before implementation. Read {path}.\n'
+               f'Plan SHA-256 {state["plan_sha256"]}; baseline/state SHA-256 {state["state_sha256"]}.\n'
+               'Inspect the actual project contracts, affected consumers and each scope_evidence path. '
+               'For each owner verify the responsibility, preserved interface, exact owned files, '
+               'outcomes and independent check against those sources. Find missing responsibilities '
+               'or independent components grouped into one owner. A narrow responsibility may span '
+               f'multiple files. Confirm any single-scope and dependency rationales. {split_check}'
+               'Check the planned worker width against available native dispatch and known runtime limits. Use that '
+               'capability evidence at plan review. Actual owner overlap is verified after dispatch. '
+               'Serial independent work needs a documented host cap, rejected '
+               'simultaneous dispatch or another observed constraint. Record each judgment with the '
+               'source location and why it supports the scope. '
+               f'Write your observations to {evidence}. Use this literal project-relative evidence path. '
+               'Record fail if a required scope, source or justification is missing. '
+               'Run the following review command by itself after saving evidence. Replace VERDICT '
+               'with pass or fail based on the observations:\n'
+               f'{command} --evidence {evidence} --verdict VERDICT')
+    packet = {'task_name': 'plan_review', 'fork_turns': 'none', 'message': message}
+    if plan.get('host', {}).get('kind') == 'copilot':
+        packet['dispatch_note'] = ('Select a Copilot reviewer that can run commands and write private evidence. '
+                                   'Use an available general-purpose agent if the built-in task worker restricts writes. '
+                                   'Where independent owner scopes are planned, available task background dispatch can '
+                                   'support the planned width. Verify actual overlap after implementation.')
+    return packet
+
+
+def packet(project, state, task, *, admission=None):
     t = common()
     plan, tid = state['plan'], task['id']
+    if admission is None:
+        admission = corporate_admission(project, state)
     text = (f'You own implementation scope {tid}. Project: {Path(project).resolve().as_posix()}.\n'
             f'Pinned HarrTest: {Path(__file__).resolve().parents[1].as_posix()}.\n'
             f'Original request: {plan["request"]}\nExisting architecture/interfaces: {plan["contract"]}\n'
@@ -301,15 +402,23 @@ def packet(project, state, task):
             'Preserve existing contracts and unrelated behavior. Use the actual host editing tools; '
             'do not invent native identity or verification. Read prerequisite handoffs and supplied '
             'acceptance/risk criteria. Implement and test only your scope; return boundary conflicts '
-            'to the coordinator. Record meaningful focused behavior checks and unresolved findings.\n'
+            'to the coordinator. Use the project’s documented checks and runtime with its approved '
+            'workspace scratch directory if needed. Report observed results or exact blockers.\n'
             'Acceptance:\n' + '\n'.join(f'- {x}: {plan["outcomes"][x]}' for x in task['outcomes']) + '\n'
-            'Handoff command:\n' + t.worker_command(project, plan['id'], 'handoff') + ' --task ' + tid)
+            'Run this handoff command with its exact script path and flags:\n'
+            + t.worker_command(project, plan['id'], 'handoff') + ' --task ' + tid)
+    if plan.get('decomposition') == 'reviewed-v1':
+        text += (f'\nReviewed responsibility: {task["responsibility"]}\n'
+                 f'Interface: {task["interface"]}\nIndependent component check: {task["check"]}\n'
+                 f'Reviewed sources: {", ".join(task["scope_evidence"])}')
+    if admission:
+        text += f'\nCorporate root seal SHA-256: {admission["binding"]["seal_sha256"]}.'
     repair = pending_repair(project, state, tid)
     if repair:
         text += (f'\nRepair current finding: {repair["observation"]}. '
                  f'Read immutable evidence {next(iter(repair["files"]))}; retain the failed attempt. '
                  'Diagnose in your owned scope, rerun affected checks, then hand off again.')
-    return {'task_name': tid, 'fork_turns': 'none', 'message': text}
+    return dispatch_packet(plan, tid, text)
 
 
 def current_receipt(project, state, tid):
@@ -327,17 +436,93 @@ def record(project, state, tid, files, **extra):
     return common().record(project, state, tid, files, **extra)
 
 
+def review_plan(project, state, evidence, verdict):
+    t = common()
+    plan = state['plan']
+    t.require(plan.get('decomposition') == 'reviewed-v1', 'Plan review requires reviewed-v1 decomposition')
+    t.require(verdict in {'pass', 'fail'}, 'Plan review verdict must be pass or fail')
+    t.validation_message(project, state)
+    t.require(t.snapshot(project, state['baseline']) == state['baseline'],
+              'Review the sealed baseline before any product edit')
+    prefix = f'{proof.STATE}/teams/{plan["id"]}/'
+    t.require(evidence.startswith(prefix), 'Keep plan review evidence in the private team directory')
+    path = strict_io.scoped_path(project, evidence)
+    t.require(path.is_file() and 0 < path.stat().st_size <= t.MAX_VALIDATION_FILE_BYTES,
+              'Missing bounded plan review evidence')
+    body = path.read_bytes()
+    t.concrete(body.decode('utf-8-sig'), 'Independent plan review observations')
+    digest = hashlib.sha256(body).hexdigest()
+    retained = f'{prefix}plan-review-evidence/{digest}.txt'
+    destination = strict_io.scoped_path(project, retained, must_exist=False)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with destination.open('xb') as saved:
+            saved.write(body)
+    except FileExistsError:
+        pass
+    t.require(proof.file_hash(destination) == digest, 'Retained plan review evidence changed')
+    receipt = {'id': 'plan_review', 'plan': state['plan_sha256'], 'files': {retained: digest},
+               'state': state['state_sha256'], 'verdict': verdict, 'at': proof.now()}
+    receipt['sha256'] = strict_io.digest(receipt)
+    proof.save(t.receipt_path(project, state, 'plan_review'), receipt, exclusive=True)
+    return receipt
+
+
+def approved_decomposition(project, state):
+    if state['plan'].get('decomposition') != 'reviewed-v1':
+        return None
+    t = common()
+    path = t.receipt_path(project, state, 'plan_review')
+    t.require(path.is_file(), 'Independent plan review is required before dispatch')
+    receipt = current_receipt(project, state, 'plan_review')
+    t.require(receipt.get('verdict') == 'pass' and receipt.get('state') == state['state_sha256'],
+              'Independent plan review failed or is stale; retain it and review a corrected plan')
+    return receipt
+
+
+def corporate_admission(project, state, *, issue=False):
+    if state['plan'].get('root_protocol') != 'corporate-v1':
+        return None
+    import root_gate
+
+    t = common()
+    path = t.team_path(project, state['plan']['id'], 'corporate-dispatch.json', must_exist=False)
+    exists = path.is_file()
+    t.require(exists or issue, 'Use Team packets to admit the sealed Corporate root before dispatch')
+    binding = root_gate.require_corporate_dispatch(project, state, baseline_current=not exists)
+    if not exists:
+        admission = {'binding': binding, 'admitted_at': proof.now()}
+        admission['sha256'] = strict_io.digest(admission)
+        try:
+            proof.save(path, admission, exclusive=True)
+        except FileExistsError:
+            pass  # A concurrent caller may have admitted the same immutable root.
+    admission = proof.load(path)
+    digest = admission.pop('sha256')
+    t.require(strict_io.digest(admission) == digest and admission['binding'] == binding,
+              'Corporate dispatch admission differs from the current root seal')
+    t.require(t.instant(admission['admitted_at']) >= t.instant(binding['sealed_at']),
+              'Corporate dispatch admission predates the root seal')
+    return {**admission, 'sha256': digest}
+
+
 def handoff(project, state, task):
     t = common()
     t.validation_message(project, state)
+    admission = corporate_admission(project, state)
     files = t.snapshot(project, task['outputs'])
     deleted = deleted_paths(task)
     for rel, digest in files.items():
         t.require((digest is None) == (rel in deleted), 'Only declared deletions may be absent: ' + rel)
     t.require(any(value != state['baseline'][rel] for rel, value in files.items()),
               task['id'] + ': handoff must contain an actual change')
-    inputs = {dep: usable_handoff(project, state, dep)['sha256'] for dep in task['depends_on']}
+    inputs = {dep: usable_handoff(project, state, dep, admission=admission)['sha256'] for dep in task['depends_on']}
     extra = {}
+    review = approved_decomposition(project, state)
+    if review:
+        extra['plan_review'] = review['sha256']
+    if admission:
+        extra['root_seal_sha256'] = admission['binding']['seal_sha256']
     path = t.receipt_path(project, state, 'repair-' + task['id'])
     if path.is_file():
         extra['repair'] = current_receipt(project, state, 'repair-' + task['id'])['sha256']
@@ -356,31 +541,46 @@ def pending_repair(project, state, tid):
     return repair if owner.get('repair') != repair['sha256'] else None
 
 
-def usable_handoff(project, state, tid):
+def usable_handoff(project, state, tid, *, admission=None):
     t = common()
     t.validation_message(project, state)
+    if admission is None:
+        admission = corporate_admission(project, state)
     t.require(not pending_repair(project, state, tid), tid + ': owner repair remains open')
     task = next(r for r in state['plan']['tasks'] if r['id'] == tid)
     receipt = current_receipt(project, state, tid)
+    review = approved_decomposition(project, state)
+    if review:
+        t.require(receipt.get('plan_review') == review['sha256'], tid + ': handoff lacks the current plan review')
+    if admission:
+        t.require(receipt.get('root_seal_sha256') == admission['binding']['seal_sha256'],
+                  tid + ': handoff lacks the admitted Corporate root seal')
     t.require(set(receipt['files']) == set(task['outputs']), tid + ': receipt scope differs from sealed owner')
-    deps = {d: usable_handoff(project, state, d)['sha256'] for d in task['depends_on']}
+    deps = {d: usable_handoff(project, state, d, admission=admission)['sha256'] for d in task['depends_on']}
     t.require(receipt.get('inputs') == deps, tid + ': stale prerequisite handoff')
     return receipt
 
 
 def ready_packets(project, state):
-    common().validation_message(project, state)
+    t = common()
+    t.validation_message(project, state)
+    if state['plan'].get('decomposition') == 'reviewed-v1':
+        path = t.receipt_path(project, state, 'plan_review')
+        if not path.is_file() or current_receipt(project, state, 'plan_review').get('verdict') == 'fail':
+            return []
+        approved_decomposition(project, state)
+    admission = corporate_admission(project, state, issue=True)
     ready = []
     for row in state['plan']['tasks']:
         try:
             for dep in row['depends_on']:
-                usable_handoff(project, state, dep)
+                usable_handoff(project, state, dep, admission=admission)
         except (ValueError, proof.ProofError):
             continue
         try:
-            usable_handoff(project, state, row['id'])
+            usable_handoff(project, state, row['id'], admission=admission)
         except (ValueError, proof.ProofError):
-            ready.append(packet(project, state, row))
+            ready.append(packet(project, state, row, admission=admission))
     return ready
 
 
@@ -388,7 +588,8 @@ def integrate(project, state):
     t = common()
     t.validation_message(project, state)
     plan = state['plan']
-    children = {r['id']: usable_handoff(project, state, r['id']) for r in plan['tasks']}
+    admission = corporate_admission(project, state)
+    children = {r['id']: usable_handoff(project, state, r['id'], admission=admission) for r in plan['tasks']}
     receipt = record(project, state, 'integration', t.snapshot(project, state['baseline']),
                      inputs={tid: row['sha256'] for tid, row in children.items()})
     evidence = f'{proof.STATE}/teams/{plan["id"]}/qa-evidence.txt'
@@ -400,20 +601,27 @@ def integrate(project, state):
                f'Acceptance check: {plan["integration"]["check"]}\n'
                'Read current-source inputs and test the actual behavior independently. Cover applicable '
                'functionality, preservation, architecture, security, performance and failure/data risks. '
-               'Use independent expected results and retain failures. Missing checks are UNVERIFIED, '
+               'Derive expected results from the agreed contract. Cover affected input controls, '
+               'including optional ones, and assert relevant state for rejected operations. '
+               'Replay apparent inherited failures on the baseline before judging their impact on this request. '
+               'Retain failures. Missing checks are UNVERIFIED, '
                'not PASS. Record each quality layer as PASS, FAIL, UNVERIFIED or NOT_APPLICABLE; '
                'retain failed and unverified observations. NOT_APPLICABLE needs an impact rationale '
                'and supporting evidence reviewed independently. Do not omit required layers or '
-               'turn a missing measurement into an applicability exclusion. Do not edit product '
-               'files or weaken the contract. Run a finite real check with assertions through:\n'
-               f'{command} -- ACTUAL_ARGV\nRecord observations privately in {evidence}. '
-               'The evidence file is a private verification artifact. The no-product-edits rule permits '
-               'writing that artifact when your host authorizes it. Use the exact project-relative '
-               'forward-slash path below for --evidence, including on Windows. '
-               f'Then run {review_command} --evidence {evidence} --verdict pass only if all required '
-               'checks pass, otherwise --verdict fail. Release owned runtime resources afterward. '
+               'turn a missing measurement into an applicability exclusion. Leave product files and '
+               'the contract intact. Run the documented project checks on this source. Use the '
+               'approved runtime and workspace-local scratch path for temporary files. Run a finite '
+               'check with assertions yourself and use this exact Team command prefix:\n'
+               f'{command} -- ACTUAL_ARGV\nReplace ACTUAL_ARGV with the real executable and arguments '
+               'for the check. The collector runs them directly from the project and manages its '
+               'subprocess. If access or an executable is missing, record the exact blocker and '
+               f'retain any results. Write observations to {evidence} if authorized. Use the exact '
+               'project-relative forward-slash --evidence path below, including on Windows.\n'
+               f'{review_command} --evidence {evidence} --verdict pass\nUse pass only if the required '
+               'checks pass. Otherwise submit fail with the available evidence. Report and release '
+               'any separate service or resource you actually started. '
                'A successful receipt proves the recorded process, not semantic correctness or native identity.')
-    return receipt, {'task_name': 'qa', 'fork_turns': 'none', 'message': message}
+    return receipt, dispatch_packet(plan, 'qa', message)
 
 
 def runtime_check(project, state, argv):
@@ -482,7 +690,8 @@ def repair(project, state, tid, evidence, observation):
 def verify_structural(project, state, require_qa):
     t = common()
     t.validation_message(project, state)
-    children = {r['id']: usable_handoff(project, state, r['id']) for r in state['plan']['tasks']}
+    admission = corporate_admission(project, state)
+    children = {r['id']: usable_handoff(project, state, r['id'], admission=admission) for r in state['plan']['tasks']}
     if require_qa:
         integrated = current_receipt(project, state, 'integration')
         t.require(set(integrated['files']) == set(state['baseline']), 'Integrated source scope differs from plan')
@@ -503,11 +712,13 @@ def codex_adapter(project, state, parent, sessions, require_qa):
     created = t.instant(state['created'])
     logs = t.locate_sessions(project, parent, Path(sessions or t.codex_sessions()), state['created'])
     rows = {}
+    reviewed = state['plan'].get('decomposition') == 'reviewed-v1'
     for role, (meta, path) in logs.items():
         window = NativeWindow(path, created, 'codex')
+        review_team = state['plan']['id'] if reviewed and role == 'plan_review' else None
         try:
             rows[role] = t.read_trace(project, meta, path, created, events=window,
-                                      lifecycle_limit=MAX_NATIVE_PENDING_CALLS)
+                                      lifecycle_limit=MAX_NATIVE_PENDING_CALLS, review_team=review_team)
         except ValueError as exc:
             if 'pending lifecycle limit exceeded' in str(exc):
                 raise HostEvidenceUnavailable(str(exc)) from exc
@@ -566,7 +777,7 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
     if tool not in {'write_agent', 'read_agent'} or not isinstance(args, dict):
         return
     worker = by_agent.get(args.get('agent_id'))
-    if worker is None or worker['end'] is None:
+    if worker is None or worker['end'] is None or 'auxiliary_parent' in worker:
         return
     telemetry = payload.get('toolTelemetry', {})
     properties, metrics = telemetry.get('properties', {}), telemetry.get('metrics', {})
@@ -578,8 +789,12 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
             worker['resume'] = {'sent': when, 'message': hashlib.sha256(message.encode()).digest()}
         return
     resume = worker.get('resume')
+    wait = args.get('wait', False)
+    # Copilot also emits an automatic idle-status read with no wait argument.
+    # A non-waiting read must start after the last observed turn has ended.
     if (not resume or 'turn_end' not in resume or resume.get('turn') is not None
-            or args.get('wait') is not True or properties.get('status') != 'idle'
+            or type(wait) is not bool or (not wait and started < resume['turn_end'])
+            or properties.get('status') != 'idle'
             or type(metrics.get('queue_depth')) is not int or metrics['queue_depth'] != 0
             or type(metrics.get('total_turns')) is not int or metrics['total_turns'] != len(worker['intervals']) + 1
             or started < resume['delivered'] or when < resume['turn_end']):
@@ -590,7 +805,48 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
     del worker['resume']
 
 
-def read_copilot_traces(project, parent, sessions, since):
+def is_copilot_coverage_review(project, review_team, request, args):
+    """Recognize the exact historical packet, including superseded draft hashes."""
+    import corporate
+    from copilot_guard import TASK_FIELDS
+
+    if (args.get('name') != COPILOT_COVERAGE_REVIEW or args.keys() - TASK_FIELDS
+            or args.get('agent_type') not in ('general-purpose', 'task')
+            or args.get('mode', 'sync') not in ('sync', 'background')
+            or not all(isinstance(value, str) for value in args.values())):
+        return False
+    prompt = args.get('prompt', '')
+    goal = project / proof.STATE / 'root-goals' / review_team
+    start = (f'Independently review coverage of {(goal / "original-request.txt").as_posix()} '
+             f'against {(goal / "root-contract.json").as_posix()}.\n'
+             'Current request, span and acceptance bindings: ')
+    details = prompt.removeprefix(start)
+    if details == prompt:
+        return False
+    bindings_text, _, remaining = details.partition('.\n')
+    _, marker, planner_text = remaining.partition('method fresh-context-agent, planner ')
+    planner_json, delimiter, _ = planner_text.rpartition(', your actual reviewer identity, concrete observations, ')
+    if not marker or not delimiter:
+        return False
+    try:
+        bindings = strict_io.loads(bindings_text)
+        planner = strict_io.loads(planner_json)
+        corporate.text(planner, 'Actual planner identity')
+    except (ValueError, TypeError, RecursionError, proof.ProofError):
+        return False
+    if (not isinstance(bindings, dict)
+            or bindings.keys() != {'request_sha256', 'segments_sha256', 'acceptance_sha256'}
+            or any(not isinstance(digest, str) or not common().re.fullmatch(r'[0-9a-f]{64}', digest)
+                   for digest in bindings.values())):
+        return False
+    request = request.replace('\r\n', '\n')
+    if bindings['request_sha256'] not in {hashlib.sha256(s.encode('utf-8')).hexdigest()
+                                         for s in (request, request.replace('\n', '\r\n'))}:
+        return False
+    return prompt == corporate.coverage_review_message(goal, bindings, planner)
+
+
+def read_copilot_traces(project, parent, sessions, since, *, review_team=None, corporate_request=None):
     """Read Copilot's persisted session-events v1, not model-authored summaries.
 
     Format: CLI1.0.104 live native probe and the installed official SDK's
@@ -622,6 +878,7 @@ def read_copilot_traces(project, parent, sessions, since):
                 'effort': effort, 'models': set(filter(None, [model])), 'efforts': set(filter(None, [effort]))}
     coordinator = row(parent, t.instant(data['startTime']), data.get('selectedModel'), data.get('reasoningEffort'))
     rows, by_agent, calls, dispatch = {'integration': coordinator}, {}, {}, {}
+    auxiliary_calls = {}
     seen_ids = {header.get('id')}
     boundary_initialized = False
     def apply_model_transition(current, payload, record):
@@ -681,7 +938,8 @@ def read_copilot_traces(project, parent, sessions, since):
                       'Copilot session changed to a different workspace')
         elif kind == 'tool.execution_start':
             call_id = payload.get('toolCallId')
-            t.require(isinstance(call_id, str) and call_id not in calls, 'Duplicate Copilot tool call')
+            t.require(isinstance(call_id, str) and call_id not in calls and call_id not in auxiliary_calls,
+                      'Duplicate Copilot tool call')
             if agent:
                 t.require(current is not None and when >= current['start'],
                           'Copilot child tool is outside its actual task lifecycle')
@@ -700,17 +958,48 @@ def read_copilot_traces(project, parent, sessions, since):
                 dispatch[call_id] = payload
         elif kind == 'subagent.started':
             call_id = payload.get('toolCallId')
-            args = dispatch.pop(call_id, {}).get('arguments', {})
+            task_dispatch = dispatch.pop(call_id, None)
+            auxiliary_parent = None
+            if task_dispatch is None and corporate_request is not None and call_id in calls:
+                request, started = calls[call_id]
+                dispatcher = request.get('agentId')
+                candidate = request['data']
+                if dispatcher and candidate.get('toolName') == 'task':
+                    origin = by_agent[dispatcher]
+                    arguments = candidate.get('arguments')
+                    # The lifecycle payload identifies the dispatching agent.
+                    # The outer event's parentId identifies another event.
+                    t.require(call_id and call_id not in auxiliary_calls and origin['active'] is not None
+                              and origin['active'] <= started <= when
+                              and candidate.get('parentToolCallId') == origin['dispatch_call']
+                              and payload.get('parentId') == dispatcher
+                              and payload.get('executionMode') == 'sync'
+                              and isinstance(arguments, dict) and arguments.get('mode', 'sync') == 'sync',
+                              'Invalid nested Copilot task dispatch')
+                    task_dispatch = candidate
+                    auxiliary_parent = (dispatcher, origin['active'])
+            args = (task_dispatch or {}).get('arguments', {})
             label = args.get('name') if isinstance(args, dict) else None
-            t.require(label and label == payload.get('agentDisplayName') and label not in rows
-                      and isinstance(agent, str) and agent not in by_agent and agent != parent,
+            t.require(isinstance(label, str) and label and label == payload.get('agentDisplayName')
+                      and isinstance(agent, str) and agent and agent not in by_agent and agent != parent,
                       'Copilot subagent lacks a unique originating named task')
+            role = label
+            if auxiliary_parent is not None:
+                role = f'auxiliary:{agent}'
+            elif (label == COPILOT_COVERAGE_REVIEW and corporate_request is not None and review_team is not None
+                  and is_copilot_coverage_review(project, review_team, corporate_request, args)):
+                # Keep review activity observable without claiming an implementation role.
+                role = f'{COPILOT_COVERAGE_REVIEW}:{agent}'
+            t.require(role not in rows, 'Copilot subagent lacks a unique originating named task')
             current = row(agent, when, payload.get('model'))
             current['dispatch_call'] = call_id
             current['interactions'] = set()
             current['turn_starts'].append(when)
             current['active'] = when
-            by_agent[agent], rows[label] = current, current
+            if auxiliary_parent is not None:
+                current['auxiliary_parent'] = auxiliary_parent
+                auxiliary_calls[call_id] = current
+            by_agent[agent], rows[role] = current, current
         elif kind == 'subagent.configured':
             t.require(current is not None and agent, 'Copilot subagent configuration lacks identity')
             current['model'], current['effort'] = payload.get('model'), payload.get('reasoningEffort')
@@ -735,7 +1024,8 @@ def read_copilot_traces(project, parent, sessions, since):
                 coordinator['intervals'].append((coordinator['active'], when))
                 coordinator['active'] = None
         elif kind == 'tool.execution_complete':
-            original = calls.pop(payload.get('toolCallId'), None)
+            call_id = payload.get('toolCallId')
+            original = calls.pop(call_id, None)
             t.require(original is not None, 'Copilot completion lacks its original tool call')
             request, started = original
             t.require(request.get('agentId') == agent and when >= started and current is not None,
@@ -753,7 +1043,15 @@ def read_copilot_traces(project, parent, sessions, since):
                     resume['pending'].remove(payload['toolCallId'])
                     if payload.get('model'):
                         current['models'].add(payload['model'])
-            if payload.get('success') is not True:
+            auxiliary = auxiliary_calls.get(call_id)
+            if auxiliary is not None:
+                dispatcher, active = auxiliary['auxiliary_parent']
+                t.require(agent == dispatcher and current['active'] == active
+                          and auxiliary['end'] is not None and auxiliary['end'] <= when
+                          and isinstance(payload.get('success'), bool),
+                          'Copilot nested task lifecycle did not complete within its parent dispatch')
+                auxiliary['dispatch_completed'] = when
+            if payload.get('success') is not True and 'auxiliary_parent' not in current:
                 continue
             edits = payload.get('fileEdits', [])
             t.require(isinstance(edits, list), 'Invalid Copilot committed file edits')
@@ -764,13 +1062,23 @@ def read_copilot_traces(project, parent, sessions, since):
                 t.require(target.is_absolute() and target.resolve().is_relative_to(project),
                           'Copilot file edit escaped project')
                 current['writes'].append((when, t.product_key(target.resolve().relative_to(project).as_posix())))
+            if 'auxiliary_parent' in current:
+                # Retain reported edits even for a failed tool. Only a direct
+                # worker may produce a role's native receipt markers.
+                continue
             call = request['data']
             args = call.get('arguments', {})
             if not agent and started >= since:
                 copilot_followup_result(by_agent, call.get('toolName'), args, payload, started, when)
             command = args.get('command') if isinstance(args, dict) else None
             if (started >= since and call.get('toolName') in {'powershell', 'bash'} and isinstance(command, str)
-                    and t.team_command(command) and payload.get('shellExecution', {}).get('exitCode') == 0):
+                    and payload.get('shellExecution', {}).get('exitCode') == 0):
+                if review_team is not None and current is rows.get('plan_review'):
+                    matches = t.plan_review_command(command, project, review_team)
+                else:
+                    matches = t.team_command(command)
+                if not matches:
+                    continue
                 result = payload.get('result', {})
                 # Never search assistant prose, call arguments, or partial stdout for receipts.
                 content = result.get('content', '') if isinstance(result, dict) else ''
@@ -779,12 +1087,45 @@ def read_copilot_traces(project, parent, sessions, since):
                         current['markers'].setdefault(digest, when)
     if not boundary_initialized:
         coordinator['models'], coordinator['efforts'] = {coordinator['model']}, {coordinator['effort']}
+    for auxiliary in auxiliary_calls.values():
+        if 'dispatch_completed' not in auxiliary:
+            dispatcher, active = auxiliary['auxiliary_parent']
+            t.require(by_agent[dispatcher]['active'] == active,
+                      'Copilot nested task lifecycle did not complete within its parent dispatch')
     return rows
 
 
 def copilot_adapter(project, state, parent, sessions, require_qa):
-    rows = read_copilot_traces(project, parent, sessions, common().instant(state['created']))
+    plan = state['plan']
+    review_team = plan['id'] if plan.get('decomposition') == 'reviewed-v1' else None
+    corporate_request = plan['request'] if plan.get('root_protocol') == 'corporate-v1' else None
+    rows = read_copilot_traces(project, parent, sessions, common().instant(state['created']),
+                               review_team=review_team, corporate_request=corporate_request)
     return verify_native_rows(project, state, parent, rows, require_qa, 'copilot-session-events-v1')
+
+
+def verify_native_plan_review(project, state, parent, rows):
+    t = common()
+    receipt = approved_decomposition(project, state)
+    reviewer = rows.get('plan_review')
+    t.require(reviewer is not None, 'Missing native plan_review worker')
+    t.require(reviewer['id'] != parent and all(row['id'] != reviewer['id'] for role, row in rows.items()
+                                              if role != 'plan_review'), 'Plan review is not independent')
+    t.require(reviewer['start'] >= t.instant(state['created']) and not reviewer.get('failed'),
+              'Native plan review has wrong start or failed')
+    if reviewer.get('resume') is not None:
+        raise t.NativeTurnPending('plan_review')
+    t.require_receipt_turn_finished(reviewer, [receipt], 'plan_review')
+    at = t.receipt_event(reviewer, receipt, 'plan_review')
+    finished = next((end for start, end in reviewer['intervals'] if start <= at <= end), None)
+    t.require(finished is not None, 'Native plan review turn has not completed')
+    for task in state['plan']['tasks']:
+        row = rows.get(task['id'])
+        t.require(row is not None and row['start'] >= finished, task['id'] + ': owner started before plan review completed')
+    t.require(not any(when < finished and not path.startswith(proof.STATE + '/')
+                      for row in rows.values() for when, path in row['writes']),
+              'Native product write preceded completed plan review')
+    return {'actor': reviewer['id'], 'receipt': receipt['sha256'], 'completed_at': finished.isoformat()}
 
 
 def verify_native_rows(project, state, parent, rows, require_qa, adapter):
@@ -805,11 +1146,30 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         if role not in {'integration', 'qa', *tasks}:
             t.require(not any(not rel.startswith(proof.STATE + '/') for _, rel in source['writes']),
                       role + ': unassigned agent wrote product files')
+    pending_auxiliary = next((role for role, source in rows.items()
+                              if 'auxiliary_parent' in source and 'dispatch_completed' not in source), None)
+    if pending_auxiliary is not None:
+        raise t.NativeTurnPending(pending_auxiliary)
+    plan_review = None
+    if plan.get('decomposition') == 'reviewed-v1':
+        plan_review = verify_native_plan_review(project, state, parent, rows)
+    admission = corporate_admission(project, state)
+    if admission:
+        admitted = t.instant(admission['admitted_at'])
+        sealed = t.instant(admission['binding']['sealed_at'])
+        t.require(not any(source['start'] >= sealed for role, source in rows.items()
+                          if role.startswith(COPILOT_COVERAGE_REVIEW + ':')),
+                  'Native coverage reviewer started after Corporate root sealing')
+        t.require(not any(when < admitted and not rel.startswith(proof.STATE + '/')
+                          for row in rows.values() for when, rel in row['writes']),
+                  'Native product write preceded Corporate root admission')
     builds, handoffs = {}, {}
     for tid, task in tasks.items():
         t.require(tid in rows, tid + ': missing native worker')
-        row, receipt = rows[tid], usable_handoff(project, state, tid)
+        row, receipt = rows[tid], usable_handoff(project, state, tid, admission=admission)
         t.require(row['id'] != parent and row['start'] >= created, tid + ': wrong native identity/start')
+        if admission:
+            t.require(row['start'] >= admitted, tid + ': owner started before Corporate root admission')
         t.require(not row.get('failed'), tid + ': native worker failed')
         if row.get('resume') is not None:
             raise t.NativeTurnPending(tid)
@@ -831,7 +1191,14 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         for dep in tasks[tid]['depends_on']:
             t.require(t.turn_start(row, at) >= handoffs[dep][1], tid + ': started before prerequisite handoff')
     for a, b in independent_pairs(tasks):
-        if t.completed_overlap(handoffs[a][0], handoffs[b][0]):
+        left, right = handoffs[a][0], handoffs[b][0]
+        if plan_review:
+            left_start, left_end = left['intervals'][0]
+            right_start, right_end = right['intervals'][0]
+            overlaps = max(left_start, right_start) < min(left_end, right_end)
+        else:
+            overlaps = t.completed_overlap(left, right)
+        if overlaps:
             overlap.append([a, b])
     if plan.get('max_parallel_workers', 1) > 1 and independent_pairs(tasks):
         t.require(overlap, 'Declared available parallel workers were not used on independent scopes')
@@ -847,6 +1214,8 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         reviewer = rows['qa']
         t.require(not reviewer.get('failed'), 'Native QA worker failed')
         t.require(reviewer['id'] not in {parent, *(v['id'] for v in builds.values())}, 'QA is not independent')
+        if admission:
+            t.require(reviewer['start'] >= admitted, 'QA started before Corporate root admission')
         if reviewer.get('resume') is not None:
             raise t.NativeTurnPending('qa')
         t.require_receipt_turn_finished(reviewer, [check, qa], 'qa')
@@ -855,9 +1224,14 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
                   and check_at <= qa_at and t.completed_receipt(reviewer, qa_at), 'QA has wrong order or incomplete turn')
         t.require(not any(not rel.startswith(proof.STATE + '/') for _, rel in reviewer['writes']),
                   'QA edited product source')
-    return {'status': 'PASS', 'adapter': adapter, 'workers': builds,
-            'overlap': overlap, 'independent_qa': require_qa,
-            'limitation': 'Cooperative local host records, not a hostile-writer security boundary.'}
+    assurance = {'status': 'PASS', 'adapter': adapter, 'workers': builds,
+                 'overlap': overlap, 'independent_qa': require_qa,
+                 'limitation': 'Cooperative local host records, not a hostile-writer security boundary.'}
+    if plan_review:
+        assurance['plan_review'] = plan_review
+    if admission:
+        assurance['corporate_dispatch'] = admission
+    return assurance
 
 
 def verify_registered(project, team_id, *, require_qa=True, parent=None, sessions=None, **unused):

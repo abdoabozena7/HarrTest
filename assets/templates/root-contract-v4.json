@@ -3,6 +3,7 @@
   "protocol": "corporate-v1",
   "goal_id": "mission",
   "production_team": "mission",
+  "team_decomposition": "reviewed-v1",
   "request_sha256": "REPLACE_ME exact original request digest",
   "scope_statement": "REPLACE_ME observable existing-code change and preserved contracts",
   "coverage_review": {
@@ -32,7 +33,7 @@
     "scope": "REPLACE_ME full current-source changed and preserved behavior"
   },
   "corporate": {
-    "plan": ".runtime-proof/corporate-plan.json",
-    "report": ".runtime-proof/corporate-report.json"
+    "plan": ".runtime-proof/root-goals/mission/corporate-plan.json",
+    "report": ".runtime-proof/root-goals/mission/corporate-report.json"
   }
 }
