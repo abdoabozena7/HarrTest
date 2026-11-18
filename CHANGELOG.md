@@ -1,6 +1,6 @@
 # Changelog
 
-## 5.0.0 — Corporate candidate (unreleased)
+## 5.0.0 — preview (`v5.0.0-rc.1`)
 
 - Reorganize the skill around evidence-backed changes to existing code,
   architecture and compatibility preservation, proportional implementation
@@ -9,9 +9,11 @@
   evidence and current-source acceptance; retain schema-2/3 meaning.
 - Introduce schema-2 teams for narrow or sequential work, deletion/rename
   manifests and validation-only integration, with host evidence separated.
-- Prepare eight development and eight separate acceptance cases across existing
-  C#, TypeScript, Python and C++ projects. Live Copilot comparisons and release
-  qualification are pending; no V5 quality uplift is claimed yet.
+- Treat post-turn native Copilot idle observations as completion evidence only
+  when they confirm the same worker, empty queue, and expected turn count.
+- Publish one `harrtest` skill on `main` and one installable `skill.zip`.
+  The held comparison did not qualify V5 for a stable release.
+  See [validation and limits](references/v5-validation.md).
 
 
 ## 4.1.0 — Gold (2026-11-13)

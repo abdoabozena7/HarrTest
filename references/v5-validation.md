@@ -1,8 +1,8 @@
-# V5 Corporate validation — in progress
+# HarrTest 5 validation
 
-V5 is a local development candidate. The released package and user-global skill
-are at 4.1.0. The frozen results below measure quality differences for the
-evaluated changes and environments.
+V5 is available as an opt-in GitHub preview, not a qualified stable release.
+Publishing it does not update existing user installations. The frozen results
+below measure quality differences for the evaluated changes and environments.
 
 ## Baseline
 

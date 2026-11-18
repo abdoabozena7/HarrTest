@@ -1,144 +1,46 @@
-# HarrTest V5 Corporate — development candidate
+# HarrTest 5
 
-**Not released or globally installed.** V5 changes the default workflow to
-existing-code work: inspect architecture and contracts, retain a measured
-baseline, scope implementation owners and independently verify functionality,
-preservation, architecture, security, performance and resilience. Quality checks
-follow the change's actual impact. Visual and browser instructions are conditional.
+HarrTest is one installable coding-agent skill: **`harrtest`**. The Corporate
+workflow is part of version 5, not a separate skill or edition. It starts with
+the existing project's architecture, contracts, and measured baseline. It
+assigns independent changes to native implementation owners and uses separate
+QA to verify the integrated result on current source.
 
-The new Corporate root protocol and Team schema preserve the verification meaning
-of legacy contracts. A required check that did not run remains unverified;
-an aggregate score cannot waive a failed quality layer.
+**Version 5 preview:** the fourth Copilot comparison did not meet the stable
+release criteria. A subsequent development run verified the repaired workflow
+end to end; it does not establish a general quality improvement. See the
+[validation record](references/v5-validation.md) for the results and limits.
+
+[Install](#install) · [Start a task](#start-a-task) ·
 [Corporate workflow](references/corporate-workflow.md) ·
-[V5 validation status](references/v5-validation.md)
-
-## V5 on existing code
-
-The second frozen comparison ran 96 Copilot attempts on existing C#, TypeScript,
-Python and C++ projects using GPT-6 Luna and GPT-6.1 Sol at low reasoning effort.
-Independent reviewers checked actual behavior and compatibility, the project diff,
-and applicable safety, performance and failure cases.
-
-| Measure | No HarrTest | 4.1 | V5 candidate |
-| --- | ---: | ---: | ---: |
-| Artifacts passing independent quality review | 12/32 | 12/32 | 18/32 |
-| False accepts | 20 | 19 | 4 |
-| Median generation time | 73s | 101s | 741s |
-
-Release requires zero V5 false accepts. The [validation record](references/v5-validation.md)
-includes costs, security and architecture outcomes, and the exact comparison scope.
-
-## Released 4.1 workflow
-
-HarrTest is a skill and local workflow coordinator for coding agents. Gold
-preserves what the user asked for, ties consequential decisions to evidence,
-and requires independent testing before accepting the integrated result.
-Version 4.1 routes a new product through native implementation workers before
-the coordinator assembles it. Each worker owns product files, a component
-contract and its checks.
-
-[Install](#install) · [Start a task](#start-a-task) · [Gold runbook](references/v4-gold.md) · [4.1 results](references/v4.1-validation.md)
-
-## Historical 4.1 Luna-low result
-
-The same short request produced two playable Three.js games. Independent
-image review preferred the HarrTest result and accepted its component finishing.
-Three native implementation owners built the car, track and gameplay modules;
-the coordinator assembled them, with separate intent, finishing and QA roles.
-All seven observed generation roles used **Luna, low reasoning**. The observer
-changed the general harness and evaluated outputs, with zero custom game edits
-or game-specific repair guidance.
-
-| Final observation | Without HarrTest | With HarrTest |
-| --- | ---: | ---: |
-| Independent evidence score | 20/24 | **23/24** |
-| Mandatory runtime outcomes | 5/5 | 5/5 |
-| Sampled FPS: acceleration | 19.47 | **22.06** |
-| Sampled FPS: steering | 20.28 | **22.11** |
-| Sampled FPS: brake | 19.67 | **21.98** |
-| Public clock / wall time | 0.954x | 0.997x |
-
-**Without HarrTest** — actual browser capture after the acceleration action:
-
-![Luna without HarrTest: dark city racing game](visual/comparison/without-harrtest.png)
-
-**With HarrTest** — the same capture stage and rendering profile:
-
-![Luna with HarrTest: curved coastal circuit and sports car](visual/comparison/with-harrtest.png)
-
-This is one **adaptive development comparison**, with earlier failures, source
-reuse and a service interruption retained. Generation cost was not matched;
-the final package has no successful cold replication here. Both use Edge,
-1440×900/DPR 1 and actual SwiftShader. Short callback samples do not establish
-smooth motion: the temporal item remains unverified for both. The candidate
-also has one blocked optional font request. These observations do not establish
-general model uplift or enterprise readiness.
-[Protocol, limits and retained failures](references/v4.1-validation.md) ·
-[Measured results and source/image identities](references/v4.1-results.json)
-
-## Production workers in 4.1
-
-A short request for a new app still needs a production split. The coordinator
-assigns the components and their interfaces, dispatches independent workers,
-and integrates the files they actually deliver. A separate QA worker exercises
-the integrated entrypoint. The split follows the task's real components.
-Complex details can have their own bounded owner.
-
-`team.py` retains the plan before edits and connects native Codex patch
-events, handoff receipts and current output hashes. It checks distinct
-implementers, overlap of active turns, integration after production, and
-independent QA with retained subprocess output. A schema-3 root can seal the
-`production_team` ID so direct root verification also requires that evidence.
-[Production team instructions](references/production-teams.md)
-
-The skill directs the host to use that path. Tool-level blocking requires
-the host to load and trust an actual hook. The Team verifier checks the
-supported native records when invoked. Product and visual checks establish
-the quality of the assembled result.
-
-## What Gold requires
-
-| Stage | What the workflow keeps |
-| --- | --- |
-| Understand the request | The original wording, interpreted outcomes, material edge cases, and user answers when a decision needs clarification. |
-| Justify the plan | Evidence for consequential choices, linked to the relevant original requirements. |
-| Divide the work | A dependency graph and a focused, self-contained prompt for each worker, with file scope, interfaces, and expected checks. |
-| Run independent branches together | Separate native host invocations for ready tasks with compatible scopes. The coordinator tracks ownership and shared resources. |
-| Test each implementation | A distinct testing agent runs the agreed checks after the implementer hands off and records the observed result. |
-| Verify the whole task | Integration runs against current source and checks the original outcomes. Gold also requires a comparison with the baseline. |
-
-For example, a request to add CSV export could leave the delimiter, encoding,
-and permission rules unclear. Resolve the choices that affect acceptance
-before dividing the work. Once the interface is agreed, separate workers can
-implement the exporter and integrate the download action in parallel. Their
-testers exercise the agreed cases, and the integration check downloads and
-inspects the resulting file through the real entry point.
+[Changelog](CHANGELOG.md)
 
 ## Install
 
-The skill ID is **`harrtest`**. The local scripts use Python 3.10+ and the
-standard library. Use your host's skill installer, or install from the repository
-through the Agent Skills CLI:
+Download the [single installable `skill.zip`](https://github.com/abdoabozena7/HarrTest/releases/download/v5.0.0-rc.1/skill.zip)
+from the [version 5 preview](https://github.com/abdoabozena7/HarrTest/releases/tag/v5.0.0-rc.1).
+Extract it to get the `harrtest` folder, including its Python 3.10+ scripts
+and references. If you already use HarrTest, update your existing installation
+instead of adding a second copy.
+
+To install from `main` with the Agent Skills CLI:
 
 ```bash
-npx skills add https://github.com/abdoabozena7/HarrTest --skill harrtest -g
+npx skills add https://github.com/abdoabozena7/HarrTest --skill harrtest
 ```
 
-Select your coding host, reload its skill discovery, and have it confirm which
-version it actually loaded. Pin active missions to the version that sealed
-their contracts.
-
-From a checkout of this release, the bundled installer can also set up
-project instructions and supported optional hooks. For Copilot on Windows:
+For a project-scoped Copilot install on Windows, run from the target project
+using the bundled installer from the extracted folder:
 
 ```powershell
-py -3 .\scripts\install.py --agent copilot --scope user --project C:\path\to\repo --instructions --hooks --update --dry-run
-py -3 .\scripts\install.py --agent copilot --scope user --project C:\path\to\repo --instructions --hooks --update
+py -3 C:\path\to\harrtest\scripts\install.py --agent copilot --scope project --project . --update --dry-run
+py -3 C:\path\to\harrtest\scripts\install.py --agent copilot --scope project --project . --update
 ```
 
-Review the dry run before installing. The installer merges existing project
-instructions and retains backups. Automatic stop enforcement requires a
-supported hook that the host actually invokes.
+Review the dry run before installing. Reload skill discovery and confirm
+that your host loaded `harrtest` version `5.0.0`. Keep active missions pinned
+to the version that sealed their contracts. Optional instructions and hooks
+are described in the [workflow guide](references/corporate-workflow.md).
 
 ## Start a task
 
@@ -149,42 +51,23 @@ $harrtest
 [your original request]
 ```
 
-For a new product the host starts with the production team plan and component
-workers. For formal acceptance and a baseline comparison, a Gold workflow declares
-`golden: {intake, protocol, measurement}` in its plan and sets
-`protocol: "golden-v1"` on its schema-3 root. That binds Gold checks to the
-root even when a verifier calls it directly. The coordinator uses the host's
-actual workers and tools.
+Use the [Corporate workflow](references/corporate-workflow.md) for substantial
+existing-code changes and [production teams](references/production-teams.md)
+for scoped native handoffs. Independently check functionality, preservation,
+architecture, security, performance and resilience as applicable. A required
+check without evidence stays unverified; an aggregate score does not waive it.
 
-```text
-python <skill>/scripts/golden.py --project . inspect --plan gold-plan.json
-python <skill>/scripts/workflow.py --project . init --plan gold-plan.json
-python <skill>/scripts/workflow.py --project . ready --goal mission
-# Dispatch the ready work, collect handoffs, and run the independent checks.
-python <skill>/scripts/golden.py --project . candidate --plan gold-plan.json
-# Record the candidate measurements against the returned source identity.
-python <skill>/scripts/golden.py --project . compare --plan gold-plan.json
-python <skill>/scripts/workflow.py --project . root --goal mission
-```
+## Compatibility and project tools
 
-Each worker receives a scoped task packet. Its handoff ties the packet to the
-native invocation, retained trace and observed checks. Use the real entry
-point for acceptance, such as a browser
-journey, a public API call, or the generated program running in a fresh
-process. The runbook covers each command and the evidence it expects.
-[Gold runbook](references/v4-gold.md)
-
-## Measure before and after
-
-In the 4.0 validation's 12 matched local CLI cases, correct gate decisions
-rose from **4/12 on v3.2.2 to 12/12 on 4.0 Gold**. False accepts fell from
-**8/9 to 0/9**. A separate
-live intake probe scored **4/6 on both versions**. [Cases, raw evidence and reproduction](references/v4-validation.md)
-
-Predeclare cases, baseline and success thresholds. Keep failed, blocked and
-missing attempts in the comparison. The local cases measure controller
-behavior; the single live probe cannot establish an improvement in agent
-quality or workplace outcomes.
+- Existing v3 and Gold workflows retain their contract and evidence history.
+  Keep old seals and receipts when upgrading.
+  [Migration](references/v3-migration.md) · [Gold runbook](references/v4-gold.md) · [4.1 results](references/v4.1-validation.md)
+- [Project Builder](references/project-builder.md) coordinates and verifies
+  runnable milestones for a new product.
+- [Project Memory](references/project-context-memory.md) keeps source-qualified
+  facts and task context outside installed skill files.
+- [CI](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml)
+  exercises Windows and Linux and packages the skill.
 
 Run the regression suite from the repository:
 
@@ -192,25 +75,11 @@ Run the regression suite from the repository:
 python -B -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-## Existing workflows and project tools
-
-- Existing v3 workflows retain their contract and evidence history. Keep old
-  seals and receipts when upgrading. [Migration](references/v3-migration.md) · [v3 workflow](references/v3-workflow.md)
-- Project Builder coordinates runnable milestones for a new product and
-  verifies their cumulative behavior. [Project Builder](references/project-builder.md)
-- Project Memory keeps source-qualified facts and task context in
-  `~/.harrtest/projects/`, outside both the project and the installed skill.
-  [Project Memory](references/project-context-memory.md)
-- CI exercises Windows and Linux and packages the complete installable skill.
-  [CI](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml)
-
 ## Trust boundaries
 
-Gold enforces its declared checks inside the workflow and root verifiers.
-Coordination and provenance depend on the host and the people or agents
-recording evidence. The quality of an interpretation, the completeness of the
-edge cases, and the identity behind a worker record require independent
-review. Use a trusted evaluator and evidence store outside worker write
-access when the result has production consequences. [Security](SECURITY.md) · [Capability boundaries](references/security-and-limitations.md)
+HarrTest verifies declared evidence; it does not sandbox agents, grant
+permissions, or guarantee an independent evaluator. Keep production acceptance
+evidence outside implementer write access. See [Security](SECURITY.md) and
+[capability boundaries](references/security-and-limitations.md).
 
-[Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
+[Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)

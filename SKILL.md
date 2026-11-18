@@ -3,7 +3,7 @@ name: harrtest
 description: Change software with evidence-based planning, scoped implementation workers and independent quality checks. Understand existing architecture and contracts, preserve behavior, and verify correctness, security, performance and resilience as relevant to the change. Use for implementation, debugging, refactoring and complex coding tasks. Does not apply to conversation-only requests or work that excludes execution.
 ---
 
-# HarrTest V5 Corporate
+# HarrTest 5
 
 For an implementation request, start as coordinator. Record the baseline and
 open the [Team plan](references/production-teams.md) before the first product
