@@ -104,6 +104,11 @@ class CorporateBenchmarkTests(unittest.TestCase):
             self.assertEqual(metadata['arm'], arm)
             self.assertEqual(bench.attempt_guard_goal(plan, metadata), 'mission' if arm == 'v5' else None)
             self.assertFalse((slot / 'work/.github/hooks/harrtest-corporate-guard.json').exists())
+            request = slot / 'work/.runtime-proof/root-goals/mission/original-request.txt'
+            if arm == 'v5':
+                self.assertEqual(request.read_bytes(), metadata['prompt'].encode('utf-8'))
+            else:
+                self.assertFalse(request.exists())
         bounded = next(case['id'] for case in cases if case['id'] not in guarded)
         narrow = bench.prepare(self.experiment, bounded, 'v5', 'normal-observed', 2)
         self.assertIsNone(bench.attempt_guard_goal(plan, bench.load(narrow / 'attempt.json')))

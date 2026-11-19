@@ -391,12 +391,24 @@ def main() -> int:
         if args.action == "init":
             project = args.project.resolve()
             goal = root_dir(project, args.id)
-            request = args.request_file.read_text(encoding="utf-8")
-            proof.meaningful(request, "exact original request", 15)
-            goal.mkdir(parents=True, exist_ok=False)
-            (goal / "original-request.txt").write_text(request, encoding="utf-8")
+            request = args.request_file.read_bytes()
+            proof.meaningful(request.decode("utf-8"), "exact original request", 15)
+            original = proof.relative_file(project, (goal / "original-request.txt").relative_to(project).as_posix(),
+                                           must_exist=False)
+            try:
+                goal.mkdir(parents=True, exist_ok=False)
+            except FileExistsError:
+                if not original.is_file() or original.read_bytes() != request:
+                    raise proof.ProofError("This goal already exists with a different or missing original request. "
+                                           "Keep its evidence and use a new goal ID for a different request.")
+                already_initialized = True
+            else:
+                with original.open("xb") as file:
+                    file.write(request)
+                already_initialized = False
             print(json.dumps({"goal": str(goal),
-                              "request_sha256": proof.file_hash(goal / "original-request.txt"),
+                              "request_sha256": proof.file_hash(original),
+                              "already_initialized": already_initialized,
                               "status": "ROOT_GOAL_UNVERIFIED"}))
             return 0
         goal = args.goal.resolve()

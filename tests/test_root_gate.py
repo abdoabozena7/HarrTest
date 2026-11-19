@@ -2,6 +2,8 @@
 import copy
 import contextlib
 import io
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -35,6 +37,30 @@ class RootGateTests(unittest.TestCase):
         proof.save(self.goal/"root-seal.json",{"root_hash":proof.digest(self.c),
            "request_sha256":self.c["request_sha256"],"sealed_at":proof.now()})
     def tearDown(self): self.tmp.cleanup()
+
+    def test_init_preserves_bytes_and_reuses_only_an_identical_request(self):
+        source = self.project / "request.txt"
+        request = b"Fix the local fixture and preserve the public contract.\r\nReport the actual checks.\n"
+        source.write_bytes(request)
+        goal = self.goal.parent / "enrolled"
+        original = goal / "original-request.txt"
+        command = [sys.executable, "-B", str(ROOT / "scripts/root_gate.py"), "init",
+                   "--project", str(self.project), "--id", goal.name, "--request-file"]
+        first = subprocess.run([*command, str(source)], capture_output=True, check=True)
+        self.assertFalse(json.loads(first.stdout)["already_initialized"])
+        self.assertEqual(original.read_bytes(), request)
+        draft = goal / "root-contract.json"
+        draft.write_bytes(b'{"draft":true}')
+        again = subprocess.run([*command, str(original)], capture_output=True, check=True)
+        self.assertTrue(json.loads(again.stdout)["already_initialized"])
+        self.assertEqual(json.loads(again.stdout)["request_sha256"], proof.file_hash(original))
+        source.write_bytes(request.rstrip())
+        different = subprocess.run([*command, str(source)], capture_output=True)
+        self.assertEqual(different.returncode, 2)
+        self.assertIn(b"different or missing original request", different.stderr)
+        self.assertEqual(original.read_bytes(), request)
+        self.assertEqual(draft.read_bytes(), b'{"draft":true}')
+
     def child(self,name):
         task=self.project/".runtime-proof"/name
         task.mkdir()

@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -514,15 +515,32 @@ class ExistingCodeTeam(unittest.TestCase):
                              'Report the café example and preserve whitespace.\r\n'.encode('utf-8'))
         return original
 
-    def cli_init(self, *, from_root):
+    def cli_init(self, *, from_root, enrolled_goal=None):
         draft = self.project / '.runtime-proof/team-plan.json'
         proof.save(draft, self.plan)
         command = [sys.executable, '-B', str(REPO / 'scripts/team.py'), '--project', str(self.project),
                    'init', '--plan', draft.relative_to(self.project).as_posix()]
         if from_root:
             command.append('--request-from-root')
-        result = subprocess.run(command, capture_output=True, encoding='utf-8')
+        environment = os.environ.copy()
+        environment.pop('HARRTEST_CORPORATE_GOAL', None)
+        if enrolled_goal:
+            environment['HARRTEST_CORPORATE_GOAL'] = enrolled_goal
+        result = subprocess.run(command, capture_output=True, encoding='utf-8', env=environment)
         return result, draft
+
+    def test_enrolled_goal_cannot_register_a_manually_reconstructed_request(self):
+        original = self.root_request_fixture()
+        self.plan['request'] = original.read_text(encoding='utf-8').rstrip()
+        rejected, _ = self.cli_init(from_root=False, enrolled_goal='fix')
+        self.assertEqual(rejected.returncode, 2, rejected.stdout + rejected.stderr)
+        self.assertIn('differs from the saved original request', rejected.stdout)
+        self.assertFalse(team.team_path(self.project, 'fix', must_exist=False).exists())
+        del self.plan['request']
+        accepted, _ = self.cli_init(from_root=False, enrolled_goal='fix')
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        self.assertEqual(team.load_state(self.project, 'fix')['plan']['request'].encode('utf-8'),
+                         original.read_bytes())
 
     def test_root_request_option_preserves_the_exact_saved_request_and_binding(self):
         original = self.root_request_fixture()
@@ -1233,6 +1251,54 @@ class CopilotAdapter(unittest.TestCase):
         self.assertLess(observed['intervals'][0][1], observed['intervals'][1][0])
         self.assertEqual(observed['intervals'][1], (team.instant(resume['turn_start']['timestamp']),
                                                     team.instant(resume['next_turn_end']['timestamp'])))
+
+    def steering_trace(self):
+        rows, resume = self.followup_trace()
+        worker = resume['message']['agentId']
+        message = 'Also verify the unchanged output for an empty request.'
+        resume.update(
+            steer_start=self.event('tool.execution_start', 14.5, {
+                'toolCallId': 'steer', 'toolName': 'write_agent',
+                'arguments': {'agent_id': worker, 'message': message}}),
+            steer_done=self.event('tool.execution_complete', 14.6, {
+                'toolCallId': 'steer', 'success': True,
+                'toolTelemetry': {'properties': {'agent_id': worker}}}),
+            steer_message=self.event('user.message', 15.11, {
+                'source': 'agent-' + self.parent, 'content': message, 'delivery': 'steering',
+                'interactionId': resume['message']['data']['interactionId'], 'turnId': '1'}, worker),
+        )
+        return rows, resume
+
+    def test_steering_during_resume_stays_in_the_original_interaction(self):
+        rows, resume = self.steering_trace()
+        self.save_followup(rows, resume)
+        result = self.verify()
+        self.assertTrue(result['passed'], result)
+        qa = team_v2.read_copilot_traces(self.project, self.parent, self.sessions,
+                                         team.instant(self.state['created']))['qa']
+        self.assertEqual(len(qa['intervals']), 2)
+        self.assertIsNone(qa.get('resume'))
+
+    def test_steering_requires_a_paired_send_and_current_delivery(self):
+        rows, resume = self.steering_trace()
+        for case in ('no_delivery', 'failed_send', 'different_message', 'different_interaction', 'wrong_turn', 'after_tools'):
+            with self.subTest(case=case):
+                altered = deepcopy(resume)
+                delivery = altered['steer_message']
+                if case == 'no_delivery':
+                    del altered['steer_message']
+                elif case == 'failed_send':
+                    altered['steer_done']['data']['success'] = False
+                elif case == 'different_message':
+                    delivery['data']['content'] += ' Changed.'
+                elif case == 'different_interaction':
+                    delivery['data']['interactionId'] = 'another interaction'
+                elif case == 'wrong_turn':
+                    delivery['data']['turnId'] = '0'
+                else:
+                    delivery['timestamp'] = self.event('time', 16.5, {})['timestamp']
+                self.save_followup(rows, altered)
+                self.assertFalse(self.verify()['passed'])
 
     def test_idle_read_after_turn_closes_resume_for_next_delivery(self):
         rows, first = self.followup_trace()

@@ -1207,6 +1207,12 @@ def prepare(experiment, case_id, arm, model, repetition):
     prompt = case["request"] + "\nWork in the existing project. Preserve its documented contracts and the byte-identical paths listed in CONTRACT.md. RUNTIME.md gives the supplied toolchain profile. Run the actual checks relevant to your change and report observed outcomes and limitations."
     if arm != "plain":
         prompt = "$harrtest\n" + prompt
+    guarded_goal = attempt_guard_goal(plan, {'arm': arm, 'case': case})
+    if guarded_goal:
+        original = workspace / '.runtime-proof' / 'root-goals' / guarded_goal / 'original-request.txt'
+        original.parent.mkdir(parents=True, exist_ok=False)
+        with original.open('xb') as request:
+            request.write(prompt.encode('utf-8'))
     save(attempt / "attempt.json", {"schema": 1, "id": attempt.name, "case": case,
          "arm": arm, "model": model, "repetition": repetition, "baseline": baseline,
          "protocol_sha256": digest(plan), "prompt": prompt, "created_unix": time.time()}, exclusive=True)
@@ -2332,6 +2338,10 @@ def _run_attempt(attempt, *, permit_generation=False):
     configuration['sessionId']=str(uuid.uuid4())
     guard_goal = attempt_guard_goal(plan, meta)
     if guard_goal:
+        original = workspace / '.runtime-proof' / 'root-goals' / guard_goal / 'original-request.txt'
+        original_sha = sha(original)
+        if original_sha != hashlib.sha256(meta['prompt'].encode('utf-8')).hexdigest():
+            raise ValueError('The enrolled original-request snapshot differs from the frozen prompt')
         configuration['corporateGuardGoal'] = guard_goal
         prepare_corporate_guard(workspace, tools['python'], guard_goal, configuration['sessionId'])
     host_home=Path(os.environ.get('COPILOT_HOME',Path.home()/'.copilot')).resolve()
@@ -2344,6 +2354,8 @@ def _run_attempt(attempt, *, permit_generation=False):
     for path in (Path.home()/'.copilot/settings.json',):
         if path.is_file(): before_settings[str(path)]=sha(path)
     before_configuration=configuration_inputs(workspace)
+    if guard_goal:
+        before_configuration[str(original)] = original_sha
     environment=generation_environment(workspace,tools)
     raw=command(argv,workspace,budget['seconds']+30,env=environment)
     (attempt/'transport.stdout').write_text(raw.pop('stdout'),encoding='utf-8')
@@ -2388,7 +2400,10 @@ def _run_attempt(attempt, *, permit_generation=False):
             raw['status']='INVALID';raw['reason']='Observed actual model differs from the pinned model'
         if meta['arm']=='plain' and any(isinstance(x,dict) and x.get('skill')=='harrtest' for x in invoked):
             raw['status']='INVALID';raw['reason']='Plain runtime invoked HarrTest'
-    validate_generation_inputs(before_configuration,configuration_inputs(workspace),raw)
+    after_configuration = configuration_inputs(workspace)
+    if guard_goal:
+        after_configuration[str(original)] = sha(original) if original.is_file() else None
+    validate_generation_inputs(before_configuration, after_configuration, raw)
     save(attempt/'generation.json',raw)
     return raw
 

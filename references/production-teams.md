@@ -165,6 +165,10 @@ observe whether the worker finished. The native verifier checks follow-up
 delivery, worker identity and completion. It also recognizes a native
 non-waiting `read_agent` that starts after the follow-up turns have closed
 and confirms idle with an empty queue and the expected completed-turn count.
+Prefer waiting before sending another message. Copilot can also deliver a
+message as steering during a resumed interaction. The verifier binds that
+delivery to the original parent send and the receiving turn, and still
+requires the resumed interaction to finish.
 In Codex, use `followup_task` for
 the original worker. If the host cannot resume the actor, keep native acceptance
 unverified and record the limitation.

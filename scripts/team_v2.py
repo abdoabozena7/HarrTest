@@ -743,6 +743,18 @@ def copilot_agent_message(worker, parent, payload, when):
     message = payload.get('content')
     interaction = payload.get('interactionId')
     initial_turn = payload.get('turnId')
+    if payload.get('delivery') == 'steering':
+        steering = (resume or {}).get('steering')
+        # Steering is emitted just after the receiving turn starts, without
+        # creating a new interaction or a completed worker interval.
+        t.require(steering is not None and resume.get('turn') is not None and not resume['turn_used']
+                  and interaction == resume['interaction'] and initial_turn == resume['turn']
+                  and steering[0] <= resume['turn_start'] <= when
+                  and payload.get('source') == 'agent-' + parent
+                  and isinstance(message, str) and hashlib.sha256(message.encode()).digest() == steering[1],
+                  'Copilot steering message lacks its original native delivery')
+        del resume['steering']
+        return
     t.require(resume is not None and 'interaction' not in resume and when >= resume['sent']
               and payload.get('source') == 'agent-' + parent and payload.get('delivery') == 'idle'
               and isinstance(interaction, str) and interaction and interaction not in worker['interactions']
@@ -771,6 +783,7 @@ def copilot_followup_turn(worker, kind, payload, when):
             worker['active'] = when
             worker['turn_starts'].append(when)
         resume['turn'], resume['turn_start'] = turn, when
+        resume['turn_used'] = False
         resume['turns'].add(turn)
     else:
         t.require(resume.get('turn') == turn and when >= resume['turn_start'] and not resume['pending'],
@@ -789,16 +802,22 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
     properties, metrics = telemetry.get('properties', {}), telemetry.get('metrics', {})
     if properties.get('agent_id') != worker['id']:
         return
+    resume = worker.get('resume')
     if tool == 'write_agent':
         message = args.get('message')
-        if started >= worker['end'] and worker.get('resume') is None and isinstance(message, str) and message:
-            worker['resume'] = {'sent': when, 'message': hashlib.sha256(message.encode()).digest()}
+        if started < worker['end'] or not isinstance(message, str) or not message:
+            return
+        digest = hashlib.sha256(message.encode()).digest()
+        if resume is None:
+            worker['resume'] = {'sent': when, 'message': digest}
+        elif worker['active'] is not None and started >= worker['active']:
+            common().require('steering' not in resume, 'Copilot has multiple unpaired steering messages')
+            resume['steering'] = (when, digest)
         return
-    resume = worker.get('resume')
     wait = args.get('wait', False)
     # Copilot also emits an automatic idle-status read with no wait argument.
     # A non-waiting read must start after the last observed turn has ended.
-    if (not resume or 'turn_end' not in resume or resume.get('turn') is not None
+    if (not resume or 'turn_end' not in resume or resume.get('turn') is not None or 'steering' in resume
             or type(wait) is not bool or (not wait and started < resume['turn_end'])
             or properties.get('status') != 'idle'
             or type(metrics.get('queue_depth')) is not int or metrics['queue_depth'] != 0
@@ -954,6 +973,7 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                     t.require(resume.get('turn') is not None and payload.get('turnId') == resume['turn']
                               and payload.get('parentToolCallId') == current['dispatch_call']
                               and when >= resume['turn_start'], 'Copilot child tool is outside its actual task lifecycle')
+                    resume['turn_used'] = True
                     resume['pending'].add(call_id)
             calls[call_id] = (event, when)
             if len(calls) > MAX_NATIVE_PENDING_CALLS or len(dispatch) > MAX_NATIVE_PENDING_CALLS:

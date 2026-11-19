@@ -1272,7 +1272,9 @@ def main(argv=None):
     try:
         if args.command == 'init':
             plan = proof.load(strict_io.scoped_path(project, args.plan))
-            if args.request_from_root:
+            enrolled_goal = os.environ.get('HARRTEST_CORPORATE_GOAL')
+            enrolled = bool(enrolled_goal and isinstance(plan, dict) and plan.get('id') == enrolled_goal)
+            if args.request_from_root or enrolled:
                 plan = request_from_root(project, plan)
             result = init(project, plan)
         elif args.command == 'verify':

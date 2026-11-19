@@ -191,6 +191,46 @@ The planner, retry, and lookup cases now belong to development. The next held
 matrix retains its size, language balance and separate recovery and scaling
 requirements. None of these development observations count toward release.
 
+### Fifth frozen comparison
+
+`acceptance-v5-9` pinned the V5 package at `f828f184`. It retained 78 of 96
+declared slots with independent assessments, stopping after the strict
+quality condition became impossible. Both controls had 26 complete-quality
+passes; V5 had 18 and no recorded false accepts among the reviewed slots.
+With six unrun slots per arm, even if all six remaining V5 slots passed,
+V5 could reach only 24 of 32. The six unrun slots are still in each
+denominator, not excluded or treated as observed failures. This pin cannot
+qualify and was not promoted. The retained `unqualified-summary.json` has
+SHA-256 `1e0d4771c98921ac2fe4fd068ae7bf8cbe2ac42680fedc8700b398f84c7a7f34`.
+
+The retained Copilot records distinguished request-binding and admission
+failures, transport interruptions, and a valid steering message during an
+already-resumed QA turn. The original slot outcomes are unchanged. A new
+Luna/low diagnostic independently observed the idle follow-up and steering
+delivery on the same actor. The repaired adapter closed the original resume;
+the previous adapter rejected it. The steering replay does not substitute
+for missing QA or root assurance. See the retained
+`development-copilot-steering-probe/parser-validation.json` for the live trace
+digest and parser results.
+
+The third guarded development replay reached plan and coverage review but
+recreated the enrolled request with different line endings. Its result stayed
+`INVALID`; the SDK did not reach idle and the original source passed 5/10 checks.
+The next pin preserves request bytes at initialization, allows an exact retry
+without changing an existing draft, and requires the enrolled Team to bind to
+that request from registration. The fourth guarded replay preserved the request
+and passed independent plan review without configuration drift. Independent
+coverage review still found missing assertions for `cue_count` and
+non-mutation. The SDK reached its idle deadline before admission or product
+edits; the baseline passed 5/10 checks. The request repair therefore does not
+establish end-to-end guarded acceptance. Both attempts remain in the
+`development-v5-release-boundaries-r3` and `development-v5-release-boundaries-r4`
+archives.
+
+The fourth development pin also passed the full compatibility suite:
+542 tests ran with four skips and no failures. This establishes controller
+compatibility, not qualification of the Copilot output or of the release.
+
 ### Workflow development evidence
 
 The same frozen protocol retained a credit-validation attempt with seven passing

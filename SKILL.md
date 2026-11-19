@@ -16,8 +16,10 @@ For a bounded change with one settled responsibility, use the minimal Team
 schema-2 path: one owner, integration and independent QA. Do not add a Corporate
 root, extra reviewers, or extra project files unless the task needs them.
 When the host explicitly supplies `HARRTEST_CORPORATE_GOAL`, use that goal ID
-for the reviewed Team and Corporate root. Save the original request in the root
-first, then register the Team with `team.py init --request-from-root`. Dispatch
+for the reviewed Team and Corporate root. Reuse its original request snapshot
+if the host already supplied one; otherwise save the exact request before
+registering the Team. Omit `request` in the Team draft and run
+`team.py init --request-from-root`. Dispatch
 the exact Team plan review and `corporate.py coverage-packet` messages as separate
 tasks. Complete the root seal before dispatching implementation or editing.
 

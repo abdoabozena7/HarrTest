@@ -47,6 +47,11 @@ python <skill>/scripts/team.py --project . init --plan .runtime-proof/team-plan.
 ```
 
 The registered Team state retains the saved request, including trailing whitespace.
+When the host enrolls a goal by setting `HARRTEST_CORPORATE_GOAL`, its matching
+Team uses that binding even if the command omits the flag. Reuse a host-supplied
+request snapshot; do not reconstruct it from agent prose or change its whitespace.
+`root_gate.py init` preserves the input bytes. Repeating it with the same
+saved request is safe; it neither replaces the snapshot nor clears existing drafts.
 The input plan file remains available as the draft. When the integration proof
 contract is sealed and the actual baseline checks have run, create the Corporate
 drafts from those records.
