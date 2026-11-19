@@ -162,13 +162,15 @@ def validation_snapshot(project, plan):
 
 def validation_message(project, state):
     expected = state.get('validation_inputs', {})
-    require(validation_snapshot(project, state['plan']) == expected,
-            'Sealed validation context changed; preserve this attempt and seal a new plan for changed inputs')
+    actual = validation_snapshot(project, state['plan'])
+    changed = sorted(name for name in actual.keys() | expected.keys() if actual.get(name) != expected.get(name))
+    require(not changed, 'Sealed validation context changed: ' + ', '.join(changed)
+            + '. Preserve this attempt and seal a new plan if the inputs are authorized to change.')
     if not expected:
         return ''
     rows = '\n'.join(f'- {strict_io.scoped_path(project, rel).as_posix()} (SHA-256 {digest})'
                      for rel, digest in expected.items())
-    message = ('Sealed validation context: read these explicit local inputs before design or checks.\n'
+    message = ('Sealed read-only validation context: read these inputs and keep their bytes unchanged.\n'
                f'{rows}\nUse the supplied full runtime/profile and acceptance constraints for your '
                'component and integrated checks; do not substitute defaults.')
     if state['plan'].get('schema') != 2:

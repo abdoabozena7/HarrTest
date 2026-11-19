@@ -61,7 +61,14 @@ unrequested input modes.
   approval that govern the affected paths and interfaces. Review the full diff
   from the baseline for changes outside that authority, including new, moved
   and deleted files. When a rule requires particular files to stay
-  byte-identical, compare their digests as well.
+  byte-identical, bind those files in the Team's `validation_context` and compare
+  their digests as well. If a change is out of scope, route it to the original
+  actor for correction; never revert unrelated user changes.
+- **Changed evaluation order.** An optimization that computes work before an
+  empty loop, no-op exit, or failed parse can newly execute arithmetic, I/O
+  or a write. Replay that exact path against the old and new public entrypoint
+  (including its prior output/exit/state) before marking preservation or
+  safety verified. Do not infer safety from the normal workload passing.
 - **Existing test oracles.** When tests change, trace the previous inputs and
   assertions for preserved behavior to their current equivalents. Replay the
   original checker or an equivalent check on the candidate. In a disposable

@@ -12,6 +12,7 @@ import argparse
 import ast
 from contextlib import contextmanager
 import hashlib
+from itertools import accumulate
 import json
 import math
 import os
@@ -39,6 +40,9 @@ EVALUATOR_ONLY = {'scripts/corporate_benchmark.py','assets/corporate',
                   'references/v4.1-validation.md','references/v4.1-results.json','references/v5-validation.md'}
 LAYER_NAMES = ("functionality", "preservation", "architecture", "security", "performance", "resilience")
 GENERATION_OUTCOMES = {"COMPLETED", "FAILED", "TIMEOUT", "BLOCKED_UNVERIFIED", "UNVERIFIED", "INVALID"}
+PERFORMANCE_WORKLOADS = {'lookup': 'lookup 30000 20000', 'range-count': 'range_count 30000 20000 20731'}
+RECOVERY_SCENARIOS = {'room-schedule', 'checkpoint-publish'}
+RESILIENCE_REQUIRED = {'dedupe', 'retry', 'atomic', 'build-plan'} | RECOVERY_SCENARIOS
 
 
 def digest(value):
@@ -667,16 +671,172 @@ def evaluate(text: str) -> str:
     return json.dumps({'path': find_route(galleries, start, goal, [start])})
 '''
 
+ROOM_SCHEDULE_CONTRACT = '''Rules.Evaluate(string text) and the positional JSON CLI accept a UTF-8 JSON request:
+{"op":"schedule","requests":[{"id":"demo","start_min":60,"end_min":90}]} returns {"accepted":["demo"],"rejected":[]}.
+Up to 64 requests refer to one room on the same day. IDs are unique nonempty strings. Both times are signed 32-bit integers.
+Process requests in input order. Accept only windows with 0 <= start_min < end_min <= 1440. For other windows, reject with
+{"id":ID,"error":"invalid_window"}. A valid window that intersects any previously accepted window is rejected with
+{"id":ID,"error":"overlap"}. Windows are half-open: touching starts and ends do not conflict. Continue after every
+rejection; a rejected window never blocks later requests. Keep both output lists in input order and always return both.
+The existing request_count operation accepts the same requests array and returns {"count":N} without scheduling.
+'''
+
+ROOM_SCHEDULE_SOURCE = '''using System.Text.Json;
+
+public static class Rules
+{
+    public static string Evaluate(string text)
+    {
+        using var document = JsonDocument.Parse(text);
+        var input = document.RootElement;
+        var requests = input.GetProperty("requests");
+        if (input.GetProperty("op").GetString() == "request_count")
+            return JsonSerializer.Serialize(new { count = requests.GetArrayLength() });
+
+        var accepted = new List<string>();
+        foreach (var request in requests.EnumerateArray())
+            accepted.Add(request.GetProperty("id").GetString()!);
+        return JsonSerializer.Serialize(new { accepted, rejected = Array.Empty<object>() });
+    }
+}
+'''
+
+CHECKPOINT_CONTRACT = '''rules.evaluate(text: str) -> str and the positional JSON CLI accept a request with op and store (a file path).
+The UTF-8 JSON store and successful response both have exactly {"published":[...],"pending":null} or
+{"published":[...],"pending":[...]}. Lists contain strings and retain order and duplicates. When the store
+does not exist, the logical state is {"published":[],"pending":null}.
+- status returns the current state without creating or changing the file.
+- stage takes an items list, replaces only pending with that list, and persists the resulting state.
+- publish replaces published with the pending list (including an empty list), clears pending to null, and
+  persists the result. If pending is null, return the state without creating or changing the file.
+- publish accepts an optional boolean fail_before_publish (default false). If true and a checkpoint is
+  pending, raise RuntimeError before changing any store bytes. A later publish without the fault flag
+  must be able to publish that checkpoint without restaging it. With no pending checkpoint the flag has
+  no effect.
+Inputs and existing stores have the documented shapes; the injected exception models an interruption before publication.
+'''
+
+CHECKPOINT_SOURCE = '''import json
+from pathlib import Path
+
+
+def evaluate(text: str) -> str:
+    request = json.loads(text)
+    store = Path(request['store'])
+    state = json.loads(store.read_text(encoding='utf-8')) if store.exists() else {'published': [], 'pending': None}
+    if request['op'] == 'status':
+        return json.dumps(state)
+    if request['op'] == 'stage':
+        state['pending'] = request['items']
+        store.write_text(json.dumps(state), encoding='utf-8')
+    elif request['op'] == 'publish':
+        if not state['pending']:
+            return json.dumps(state)
+        state['published'] = state['pending']
+        state['pending'] = None
+        store.write_text(json.dumps(state), encoding='utf-8')
+        if request.get('fail_before_publish', False):
+            raise RuntimeError('injected interruption')
+    return json.dumps(state)
+'''
+
+RANGE_COUNT_CONTRACT = '''evaluate(const std::string& input) -> std::string and the positional CLI retain these operations:
+total N... returns the exact signed 64-bit decimal sum (0 for an empty list). All partial totals fit.
+range_count COUNT QUERIES SEED counts sorted keys inside a series of inclusive intervals. COUNT is 1..60000,
+QUERIES is 0..30000, and SEED is an unsigned 32-bit integer. The generator starts at SEED; each draw advances
+the state to (1664525 * state + 1013904223) modulo 2^32 and returns that new state.
+Let span = 2 * COUNT. Take COUNT draws modulo span as keys, sort ascending, and keep duplicates.
+Continue the same generator for queries. For every query except the 4th, 8th, etc., draw twice: each endpoint
+is (draw modulo (span + 3)) - 1. Sort those two endpoints to form the closed interval. Every fourth
+query repeats the preceding interval without drawing. Count every key in the interval, including duplicates.
+Return two base-10 integers separated by a single comma, with no spaces: the sum of all counts, then the
+sum of each count multiplied by its 1-based query number. Both fit signed 64-bit; zero queries returns 0,0.
+'''
+
+RANGE_COUNT_SOURCE = r'''#pragma once
+#include <algorithm>
+#include <cstdint>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+inline std::string evaluate(const std::string& input) {
+    std::istringstream in(input);
+    std::string op;
+    in >> op;
+    if (op == "total") {
+        std::int64_t sum = 0, value;
+        while (in >> value) sum += value;
+        return std::to_string(sum);
+    }
+    if (op != "range_count") throw std::invalid_argument("unsupported operation");
+    int count, queries;
+    std::uint32_t state;
+    in >> count >> queries >> state;
+    auto draw = [&]() {
+        state = state * 1664525u + 1013904223u;
+        return state;
+    };
+    const int span = 2 * count;
+    std::vector<int> keys;
+    keys.reserve(count);
+    for (int i = 0; i < count; ++i) keys.push_back(draw() % span);
+    std::sort(keys.begin(), keys.end());
+    int low = 0, high = 0;
+    std::int64_t total = 0, weighted = 0;
+    for (int query = 1; query <= queries; ++query) {
+        if (query % 4 != 0) {
+            low = static_cast<int>(draw() % (span + 3)) - 1;
+            high = static_cast<int>(draw() % (span + 3)) - 1;
+            if (low > high) std::swap(low, high);
+        }
+        auto matches = std::count_if(keys.begin(), keys.end(), [&](int key) {
+            return low <= key && key <= high;
+        });
+        total += matches;
+        weighted += static_cast<std::int64_t>(query) * matches;
+    }
+    return std::to_string(total) + "," + std::to_string(weighted);
+}
+'''
+
 COMPONENT_SOURCE_FILES = {
     'stock-snapshot': {'StockCsv.cs', 'StockProjection.cs'},
     'triage-queue': {'rank.ts', 'group.ts'},
     'pick-list': {'merge.ts', 'packages.ts'},
     'cue-report': {'CueOrder.cs', 'CueCoverage.cs'},
 }
+RULE_FILES = {'csharp': 'Rules.cs', 'typescript': 'rules.ts', 'python': 'rules.py', 'cpp': 'rules.hpp'}
+EDITABLE_ADAPTERS = {'config': 'cli.ts', 'transfer': 'Program.cs'}
+
+
+def protected_fixture_paths(case, existing_paths):
+    """Authoritative byte-identity policy for both the public scope and artifact guard."""
+    scenario = case.get('scenario')
+    editable = COMPONENT_SOURCE_FILES.get(scenario, {RULE_FILES[case['language']]}) | {'check_existing.py'}
+    if scenario in EDITABLE_ADAPTERS:
+        editable.add(EDITABLE_ADAPTERS[scenario])
+    return sorted(set(existing_paths) - editable)
 
 
 def fixture(case, tools=None):
-    """Pre-existing defective project and ordinary public contract; no target fixes."""
+    """Pre-existing defective project and public contract; no target fixes or hidden test values."""
+    project = fixture_files(case, tools)
+    protected = protected_fixture_paths(case, project)
+    editable = sorted(set(project) - set(protected))
+    project['CONTRACT.md'] += (
+        '\n## Edit scope\n\nKeep these existing paths byte-identical:\n'
+        + ''.join(f'- `{path}`\n' for path in protected)
+        + '\nExisting paths you may edit:\n'
+        + ''.join(f'- `{path}`\n' for path in editable)
+        + '\nYou may add relevant tests. Editing `check_existing.py` is allowed only if its original '
+          'oracles are retained; the original checker is also replayed independently.\n'
+    )
+    return project
+
+
+def fixture_files(case, tools=None):
     tools = tools or {}
     lang = case["language"]
     signature={'python':'rules.evaluate(text: str) -> str','typescript':'evaluate(text: string): string','csharp':'Rules.Evaluate(string text) -> string','cpp':'evaluate(const std::string& input) -> std::string'}[lang]
@@ -723,24 +883,28 @@ The original CLI takes the operation string as its first argument and prints ret
         common['CONTRACT.md'] = MONTHLY_REPORT_CONTRACT
     if scenario == 'build-plan':
         common['CONTRACT.md'] = BUILD_PLAN_CONTRACT
+    if scenario == 'room-schedule':
+        common['CONTRACT.md'] = ROOM_SCHEDULE_CONTRACT
+    if scenario == 'checkpoint-publish':
+        common['CONTRACT.md'] = CHECKPOINT_CONTRACT
+    if scenario == 'range-count':
+        common['CONTRACT.md'] = RANGE_COUNT_CONTRACT
     if scenario == 'stock-snapshot':
         common['CONTRACT.md'] = STOCK_CONTRACT
         common['ARCHITECTURE.md'] = ('StockCsv.cs reads CSV into StockRow records. StockProjection.cs consumes those records and owns stock calculations. '
-                                      'Keep the existing Rules.cs and Program.cs adapters and the shared StockRow.cs contract unchanged.\n')
+                                      'Rules.cs and Program.cs adapt the shared StockRow contract to the SDK and CLI.\n')
     if scenario == 'triage-queue':
         common['CONTRACT.md'] = TRIAGE_CONTRACT
         common['ARCHITECTURE.md'] = ('rank.ts ranks Ticket records. group.ts groups Ticket records into QueueSummary. '
-                                      'Keep the shared tickets.ts contracts and existing rules.ts and cli.ts adapters unchanged.\n')
+                                      'rules.ts composes both using the shared tickets.ts contract; cli.ts only adapts the positional CLI.\n')
     if scenario == 'pick-list':
         common['CONTRACT.md'] = PICK_LIST_CONTRACT
         common['ARCHITECTURE.md'] = ('merge.ts owns line collection. packages.ts owns package arithmetic. '
-                                     'rules.ts composes them; cli.ts only adapts the positional CLI. '
-                                     'Keep both adapters and the shared pick.ts contracts unchanged.\n')
+                                     'rules.ts composes them using the shared pick.ts contract; cli.ts only adapts the positional CLI.\n')
     if scenario == 'cue-report':
         common['CONTRACT.md'] = CUE_REPORT_CONTRACT
         common['ARCHITECTURE.md'] = ('CueOrder.cs owns ordering. CueCoverage.cs owns interval coverage. '
-                                     'Rules.cs composes them and Program.cs adapts the positional CLI. '
-                                     'Keep both adapters and the shared StudioCue.cs record unchanged.\n')
+                                     'Rules.cs composes them using the shared StudioCue.cs record; Program.cs adapts the positional CLI.\n')
     if scenario == 'tile-window':
         common['CONTRACT.md'] = TILE_WINDOW_CONTRACT
     if scenario == 'recipe-scale':
@@ -766,6 +930,13 @@ The original CLI takes the operation string as its first argument and prints ret
         smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
                  f"'--verbosity','quiet','--',json.dumps({ordinary_plan!r})]; "
                  "expected={'order':['compile','pack'],'error':None}")
+    if scenario == 'room-schedule':
+        request = {'op': 'schedule', 'requests': [{'id': 'demo', 'start_min': 60, 'end_min': 90}]}
+        smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
+                 f"'--verbosity','quiet','--',json.dumps({request!r})]; expected={{'accepted':['demo'],'rejected':[]}}")
+    if scenario == 'checkpoint-publish':
+        smoke = ("text=json.dumps({'op':'stage','store':str(Path(temp)/'state.json'),'items':['original']}); "
+                 "args=[sys.executable,'cli.py',text]; expected={'published':[],'pending':['original']}")
     if scenario == 'stock-snapshot':
         request = {'op': 'balance', 'warehouse': 'west', 'csv': 'A,west,5\nB,west,3'}
         smoke = (f"args=[{str(tools.get('dotnet') or 'dotnet')!r},'run','--project','Existing.csproj',"
@@ -796,9 +967,19 @@ The original CLI takes the operation string as its first argument and prints ret
         request = {'op': 'route', 'galleries': {'lobby': ['ink'], 'ink': []}, 'start': 'lobby', 'goal': 'ink'}
         smoke = f"args=[sys.executable,'cli.py',json.dumps({request!r})]; expected={{'path':['lobby','ink']}}"
     common['check_existing.py']='import json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nscratch = Path(".runtime-proof/scratch")\nscratch.mkdir(parents=True, exist_ok=True)\nwith tempfile.TemporaryDirectory(dir=scratch) as temp:\n    '+smoke+'\n    result=subprocess.run(args,capture_output=True,text=True,check=True);lines=result.stdout.strip().splitlines();actual=json.loads(lines[-1]);assert actual==expected,(actual,expected);print("Existing public behavior checked")\n'
-    if case.get('scenario')=='lookup':
-        common['PERFORMANCE.md']='For lookup30000 sorted keys and20000 queries, preserve exact results and reduce median command wall time to at most70% of the unchanged baseline on the same machine/compiler/options. Use one warmup and five measurements per version; retain raw values and noise.\n'
+    if scenario in PERFORMANCE_WORKLOADS:
+        workload = PERFORMANCE_WORKLOADS[scenario]
+        if scenario == 'range-count':
+            workload = workload.rsplit(' ', 1)[0] + ' SEED'
+        common['PERFORMANCE.md'] = (
+            f"For `{workload}`, preserve exact output and reduce median command wall time "
+            f"to at most {case['performance_max_ratio']:.0%} of the unchanged baseline on the same machine, "
+            "with identical inputs, compiler and options. Use one warmup and five paired measurements per version; "
+            "each must produce the exact result. Retain the raw timings.\n")
     if lang == "python":
+        if scenario == 'checkpoint-publish':
+            return {**common, 'rules.py': CHECKPOINT_SOURCE,
+                    'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
         if scenario == 'month-report':
             return {**common, 'rules.py': MONTHLY_REPORT_SOURCE,
                     'cli.py': 'from rules import evaluate\nimport sys\nprint(evaluate(sys.argv[1]))\n'}
@@ -826,6 +1007,8 @@ The original CLI takes the operation string as its first argument and prints ret
         project = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>\n'
         if scenario == 'build-plan':
             core = BUILD_PLAN_SOURCE
+        if scenario == 'room-schedule':
+            core = ROOM_SCHEDULE_SOURCE
         files = {**common, "Rules.cs": core, "Program.cs": "Console.WriteLine(Rules.Evaluate(args[0]));\n", "Existing.csproj": project}
         if scenario == 'stock-snapshot':
             files.update(STOCK_FILES)
@@ -848,6 +1031,8 @@ inline std::string evaluate(const std::string& input) {
  throw std::invalid_argument("unsupported operation");
 }
 '''
+    if scenario == 'range-count':
+        core = RANGE_COUNT_SOURCE
     return {**common, "rules.hpp": core, "main.cpp": '#include "rules.hpp"\n#include <iostream>\nint main(int argc,char**argv){try{std::cout<<evaluate(argv[1])<<"\\n";}catch(const std::exception&){std::cout<<"ERROR\\n";}}\n'}
 
 
@@ -1001,16 +1186,23 @@ def prepare(experiment, case_id, arm, model, repetition):
     git = shutil.which("git")
     if not git:
         raise ValueError("Git is required for immutable baseline")
-    for argv in ([git, "init", "--quiet"], [git, "add", "."],
+    for argv in ([git, "init", "--quiet"], [git, "-c", "core.autocrlf=false", "add", "."],
                  [git, "-c", "user.name=HarrTest evaluator", "-c", "user.email=evaluator@invalid", "commit", "--quiet", "-m", "Frozen existing fixture"]):
         r = command(argv, workspace)
         if r["exit_code"]:
             raise ValueError("Could not establish fixture baseline: " + r["stderr"])
     baseline = tree(workspace)
+    for rel, expected in baseline.items():
+        # A reviewer may recover the pre-edit source from HEAD; Git's text
+        # conversion must not silently give it different bytes.
+        original = subprocess.run([git, "cat-file", "blob", f"HEAD:{rel}"], cwd=workspace,
+                                  capture_output=True, timeout=20)
+        if original.returncode or hashlib.sha256(original.stdout).hexdigest() != expected:
+            raise ValueError(f"Git baseline blob differs from the original fixture bytes: {rel}")
     pin_settings(workspace, arm, model)
     if arm != "plain":
         shutil.copytree(experiment / "packages" / arm, workspace / ".github/skills/harrtest")
-    prompt = case["request"] + "\nWork in the existing project. Preserve its documented contracts. RUNTIME.md gives the supplied toolchain profile. Run the actual checks relevant to your change and report observed outcomes and limitations."
+    prompt = case["request"] + "\nWork in the existing project. Preserve its documented contracts and the byte-identical paths listed in CONTRACT.md. RUNTIME.md gives the supplied toolchain profile. Run the actual checks relevant to your change and report observed outcomes and limitations."
     if arm != "plain":
         prompt = "$harrtest\n" + prompt
     save(attempt / "attempt.json", {"schema": 1, "id": attempt.name, "case": case,
@@ -1174,7 +1366,7 @@ def build_program(workspace, output, lang, tools, *, scenario=None):
     if lang == "python":
         driver = output / "driver.py"
         error_handlers = "except Exception: print('ERROR')\n"
-        if scenario in {'atomic', 'month-report'}:
+        if scenario in {'atomic', 'month-report', 'checkpoint-publish'}:
             error_handlers = (
                 f"except ValueError: print('VALUE_ERROR'); sys.exit({PYTHON_EXCEPTION_EXITS['VALUE_ERROR']})\n"
                 f"except RuntimeError: print('RUNTIME_ERROR'); sys.exit({PYTHON_EXCEPTION_EXITS['RUNTIME_ERROR']})\n"
@@ -1469,11 +1661,76 @@ def museum_route_vectors():
     return ordinary, target
 
 
+def room_schedule_vectors():
+    def request(rows, op='schedule'):
+        return json.dumps({'op': op, 'requests': [
+            {'id': label, 'start_min': start, 'end_min': end} for label, start, end in rows]})
+
+    def schedule(rows, accepted, rejected=()):
+        return request(rows), {'accepted': accepted, 'rejected': [
+            {'id': label, 'error': error} for label, error in rejected]}
+
+    ordinary = [
+        schedule([], []),
+        schedule([('afternoon', 60, 1440), ('morning', 0, 60)], ['afternoon', 'morning']),
+        (request([('outside', -1, 13), ('regular', 30, 50)], 'request_count'), {'count': 2}),
+    ]
+    target = [
+        schedule(
+            [('first', 10, 20), ('backward', 18, 15), ('bridge', 15, 40),
+             ('recover', 20, 30), ('inside', 11, 13), ('end', 30, 45)],
+            ['first', 'recover', 'end'],
+            [('backward', 'invalid_window'), ('bridge', 'overlap'), ('inside', 'overlap')]),
+        schedule(
+            [('first', 1, 8), ('negative', -2, 4), ('past-close', 1, 1441), ('empty', 5, 5),
+             ('midnight', 0, 1), ('closing', 1439, 1440)],
+            ['first', 'midnight', 'closing'],
+            [('negative', 'invalid_window'), ('past-close', 'invalid_window'), ('empty', 'invalid_window')]),
+        schedule(
+            [('booked', 10, 20), ('equal', 10, 20), ('enclosing', 5, 31), ('later', 21, 31)],
+            ['booked', 'later'], [('equal', 'overlap'), ('enclosing', 'overlap')]),
+        schedule([('invalid', 1440, 1440)], [], [('invalid', 'invalid_window')]),
+    ]
+    return ordinary, target
+
+
 SDK_AND_CLI_VECTORS = {
     'tile-window': tile_window_vectors,
     'recipe-scale': recipe_scale_vectors,
     'museum-route': museum_route_vectors,
+    'room-schedule': room_schedule_vectors,
 }
+
+
+def range_count_expected(count, queries, state):
+    """Independent prefix-frequency oracle; the fixture instead scans sorted keys."""
+    def draw():
+        nonlocal state
+        state = (1664525 * state + 1013904223) & 0xFFFFFFFF
+        return state
+
+    span = 2 * count
+    frequencies = [0] * (span + 1)
+    for _ in range(count):
+        frequencies[draw() % span + 1] += 1
+    prefix = list(accumulate(frequencies))
+    total = weighted = 0
+    for index in range(1, queries + 1):
+        if index % 4:
+            low, high = sorted(draw() % (span + 3) - 1 for _ in range(2))
+            low, high = max(low, 0), min(high, span - 1)
+            matches = prefix[high + 1] - prefix[low] if low <= high else 0
+        total += matches
+        weighted += index * matches
+    return f'{total},{weighted}'
+
+
+def range_count_vectors():
+    ordinary = [('total 1 2 3', '6'), ('total', '0'), ('total 4000000000 -13 3', '3999999990')]
+    workloads = ['range_count 3 0 0', 'range_count 1 8 1', 'range_count 7 11 0',
+                 'range_count 37 23 4294967295', PERFORMANCE_WORKLOADS['range-count']]
+    target = [(text, range_count_expected(*map(int, text.split()[1:]))) for text in workloads]
+    return ordinary, target
 
 
 def test_vectors(case, sandbox):
@@ -1498,18 +1755,51 @@ def test_vectors(case, sandbox):
         root=sandbox/'allowed';root.mkdir()
         return ordinary+[(j({"op":"path","root":str(root),"name":"nested/file.txt"}),str(root/'nested/file.txt'))],[(j({"op":"path","root":str(root),"name":"../allowed-neighbor/stolen"}),"ERROR"),(j({"op":"path","root":str(root),"name":"../outside"}),"ERROR")]
     if case["language"] == "cpp":
+        if scenario == 'range-count':
+            return range_count_vectors()
         ordinary=[("total 1 2 3", "6"),("bounds 1","20"),("capacity 2 1 2 3","2,3")]
         if scenario == "bounds": return ordinary,[("bounds -1","ERROR"),("bounds 3","ERROR"),("bounds 100000","ERROR")]
         if scenario == "total": return ordinary,[("total 2147483647 1","2147483648"),("total -2147483648 -1","-2147483649"),("total 4000000000 3000000000","7000000000")]
         if scenario == "capacity": return ordinary,[("capacity 0 1 2 3",""),("capacity 2 1 2 1","2,1"),("capacity 1 7 7 8","8")]
         # Exact reference result is calculated independently in Python.
         vectors=[]
-        for n,q in [(10,25),(1,3),(30000,20000)]:
+        for text in ["lookup 10 25", "lookup 1 3", PERFORMANCE_WORKLOADS['lookup']]:
+            _, n, q = text.split()
+            n, q = int(n), int(q)
             expected=sum((i%n)//2 for i in range(q) if (i%n)%2==0)
-            vectors.append((f"lookup {n} {q}",str(expected)))
+            vectors.append((text,str(expected)))
         return ordinary,vectors
     # Persistent worker vectors are evaluated by a sequence below.
     return [], []
+
+
+def measure_paired(baseline, candidate, workload, expected, threshold, cwd):
+    """Measure the same op on the exact executables used for correctness."""
+    programs = {'baseline': baseline, 'candidate': candidate}
+
+    def sample(role):
+        raw = command([*programs[role], workload], cwd, 20)
+        raw['exact_output'] = raw['stdout'] == expected + '\n'
+        return raw
+
+    warmups = {role: sample(role) for role in programs}
+    runs = {role: [] for role in programs}
+    pairs = [('baseline', 'candidate'), ('candidate', 'baseline')]
+    repetitions = 5
+    for pair in range(repetitions):
+        for role in pairs[pair % len(pairs)]:
+            runs[role].append(sample(role))
+    valid = all(row['exit_code'] == 0 and not row['timed_out'] and row['exact_output']
+                and (observed_number(row['seconds']) or 0) > 0
+                for row in [*warmups.values(), *runs['baseline'], *runs['candidate']])
+    ratio = (statistics.median(row['seconds'] for row in runs['candidate'])
+             / statistics.median(row['seconds'] for row in runs['baseline'])) if valid else None
+    return {'status': 'PASS' if ratio is not None and ratio <= threshold else 'FAIL',
+            **runs, 'warmups': warmups, 'median_ratio': ratio, 'maximum_ratio': threshold,
+            'warmup_per_version': 1, 'measured_repetitions': repetitions, 'workload': workload,
+            'expected_output': expected,
+            'scope': 'External process wall time; identical workload and compiler options; '
+                     'exact output required for every execution, and pair order alternates.'}
 
 
 def parse_output(stdout):
@@ -1544,6 +1834,66 @@ def state_file_unchanged(check, path, original_sha256):
     check['input_file_sha256_before'] = original_sha256
     check['input_file_sha256_after'] = sha(path) if path.is_file() else None
     check['passed'] = check['passed'] and check['input_file_sha256_after'] == original_sha256
+
+
+def state_file_matches(check, path, expected):
+    try:
+        observed = load(path)
+    except (OSError, ValueError):
+        observed = None
+    check.update(persisted_expected=expected, persisted_observed=observed,
+                 persisted_sha256=sha(path) if path.is_file() else None)
+    check['passed'] = check['passed'] and same_value(observed, expected)
+
+
+def check_checkpoint_publish(exercise, evidence):
+    store = evidence / 'checkpoint.json'
+
+    def step(label, op, expected, *, unchanged=False, persisted=None, **fields):
+        before = sha(store) if store.is_file() else None
+        text = json.dumps({'op': op, 'store': str(store), **fields})
+        check = exercise(label, text, expected)
+        if unchanged:
+            state_file_unchanged(check, store, before)
+            if before is None:  # no-op requests must leave an absent store absent
+                check['passed'] = check['passed'] and not (store.exists() or store.is_symlink())
+            if persisted is not None:
+                state_file_matches(check, store, persisted)
+        else:
+            state_file_matches(check, store, expected)
+            check.update(input_file_sha256_before=before, input_file_sha256_after=check['persisted_sha256'])
+
+    initial = {'published': [], 'pending': None}
+    old_items = ['original', 'original']
+    first = {'published': old_items, 'pending': None}
+    step('preservation-status-missing', 'status', initial, unchanged=True)
+    step('preservation-publish-missing', 'publish', initial, unchanged=True)
+    step('preservation-stage', 'stage', {'published': [], 'pending': old_items}, items=old_items)
+    step('preservation-publish', 'publish', first)
+    step('preservation-stage-over-existing', 'stage',
+         {'published': old_items, 'pending': ['superseded']}, items=['superseded'])
+
+    next_items = ['west', 'east,annex', 'west', '']
+    staged = {'published': old_items, 'pending': next_items}
+    recovered = {'published': next_items, 'pending': None}
+    step('preservation-stage-replaces-pending', 'stage', staged, items=next_items)
+    step('publish-interrupted', 'publish', 'RUNTIME_ERROR', unchanged=True, persisted=staged,
+         fail_before_publish=True)
+    step('status-after-interruption', 'status', staged, unchanged=True)
+    step('publish-recovery', 'publish', recovered, fail_before_publish=False)
+    step('publish-replay-no-pending', 'publish', recovered, unchanged=True, fail_before_publish=True)
+    empty_pending = {'published': next_items, 'pending': []}
+    step('stage-empty', 'stage', empty_pending, items=[])
+    step('publish-interrupted-empty', 'publish', 'RUNTIME_ERROR', unchanged=True, persisted=empty_pending,
+         fail_before_publish=True)
+    step('publish-empty', 'publish', initial)
+
+    # Noncanonical bytes make rewrites of otherwise equivalent state observable.
+    store = evidence / 'checkpoint-existing.json'
+    store.write_bytes(b'{ "pending" : null, "published" : ["kept"] }\n')
+    existing = {'published': ['kept'], 'pending': None}
+    step('preservation-status-existing', 'status', existing, unchanged=True)
+    step('publish-noop-existing', 'publish', existing, unchanged=True)
 
 
 def check_monthly_report(exercise, evidence):
@@ -1609,12 +1959,7 @@ def check_typed_batch_control(exercise, evidence):
         {'id': 'prefix', 'amount': 2}, {'id': 'flagged', 'amount': 7, 'fail_after': True},
         {'id': 'unreached', 'amount': 11}]}
     check = exercise('control-field-true-commits-then-interrupts', json.dumps(request), 'RUNTIME_ERROR')
-    committed_bytes = store.read_bytes() if store.is_file() else b''
-    committed_state = parse_output(committed_bytes.decode('utf-8', errors='replace'))
-    expected_state = {'balance': 12, 'seen': ['old', 'prefix', 'flagged']}
-    check.update(persisted_expected=expected_state, persisted_observed=committed_state,
-                 persisted_sha256=hashlib.sha256(committed_bytes).hexdigest() if committed_bytes else None)
-    check['passed'] = check['passed'] and same_value(committed_state, expected_state)
+    state_file_matches(check, store, {'balance': 12, 'seen': ['old', 'prefix', 'flagged']})
 
 
 def report_security_checks(checks, scope):
@@ -1652,23 +1997,28 @@ def _evaluate_attempt(attempt):
     evidence.mkdir()
     case = meta['case']
     scenario = case['scenario']
+    workload = PERFORMANCE_WORKLOADS.get(scenario)
     invocation, builds = build_program(workspace, evidence / "build", case['language'], toolchain(plan),
                                        scenario=scenario)
     checks = []
-    performance = {'status':'UNVERIFIED','reason':'Independent applicability review/measurement required for non-benchmark-critical performance.'}
+    performance = {'status': 'UNVERIFIED', 'reason': 'Candidate compiler failed' if workload else
+                   'Independent applicability review/measurement required for non-benchmark-critical performance.'}
     build_ok = all(x["exit_code"] == 0 and not x["timed_out"] for x in builds if x.get('role')!='typecheck')
     typecheck=next((x for x in builds if x.get('role')=='typecheck'),None)
     def exercise(label, text, expected, *, program=invocation):
         raw = command([*program,text], evidence, 20)
         observed = raw["stdout"].strip() if isinstance(expected, str) else parse_output(raw["stdout"])
         exit_code = PYTHON_EXCEPTION_EXITS.get(expected, 0) if isinstance(expected, str) else 0
+        matches = raw['stdout'] == expected + '\n' if scenario == 'range-count' else same_value(observed, expected)
         check = {"check":label,"input":text,"expected":expected,"observed":observed,"execution":raw,
-                 "passed":raw["exit_code"]==exit_code and not raw["timed_out"] and same_value(observed,expected)}
+                 "passed":raw["exit_code"]==exit_code and not raw["timed_out"] and matches}
         checks.append(check)
         return check
     if build_ok:
         if scenario == 'month-report':
             check_monthly_report(exercise, evidence)
+        elif scenario == 'checkpoint-publish':
+            check_checkpoint_publish(exercise, evidence)
         elif scenario in COMPONENT_SOURCE_FILES:
             vectors = {'stock-snapshot': stock_component_vectors, 'triage-queue': triage_component_vectors,
                        'pick-list': pick_list_component_vectors, 'cue-report': cue_component_vectors}[scenario]()
@@ -1683,11 +2033,16 @@ def _evaluate_attempt(attempt):
                 checks.append({'check': 'public-cli-build', 'passed': False})
         elif scenario in SDK_AND_CLI_VECTORS:
             ordinary, target = SDK_AND_CLI_VECTORS[scenario]()
-            public, _ = build_public_cli(workspace, evidence/'public-cli', case['language'], toolchain(plan))
+            public, public_builds = build_public_cli(workspace, evidence/'public-cli', case['language'], toolchain(plan))
+            builds.extend(public_builds)
+            public_ok = all(row['exit_code'] == 0 and not row['timed_out'] for row in public_builds)
+            if not public_ok:
+                checks.append({'check': 'public-cli-build', 'passed': False})
             for prefix, vectors in (('preservation', ordinary), ('target', target)):
                 for index, (text, expected) in enumerate(vectors):
                     exercise(f'{prefix}-sdk-{index}', text, expected)
-                    exercise(f'{prefix}-cli-{index}', text, expected, program=public)
+                    if public_ok:
+                        exercise(f'{prefix}-cli-{index}', text, expected, program=public)
         elif case["language"] == "python":
             store=evidence/'state.json'
             def event(events,expected,label): exercise(label,json.dumps({"op":"batch","store":str(store),"events":events}),expected)
@@ -1740,38 +2095,27 @@ def _evaluate_attempt(attempt):
                     output=raw['stdout']+raw['stderr']
                     checks.append({'check':'public-missing-no-stack','execution':raw,'passed':raw['exit_code'] not in {0,None} and len(output)<1200 and not re.search(r'(?m)^\s+at |Traceback|Unhandled exception|\nfile://',output)})
                 else:checks.append({'check':'public-cli-build','passed':False})
-            if case.get('scenario')=='lookup':
+            if workload:
                 baseline_work=evidence/'baseline-work';baseline_work.mkdir()
                 for rel,content in fixture(case, toolchain(plan)).items():(baseline_work/rel).write_text(content,encoding='utf-8')
                 if tree(baseline_work)!=meta['baseline']:
                     raise ValueError('Performance baseline fixture differs from declared original source')
                 old_invocation,old_builds=build_program(baseline_work,evidence/'baseline-build','cpp',toolchain(plan))
                 builds.extend(old_builds)
-                if all(x['exit_code']==0 for x in old_builds):
-                    workload='lookup 30000 20000'
-                    baseline_runs=[];candidate_runs=[]
-                    for cmd,out in [(old_invocation,baseline_runs),(invocation,candidate_runs)]:
-                        command([*cmd,workload],evidence,20)
-                        for _ in range(5):out.append(command([*cmd,workload],evidence,20))
-                    valid=all(x['exit_code']==0 and not x['timed_out'] for x in baseline_runs+candidate_runs)
-                    ratio=statistics.median(x['seconds'] for x in candidate_runs)/statistics.median(x['seconds'] for x in baseline_runs) if valid else None
-                    threshold=case['performance_max_ratio']
-                    passed=valid and ratio<=threshold
-                    performance={'status':'PASS' if passed else 'FAIL','baseline':baseline_runs,'candidate':candidate_runs,'median_ratio':ratio,'maximum_ratio':threshold,'warmup_per_version':1,'measured_repetitions':5,'workload':workload,'scope':'External process wall time, same machine/compiler/options; raw variation retained'}
-                    checks.append({'check':'performance-relative','passed':passed,'expected_max_ratio':threshold,'observed_ratio':ratio})
+                if all(x['exit_code']==0 and not x['timed_out'] for x in old_builds):
+                    performance = measure_paired(old_invocation, invocation, workload, dict(target)[workload],
+                                                 case['performance_max_ratio'], evidence)
+                    checks.append({'check': 'performance-relative', 'passed': performance['status'] == 'PASS',
+                                   'expected_max_ratio': performance['maximum_ratio'],
+                                   'observed_ratio': performance['median_ratio']})
                 else:performance={'status':'UNVERIFIED','reason':'Baseline compiler failed'}
     replay = replay_original_checks(workspace, evidence, meta, toolchain(plan), before)
     checks.append(replay)
     after=tree(workspace)
     baseline=meta['baseline']
-    allowed={'rules.py','rules.ts','Rules.cs','rules.hpp'}
-    if scenario in COMPONENT_SOURCE_FILES:
-        allowed = set(COMPONENT_SOURCE_FILES[scenario])
-    allowed.add('check_existing.py')
-    if meta['case']['scenario']=='config':allowed.add('cli.ts')
-    if meta['case']['scenario']=='transfer':allowed.add('Program.cs')
-    protected=[r for r in baseline if r not in allowed]
-    architecture=all(before.get(r)==baseline[r] for r in protected)
+    protected = protected_fixture_paths(case, baseline)
+    changed_protected = [path for path in protected if before.get(path) != baseline[path]]
+    architecture = not changed_protected
     test_path=workspace/'check_existing.py'
     tests_changed=before.get('check_existing.py')!=baseline.get('check_existing.py')
     # Existing tests may legitimately grow or be refactored. Their byte hash
@@ -1792,7 +2136,7 @@ def _evaluate_attempt(attempt):
     preservation=[x for x in checks if x['check'].startswith('preservation') or x['check'] in {'ordinary-persistence','public-positional-preserved'}]
     targeted=[x for x in checks if x not in preservation]
     security_relevant=scenario in {'tenant','path','redact','framing','credit','transfer','atomic','bounds'}
-    resilience_relevant=scenario in {'dedupe','retry','atomic','transfer','build-plan'}
+    resilience_relevant=scenario in RESILIENCE_REQUIRED or scenario == 'transfer'
     resilience_checks = targeted
     if scenario == 'build-plan':
         resilience_checks = [check for check in targeted if isinstance(check.get('expected'), dict)
@@ -1804,9 +2148,11 @@ def _evaluate_attempt(attempt):
     layers={
         'functionality':{'status':'PASS' if functionality else 'FAIL','scope':'Independent public-API/CLI cases listed below; not all conceivable inputs.'},
         'preservation':{'status':'UNVERIFIED' if replay['status']=='UNVERIFIED' else 'PASS' if all(x['passed'] for x in preservation) else 'FAIL','checks':[x['check'] for x in preservation]},
-        'architecture':{'status':'PASS' if architecture else 'FAIL','scope':'Frozen documented contract, build/dependency files and existing tests preserved; independent API consumer compiles/runs. Semantic architecture/clean-code review remains separate.'},
+        'architecture':{'status':'PASS' if architecture else 'FAIL','protected_paths': protected,
+                        'changed_protected_paths': changed_protected,
+                        'scope':'Published immutable paths match the baseline and existing tests have an observable assertion. Semantic architecture and oracle preservation remain separately reviewed.'},
         'security':security,
-        'performance':performance if scenario=='lookup' else {'status':'NOT_APPLICABLE','reason':'This frozen case declares no measured performance change; independent applicability review still required.'},
+        'performance':performance if workload else {'status':'NOT_APPLICABLE','reason':'This frozen case declares no measured performance change; independent applicability review still required.'},
         'resilience':{'status':('PASS' if resilience_checks and all(x['passed'] for x in resilience_checks) else 'FAIL') if resilience_relevant else 'NOT_APPLICABLE','scope':'Only the declared state, interruption, replay or atomicity behaviors.'},
     }
     result={'schema':1,'attempt':meta['id'],'case':meta['case']['id'],'arm':meta['arm'],'model':meta['model'],
@@ -2098,8 +2444,8 @@ def record_assessment(attempt, report_file):
     scenario=case['scenario']
     required={'functionality','preservation','architecture'}
     if case.get('security_scope') or scenario in {'tenant','path','redact','framing','credit','transfer','atomic'}:required.add('security')
-    if scenario in {'dedupe','retry','atomic','build-plan'}:required.add('resilience')
-    if scenario=='lookup':required.add('performance')
+    if scenario in RESILIENCE_REQUIRED:required.add('resilience')
+    if scenario in PERFORMANCE_WORKLOADS:required.add('performance')
     layers = []
     for row in rows:
         if row.get('status') not in statuses or len(row.get('rationale','').strip())<30 or not row.get('evidence'):
@@ -2112,7 +2458,10 @@ def record_assessment(attempt, report_file):
         if scenario == 'build-plan' and row['id'] == 'resilience' and row['status'] == 'PASS':
             if result['automated_artifact_layers']['resilience']['status'] != 'PASS':
                 raise ValueError('Failed invalid-plan controls cannot become PASS')
-        if scenario=='lookup' and row['id']=='performance' and row['status']=='PASS' and result['performance']['status']!='PASS':
+        if scenario in RECOVERY_SCENARIOS and row['id'] == 'resilience' and row['status'] == 'PASS':
+            if result['automated_artifact_layers']['resilience']['status'] != 'PASS':
+                raise ValueError('Failed or missing recovery controls cannot become PASS')
+        if scenario in PERFORMANCE_WORKLOADS and row['id']=='performance' and row['status']=='PASS' and result['performance']['status']!='PASS':
             raise ValueError('Failed or missing paired performance cannot become PASS')
         for evidence in row['evidence']:
             if 'check' in evidence:

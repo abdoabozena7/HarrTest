@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -39,10 +40,9 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.fake_probe = {"tools": {"python":sys.executable,"node":shutil.which("node"),"copilot":"fixture-only"},
                            "blocked":[], "assurance":"unit-test substitution, not a capability observation"}
         tools_path=Path(os.environ.get('HARRTEST_BENCH_TOOLS') or ROOT/'output/v5-corporate/evaluation-tools.json')
-        if tools_path.is_file():
-            tools=bench.load(tools_path)
-            for key in ['tsc','node_types']:
-                if tools.get(key):self.fake_probe['tools'][key]=tools[key]
+        self.configured_tools = bench.load(tools_path) if tools_path.is_file() else {}
+        for key in ['tsc','node_types']:
+            if self.configured_tools.get(key):self.fake_probe['tools'][key]=self.configured_tools[key]
 
     def freeze(self,kind='development',corpus=bench.CORPUS):
         with patch.object(bench, "preflight", return_value=self.fake_probe):
@@ -95,6 +95,7 @@ class CorporateBenchmarkTests(unittest.TestCase):
                                 kind='acceptance', corporate_guard_goal='mission')
         cases = [case for case in plan['cases'] if case['split'] == 'acceptance']
         guarded = sorted(case['id'] for case in cases if case.get('complexity'))
+        self.assertEqual(guarded, ['cs-studio-cue-report', 'ts-pick-list'])
         self.assertEqual(plan['corporate_guard_cases'], guarded)
         self.assertEqual(len(plan['execution_order']), 96)
         for arm in bench.ARMS:
@@ -120,16 +121,19 @@ class CorporateBenchmarkTests(unittest.TestCase):
             for language in bench.LANGUAGES:
                 self.assertEqual(sum(x['split']==split and x['language']==language for x in rows),2)
         splits = {row['id']: row['split'] for row in rows}
-        consumed = {'cs-stock-snapshot', 'ts-triage-queue', 'py-monthly-report-utc', 'py-recipe-batch-scale'}
+        promoted = {'cs-build-dependency-plan', 'py-retry-recovery', 'cpp-lookup-scaling'}
+        consumed = promoted | {'cs-stock-snapshot', 'ts-triage-queue', 'py-monthly-report-utc'}
         self.assertTrue(all(splits[case] == 'development' for case in consumed))
-        retained = {'cs-build-dependency-plan', 'py-retry-recovery',
-                    'cpp-lookup-scaling', 'cpp-capacity-contract'}
-        replacements = {'cs-studio-cue-report', 'ts-pick-list', 'ts-tile-window', 'py-museum-route'}
+        retained = {'cs-studio-cue-report', 'ts-pick-list', 'ts-tile-window', 'py-museum-route', 'cpp-capacity-contract'}
+        replacements = {'cs-room-schedule-recovery', 'py-checkpoint-publish-recovery', 'cpp-range-count-scaling'}
         self.assertEqual({case for case, split in splits.items() if split == 'acceptance'}, retained | replacements)
+        self.assertEqual({row['id']: row['performance_max_ratio'] for row in rows if 'performance_max_ratio' in row},
+                         {'cpp-lookup-scaling': 0.70, 'cpp-range-count-scaling': 0.70})
         archive = bench.load(bench.CORPUS.with_name('retired-development.json'))
         retired = archive['cases']
         retired_ids = {'cs-credit-validation', 'ts-path-boundary', 'py-log-redaction', 'py-batch-atomicity',
-                       'ts-record-framing'}
+                       'ts-record-framing', 'cs-atomic-transfer', 'py-recipe-batch-scale', 'cpp-wide-total'}
+        self.assertEqual(set(archive['rotations'][-1]['promoted_to_development']), promoted)
         self.assertEqual(len(retired), len(retired_ids))
         self.assertEqual({row['id'] for row in retired}, retired_ids)
         self.assertCountEqual([case for rotation in archive['rotations'] for case in rotation['retired']], retired_ids)
@@ -147,6 +151,79 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(bench.sha(self.experiment/'evaluator/corporate_benchmark.py'), bench.sha(bench.__file__))
         for guide in ['cli-agent-validation.md','web-validation.md','simulation-validation.md']:
             self.assertTrue((pinned/'references'/guide).is_file())
+
+    def test_prepared_git_baseline_preserves_raw_source_with_autocrlf(self):
+        create = bench.fixture
+
+        def crlf_fixture(case, tools):
+            files = create(case, tools)
+            if os.linesep == '\n':
+                files['rules.py'] = files['rules.py'].replace('\n', '\r\n')
+            return files
+
+        with patch.object(bench, 'fixture', side_effect=crlf_fixture), patch.dict(os.environ, {
+                'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'core.autocrlf', 'GIT_CONFIG_VALUE_0': 'true'}):
+            attempt = self.attempt('py-retry-recovery')
+        source = attempt / 'work' / 'rules.py'
+        original = subprocess.check_output(['git', 'cat-file', 'blob', 'HEAD:rules.py'], cwd=source.parent)
+        self.assertIn(b'\r\n', original)
+        self.assertEqual(original, source.read_bytes())
+
+    def test_public_edit_scope_matches_artifact_protection_in_every_arm(self):
+        def declared_paths(contract):
+            scope = contract.split('Keep these existing paths byte-identical:\n', 1)[1]
+            protected, editable = scope.split('\nExisting paths you may edit:\n', 1)
+            return tuple([line[3:-1] for line in section.splitlines() if line.startswith('- `')]
+                         for section in (protected, editable))
+
+        plan = self.freeze()
+        for case in plan['cases']:
+            with self.subTest(case=case['id']):
+                fixture = bench.fixture(case)
+                protected, editable = declared_paths(fixture['CONTRACT.md'])
+                self.assertCountEqual(protected + editable, fixture.keys())
+                self.assertTrue({'.gitignore', 'CONTRACT.md', 'ARCHITECTURE.md', 'RUNTIME.md'} <= set(protected))
+                self.assertIn('check_existing.py', editable)
+                if 'Existing.csproj' in fixture:
+                    self.assertIn('Existing.csproj', protected)
+                    self.assertIn('Program.cs', protected)
+                if 'package.json' in fixture:
+                    self.assertIn('package.json', protected)
+                    self.assertIn('cli.ts', editable if case['scenario'] == 'config' else protected)
+                if 'PERFORMANCE.md' in fixture:
+                    self.assertIn('PERFORMANCE.md', protected)
+                    self.assertIn('main.cpp', protected)
+                if case['scenario'] == 'cue-report':
+                    self.assertEqual(editable, ['CueCoverage.cs', 'CueOrder.cs', 'check_existing.py'])
+                    self.assertIn('StudioCue.cs', protected)
+                    self.assertIn('Rules.cs', protected)
+
+        for arm, mutation in zip(bench.ARMS, ('.gitignore', 'cli.py', 'CONTRACT.md')):
+            with self.subTest(arm=arm):
+                attempt = bench.prepare(self.experiment, 'py-retry-recovery', arm, 'weak-observed', 1)
+                work = attempt / 'work'
+                contract = (work / 'CONTRACT.md').read_text(encoding='utf-8')
+                self.assertIn('original oracles are retained', contract)
+                self.assertIn('You may add relevant tests', contract)
+                self.assertIn('byte-identical paths listed in CONTRACT.md', bench.load(attempt/'attempt.json')['prompt'])
+                public_protected, _ = declared_paths(contract)
+                checker = work / 'check_existing.py'
+                checker.write_text(checker.read_text() + '\nassert isinstance(actual["seen"], list)\n')
+                (work / 'test_existing.py').write_text(
+                    'from rules import evaluate\nassert evaluate(\'{"op":"redact","data":{"safe":1}}\') == \'{"safe": 1}\'\n')
+                allowed = bench.evaluate_attempt(attempt)
+                evidence = allowed['automated_artifact_layers']['architecture']
+                self.assertEqual(evidence['status'], 'PASS')
+                self.assertEqual(evidence['protected_paths'], public_protected)
+                self.assertTrue(allowed['existing_tests_changed'])
+                replay = next(row for row in allowed['checks'] if row['check'] == 'preservation-existing-test-replay')
+                self.assertTrue(replay['passed'])
+
+                target = work / mutation
+                target.write_bytes(target.read_bytes() + b'\n')
+                blocked = bench.evaluate_attempt(attempt)['automated_artifact_layers']['architecture']
+                self.assertEqual(blocked['status'], 'FAIL')
+                self.assertEqual(blocked['changed_protected_paths'], [mutation])
 
     def test_rotated_csharp_components_have_separate_runtime_oracles_and_cli(self):
         dotnet = Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
@@ -268,6 +345,57 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertTrue(fixed['unchanged_by_evaluator'])
         self.assertFalse(fixed['existing_tests_changed'])
 
+    def test_room_schedule_rejections_and_recovery_use_real_sdk_and_cli(self):
+        dotnet = Path(os.environ.get('HARRTEST_BENCH_DOTNET') or ROOT/'output/v5-corporate/toolchains/dotnet/dotnet.exe')
+        if not dotnet.is_file():
+            self.skipTest('Pinned .NET 10 SDK unavailable')
+        self.fake_probe['tools']['dotnet'] = str(dotnet)
+        attempt = self.attempt('cs-room-schedule-recovery')
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row for row in baseline['checks']}
+        self.assertTrue(all(row['passed'] for label, row in checks.items() if label.startswith('preservation')))
+        for boundary, binary in [('sdk', 'Evaluator.dll'), ('cli', 'Existing.dll')]:
+            control = checks[f'target-{boundary}-0']
+            self.assertEqual(control['execution']['exit_code'], 0)
+            self.assertEqual(Path(control['execution']['argv'][1]).name, binary)
+            self.assertFalse(control['passed'])
+        self.assertEqual(baseline['automated_artifact_layers']['resilience']['status'], 'FAIL')
+
+        # A synthetic minute-occupancy implementation, not a held generation.
+        core = attempt / 'work/Rules.cs'
+        source = core.read_text(encoding='utf-8')
+        fixed = source[:source.index('        var accepted')] + '''        var accepted = new List<string>();
+        var rejected = new List<object>();
+        var occupied = new HashSet<int>();
+        foreach (var request in requests.EnumerateArray())
+        {
+            string id = request.GetProperty("id").GetString()!;
+            int start = request.GetProperty("start_min").GetInt32();
+            int end = request.GetProperty("end_min").GetInt32();
+            if (start < 0 || end > 1440 || start >= end)
+            {
+                rejected.Add(new { id, error = "invalid_window" });
+                continue;
+            }
+            var minutes = Enumerable.Range(start, end - start);
+            if (minutes.Any(occupied.Contains))
+            {
+                rejected.Add(new { id, error = "overlap" });
+                continue;
+            }
+            occupied.UnionWith(minutes);
+            accepted.Add(id);
+        }
+        return JsonSerializer.Serialize(new { accepted, rejected });
+    }
+}
+'''
+        core.write_text(fixed, encoding='utf-8')
+        passing = bench.evaluate_attempt(attempt)
+        self.assertTrue(passing['automated_artifact_passed'])
+        self.assertEqual(passing['automated_artifact_layers']['resilience']['status'], 'PASS')
+        self.assertFalse(passing['complete_quality_passed'])
+
     def test_declared_toolchain_content_change_invalidates_experiment(self):
         compiler=self.root/'compiler-marker';compiler.write_text('compiler version1')
         dependency=self.root/'compiler-config';dependency.write_text('runtime config1')
@@ -342,6 +470,58 @@ class CorporateBenchmarkTests(unittest.TestCase):
         self.assertEqual(checks['retry-after-committed-prefix']['observed']['balance'], 15)
         self.assertTrue(result['unchanged_by_evaluator'])
         self.assertFalse(result['complete_quality_passed'])
+
+    def test_checkpoint_publish_checks_typed_failure_and_disk_across_processes(self):
+        attempt = self.attempt('py-checkpoint-publish-recovery')
+        baseline = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row for row in baseline['checks']}
+        self.assertTrue(all(row['passed'] for label, row in checks.items() if label.startswith('preservation')))
+        fault = checks['publish-interrupted']
+        self.assertEqual(fault['observed'], 'RUNTIME_ERROR')
+        self.assertNotEqual(fault['input_file_sha256_before'], fault['input_file_sha256_after'])
+        self.assertNotEqual(fault['persisted_expected'], fault['persisted_observed'])
+        self.assertFalse(fault['passed'])
+        self.assertFalse(checks['publish-interrupted-empty']['passed'])
+        self.assertFalse(checks['publish-empty']['passed'])
+        self.assertEqual(baseline['automated_artifact_layers']['resilience']['status'], 'FAIL')
+
+        report = self.timeout_review(attempt, result=baseline)
+        review = bench.load(report)
+        resilience = next(row for row in review['layers'] if row['id'] == 'resilience')
+        for verdict, error in [('NOT_APPLICABLE', 'layers are required'), ('PASS', 'recovery controls cannot become PASS')]:
+            with self.subTest(verdict=verdict):
+                resilience['status'] = verdict
+                bench.save(report, review)
+                with self.assertRaisesRegex(ValueError, error):
+                    bench.record_assessment(attempt, report)
+
+        core = attempt / 'work/rules.py'
+        original = core.read_text(encoding='utf-8')
+        trigger = ("        if request.get('fail_before_publish', False):\n"
+                   "            raise RuntimeError('injected interruption')\n")
+        promotion = "        state['published'] = state['pending']\n"
+        fixed = original.replace("if not state['pending']:", "if state['pending'] is None:")
+        fixed = fixed.replace(trigger, '').replace(promotion, trigger + promotion)
+
+        # Correct exception and semantic state alone must not excuse rewriting the store.
+        rewriting = fixed.replace("            raise RuntimeError",
+            "            store.write_text(json.dumps(state, sort_keys=True), encoding='utf-8')\n"
+            "            raise RuntimeError")
+        core.write_text(rewriting, encoding='utf-8')
+        partial = {row['check']: row for row in bench.evaluate_attempt(attempt)['checks']}
+        self.assertEqual(partial['publish-interrupted']['persisted_observed'], fault['persisted_expected'])
+        self.assertFalse(partial['publish-interrupted']['passed'])
+        self.assertTrue(partial['publish-recovery']['passed'])
+
+        core.write_text(fixed, encoding='utf-8')
+        passing = bench.evaluate_attempt(attempt)
+        checks = {row['check']: row for row in passing['checks']}
+        self.assertTrue(passing['automated_artifact_passed'])
+        self.assertFalse(passing['complete_quality_passed'])
+        self.assertEqual(checks['publish-recovery']['input_file_sha256_before'],
+                         checks['publish-interrupted']['input_file_sha256_after'])
+        self.assertEqual(checks['publish-replay-no-pending']['input_file_sha256_before'],
+                         checks['publish-recovery']['persisted_sha256'])
 
     def test_independent_oracle_accepts_known_positive_control(self):
         # Disposable evaluator unit control only; never enters a live arm or claim.
@@ -946,7 +1126,14 @@ public static class StockCsv
         merge.write_text(merge_control, encoding='utf-8')
         self.assertTrue(verify((True, True, True))['automated_artifact_passed'])
 
-    def test_cpp_actual_compiler_negative_and_positive_controls(self):
+    def use_cpp_toolchain(self):
+        configured = self.configured_tools.get('cxx')
+        setup = self.configured_tools.get('msvc_env')
+        if configured and Path(configured[0]).is_file() and (not setup or Path(setup).is_file()):
+            self.fake_probe['tools']['cxx'] = configured
+            if setup:
+                self.fake_probe['tools']['msvc_env'] = setup
+            return
         if sys.platform!='win32':
             compiler=shutil.which('clang++') or shutil.which('g++')
             if not compiler:self.skipTest('C++ compiler unavailable')
@@ -956,6 +1143,9 @@ public static class StockCsv
             setup=Path('C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat')
             if not compiler.is_file() or not setup.is_file():self.skipTest('MSVC toolchain unavailable')
             self.fake_probe['tools']['cxx']=[str(compiler)];self.fake_probe['tools']['msvc_env']=str(setup)
+
+    def test_cpp_actual_compiler_negative_and_positive_controls(self):
+        self.use_cpp_toolchain()
         p=self.attempt('cpp-index-validation')
         bad=bench.evaluate_attempt(p)
         self.assertTrue(all(x['exit_code']==0 for x in bad['builds']),str(bad['builds']))
@@ -965,8 +1155,100 @@ public static class StockCsv
         good=bench.evaluate_attempt(p)
         self.assertTrue(good['functional_passed'],str(good['builds']))
 
-    def timeout_review(self, attempt, status='TIMEOUT'):
-        result=bench.evaluate_attempt(attempt)
+    def test_cpp_range_count_compiles_and_pairs_the_same_executable_and_workload(self):
+        self.use_cpp_toolchain()
+        attempt = self.attempt('cpp-range-count-scaling')
+        core = attempt / 'work/rules.hpp'
+        original = core.read_text(encoding='utf-8')
+        scan = '''        auto matches = std::count_if(keys.begin(), keys.end(), [&](int key) {
+            return low <= key && key <= high;
+        });'''
+        self.assertIn(scan, original)
+        core.write_text(original.replace(scan,
+            '''        auto first = std::lower_bound(keys.begin(), keys.end(), low);
+        auto matches = std::upper_bound(first, keys.end(), high) - first;'''), encoding='utf-8')
+
+        # Compile and run ordinary/small controls for real; no large workload is executed here.
+        workload = 'range_count 30000 20000 20731'
+        public_target = (attempt / 'work/PERFORMANCE.md').read_text(encoding='utf-8')
+        self.assertIn('`range_count 30000 20000 SEED`', public_target)
+        self.assertNotIn(workload, public_target)
+        expected = dict(bench.range_count_vectors()[1])[workload]
+        real_command = bench.command
+        workload_commands = []
+
+        def synthetic_large_workload(argv, cwd, timeout=120, *, env=None):
+            operation = str(argv[-1])
+            if operation.startswith('range_count '):
+                _, count, queries, _ = operation.split()
+                if max(int(count), int(queries)) > 100:
+                    self.assertEqual(operation, workload)
+                    role = Path(argv[0]).parent.name
+                    self.assertIn(role, {'baseline-build', 'build'})
+                    workload_commands.append((role, list(map(str, argv)), cwd))
+                    return {'argv': list(map(str, argv)), 'stdout': expected + '\n', 'stderr': '',
+                            'exit_code': 0, 'timed_out': False, 'seconds': 2.0 if role == 'baseline-build' else 1.4}
+            return real_command(argv, cwd, timeout, env=env)
+
+        with patch.object(bench, 'command', side_effect=synthetic_large_workload):
+            result = bench.evaluate_attempt(attempt)
+        self.assertTrue(result['automated_artifact_passed'], str(result['builds']))
+        self.assertFalse(result['complete_quality_passed'])
+        checks = {row.get('input'): row for row in result['checks']}
+        self.assertEqual(checks['range_count 7 11 0']['execution']['stdout'], '32,208\n')
+        self.assertEqual(checks['range_count 37 23 4294967295']['execution']['stdout'], '376,4681\n')
+        self.assertEqual(len(workload_commands), 13)  # one correctness probe plus 2 * (warmup + 5)
+        for role, argv, cwd in workload_commands:
+            argv0 = (checks[workload]['execution']['argv'][0] if role == 'build'
+                     else result['performance']['baseline'][0]['argv'][0])
+            self.assertEqual(argv, [argv0, workload])
+            self.assertEqual(str(cwd), result['evidence_directory'])
+        self.assertEqual(result['performance']['maximum_ratio'], 0.70)
+        self.assertEqual(result['performance']['median_ratio'], 0.70)
+
+        path = self.timeout_review(attempt, result=result)
+        review = bench.load(path)
+        next(row for row in review['layers'] if row['id'] == 'performance')['status'] = 'NOT_APPLICABLE'
+        bench.save(path, review)
+        with self.assertRaisesRegex(ValueError, 'layers are required'):
+            bench.record_assessment(attempt, path)
+
+    def test_paired_cpp_controls_reject_fast_wrong_output_and_failed_warmups(self):
+        # Cover both the current held case and the consumed scaling case with synthetic receipts.
+        for workload in ['lookup 30000 20000', 'range_count 30000 20000 20731']:
+            for defect in [None, 'slow', 'wrong-candidate', 'wrong-baseline', 'timeout-warmup']:
+                with self.subTest(workload=workload, defect=defect):
+                    times = {'baseline': [0.01, 2, 2, 2, 2, 2],
+                             'candidate': [10, 1, 1.3, 1.41 if defect == 'slow' else 1.4, 1.5, 1.6]}
+                    seen = []
+
+                    def run(argv, cwd, timeout):
+                        role = argv[0]
+                        self.assertEqual(argv, [role, workload])
+                        self.assertEqual(cwd, self.root)
+                        ordinal = seen.count(role)
+                        seen.append(role)
+                        output = {('wrong-candidate', 'candidate', 2): 'incorrect\n',
+                                  ('wrong-baseline', 'baseline', 3): 'expected\n\n'}.get((defect, role, ordinal), 'expected\n')
+                        timed_out = defect == 'timeout-warmup' and role == 'candidate' and ordinal == 0
+                        return {'argv': argv, 'stdout': output,
+                                'exit_code': None if timed_out else 0, 'timed_out': timed_out,
+                                'seconds': times[role][ordinal]}
+
+                    with patch.object(bench, 'command', side_effect=run):
+                        measured = bench.measure_paired(['baseline'], ['candidate'], workload, 'expected', 0.70, self.root)
+                    self.assertEqual(seen, ['baseline', 'candidate']
+                                     + ['baseline', 'candidate', 'candidate', 'baseline'] * 2
+                                     + ['baseline', 'candidate'])
+                    self.assertEqual([len(measured[role]) for role in ('baseline', 'candidate')], [5, 5])
+                    self.assertEqual(measured['warmups']['candidate']['seconds'], 10)
+                    self.assertEqual(measured['status'], 'PASS' if defect is None else 'FAIL')
+                    self.assertEqual(measured['median_ratio'],
+                                     {None: 0.70, 'slow': 1.41 / 2}.get(defect))
+
+    def timeout_review(self, attempt, status='TIMEOUT', *, result=None):
+        if result is None:
+            result = bench.evaluate_attempt(attempt)
         bench.save(attempt/'generation.json',{'status':status,'source':result['source_before']})
         ref=bench.load(attempt/'latest-evaluation.json');evidence=attempt/ref['path']
         report={'schema':1,'evaluation_sha256':ref['sha256'],'source_sha256':bench.digest(result['source_before']),

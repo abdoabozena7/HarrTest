@@ -167,6 +167,30 @@ unchanged CLI tests the composition and the original checker is replayed.
 Fixture controls show that either isolated repair leaves the other
 defect detectable. These are evaluator controls, not live held results.
 
+### Development after the preview
+
+The fourth comparison recorded three V5 false accepts with protected file
+changes and two with unverified behavior at an evaluation-order boundary.
+The next pin states the exact protected files in the exposed fixture contract
+for every arm, derived from the same policy the evaluator checks. V5 Team
+packets make the approved write scope and read-only inputs visible before
+expensive QA, and ask reviewers to replay changed no-work paths. The original
+results and qualification thresholds are unchanged.
+
+A bounded development replay of the consumed C# planner, Python retry, and
+C++ lookup passed 12/12, 4/4, and 8/8 independent executable checks with no
+protected file changes. The C++ candidate's paired median was 0.267 of the
+baseline (maximum 0.70). The two Sol runs disclosed incomplete native QA.
+In Python, QA could not replay the pinned baseline because Git had normalized
+CRLF to LF. The evaluator now verifies the committed Git blobs match the
+original fixture bytes. A new Sol/low replay then passed 4/4 external checks,
+and its native QA commands exited 0; a final native QA receipt was still absent.
+The full updated suite ran 538 tests, four skipped and no failures.
+
+The planner, retry, and lookup cases now belong to development. The next held
+matrix retains its size, language balance and separate recovery and scaling
+requirements. None of these development observations count toward release.
+
 ### Workflow development evidence
 
 The same frozen protocol retained a credit-validation attempt with seven passing

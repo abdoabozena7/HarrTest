@@ -595,14 +595,20 @@ def integrate(project, state):
     evidence = f'{proof.STATE}/teams/{plan["id"]}/qa-evidence.txt'
     command = t.worker_command(project, plan['id'], 'check')
     review_command = t.worker_command(project, plan['id'], 'review')
+    boundary = ', '.join(sorted(state['baseline']))
     message = (f'You are independent QA. Project: {Path(project).resolve().as_posix()}.\n'
                f'Original request: {plan["request"]}\nShared contract: {plan["contract"]}\n'
                f'{t.validation_message(project, state)}Integrated receipt: {receipt["sha256"]}.\n'
+               f'Sealed implementation and integration paths: {boundary}.\n'
                f'Acceptance check: {plan["integration"]["check"]}\n'
-               'Read current-source inputs and test the actual behavior independently. Cover applicable '
+               'Inspect the full diff from the recorded pre-edit baseline, including additions and removals. '
+               'Check the applicable project write restrictions before a long runtime check. Do not ignore '
+               'an unauthorized change merely because it does not affect output. Then test the actual behavior independently. Cover applicable '
                'functionality, preservation, architecture, security, performance and failure/data risks. '
                'Derive expected results from the agreed contract. Cover affected input controls, '
                'including optional ones, and assert relevant state for rejected operations. '
+               'Compare execution order at changed boundaries: if work moved ahead of parsing, '
+               'validation, a no-op, or an empty loop, replay those paths on baseline and candidate. '
                'Replay apparent inherited failures on the baseline before judging their impact on this request. '
                'Retain failures. Missing checks are UNVERIFIED, '
                'not PASS. Record each quality layer as PASS, FAIL, UNVERIFIED or NOT_APPLICABLE; '

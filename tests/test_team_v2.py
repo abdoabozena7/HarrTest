@@ -427,9 +427,10 @@ class ExistingCodeTeam(unittest.TestCase):
     def test_current_validation_contract_changes_invalidate_packets(self):
         self.write('rules.txt', 'Signed arithmetic semantics must be preserved.\n')
         self.plan['validation_context'] = ['rules.txt']
-        self.start()
+        owner = self.start()['ready'][0]
+        self.assertIn('Sealed read-only validation context', owner['message'])
         self.write('rules.txt', 'Different semantics cannot reuse the prior sealed attempt.\n')
-        with self.assertRaisesRegex(ValueError, 'context changed'):
+        with self.assertRaisesRegex(ValueError, r'context changed: rules\.txt'):
             team.ready_packets(self.project, self.state)
 
     def test_init_rejects_validation_context_owned_by_worker_or_coordinator(self):
@@ -468,6 +469,7 @@ class ExistingCodeTeam(unittest.TestCase):
         for packet in (ready, qa):
             self.assertIn(retained, packet['message'])
             self.assertNotIn('Coordinate exclusive runtime ownership', packet['message'])
+        self.assertIn('Sealed implementation and integration paths: calc.py, check_existing.py.', qa['message'])
         self.assertEqual(self.state['baseline'][checker], self.state['validation_inputs'][retained])
         self.assertNotEqual(self.state['baseline'][checker], proof.file_hash(self.project / checker))
 

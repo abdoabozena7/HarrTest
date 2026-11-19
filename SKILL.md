@@ -12,6 +12,9 @@ the coordinator within its integration scope. For substantial work, complete
 the [Corporate pre-dispatch seal](references/corporate-workflow.md) first.
 When the plan, seal, or native worker capability is missing, keep that work
 unverified and continue with authorized discovery and setup.
+For a bounded change with one settled responsibility, use the minimal Team
+schema-2 path: one owner, integration and independent QA. Do not add a Corporate
+root, extra reviewers, or extra project files unless the task needs them.
 When the host explicitly supplies `HARRTEST_CORPORATE_GOAL`, use that goal ID
 for the reviewed Team and Corporate root. Save the original request in the root
 first, then register the Team with `team.py init --request-from-root`. Dispatch
@@ -34,6 +37,9 @@ Before editing retain a source-qualified baseline: reproduce relevant behavior,
 run existing checks, record known failures and measure affected resource limits.
 Preserve user changes. A baseline failure is not a new regression, but cannot
 silently waive a relevant security or correctness requirement.
+Bind the project's explicit read-only contracts, adapters and verification
+inputs in Team `validation_context`. Keep them byte-identical; record notes and
+diagnostic checks privately when their locations are not authorized deliverables.
 
 Map every requirement to affected contracts/components, risks, owners and
 observable acceptance checks. Cite repository paths and exact source identity,
@@ -149,6 +155,9 @@ including optional controls and failure triggers. Exercise the valid alternate
 values and malformed shapes or types the contract rejects. For a rejected
 operation that can cause side effects, assert the before/after state at the
 rejection boundary as well as the public response.
+When changing operation order, compare old and new paths that do no work
+(empty input, early exit, unsuccessful parse or zero iterations). Preserve
+their established outcomes without growing the public input domain.
 For an affected representation or conversion, check valid boundary values that
 still have representable outputs. Cite the accepted input domain and actual
 runtime limits. If a runtime cannot honor the contract at that boundary, retain
@@ -175,8 +184,10 @@ Keep commands, tool/environment versions, actual exit results and failed attempt
 Limit sensitive capture at the source; record redaction and rebind changed evidence.
 Keep private evidence in `.runtime-proof/`, not public project artifacts.
 
-Run checks through the existing `proof.py` collector and verify the root with
-`root_gate.py verify`. Corporate acceptance binds the plan at sealing and requires
+For narrow Team work, run the finite integrated check and verify its current
+native QA receipt before spending time on optional diagnostics. For a sealed
+root, run checks through `proof.py` and verify with `root_gate.py verify`.
+Corporate acceptance binds the plan at sealing and requires
 current-source checks and independent review for all six layers. A path/hash
 establishes identity, not whether a citation supports a claim: the reviewer must
 record that judgment. Local records are cooperative evidence, not a hostile-writer

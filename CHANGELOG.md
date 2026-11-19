@@ -1,6 +1,13 @@
 # Changelog
 
-## 5.0.0 — preview (`v5.0.0-rc.1`)
+## 5.0.0
+
+- Check the entire diff against the authorized file scope before running
+  expensive independent QA. Identify changed sealed validation inputs by path.
+- Replay affected early exits and no-work paths when an optimization changes
+  execution order. Preserve actual baseline bytes for comparison.
+
+## 5.0.0-rc.1 — preview
 
 - Reorganize the skill around evidence-backed changes to existing code,
   architecture and compatibility preservation, proportional implementation

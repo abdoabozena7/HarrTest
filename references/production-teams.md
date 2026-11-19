@@ -38,9 +38,16 @@ required. Keep the plan under `.runtime-proof/team-plan.json`.
 Do this before any product edit, including a narrow one-file fix.
 
 Use `validation_context` for unchanged inputs such as the existing contract,
-runtime instructions and retained baseline evidence. If an owner will edit a
+runtime instructions, explicitly protected adapters and retained baseline
+evidence. Every listed file must stay byte-identical. If an owner will edit a
 checker, give them the checker path and record its original source hash and
-baseline result separately.
+baseline result separately. Use the independent QA packet's sealed file scope
+as a starting point for the full diff review, not as proof that no other file
+changed.
+
+When a baseline replay needs the original files, retain their exact bytes
+before editing. Confirm that Git objects match the recorded working-tree
+hashes before substituting them: line-ending and checkout filters can differ.
 
 For narrow work with one coherent responsibility and settled scope, record the
 source-backed reasoning and omit `decomposition` and `root_protocol`. `init`

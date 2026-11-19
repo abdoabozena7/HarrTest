@@ -6,10 +6,9 @@ the existing project's architecture, contracts, and measured baseline. It
 assigns independent changes to native implementation owners and uses separate
 QA to verify the integrated result on current source.
 
-**Version 5 preview:** the fourth Copilot comparison did not meet the stable
-release criteria. A subsequent development run verified the repaired workflow
-end to end; it does not establish a general quality improvement. See the
-[validation record](references/v5-validation.md) for the results and limits.
+Check the GitHub release notes for the release channel and the
+[validation record](references/v5-validation.md) for measured results and
+limits. The initial V5 preview did not meet the stable release criteria.
 
 [Install](#install) · [Start a task](#start-a-task) ·
 [Corporate workflow](references/corporate-workflow.md) ·
@@ -17,8 +16,8 @@ end to end; it does not establish a general quality improvement. See the
 
 ## Install
 
-Download the [single installable `skill.zip`](https://github.com/abdoabozena7/HarrTest/releases/download/v5.0.0-rc.1/skill.zip)
-from the [version 5 preview](https://github.com/abdoabozena7/HarrTest/releases/tag/v5.0.0-rc.1).
+Download the single installable `skill.zip` for your chosen HarrTest 5 release
+from [GitHub Releases](https://github.com/abdoabozena7/HarrTest/releases).
 Extract it to get the `harrtest` folder, including its Python 3.10+ scripts
 and references. If you already use HarrTest, update your existing installation
 instead of adding a second copy.
