@@ -110,6 +110,8 @@ def tree(root, *, skill=False):
         for name in sorted(names):
             p = Path(directory) / name
             rel = p.relative_to(root).as_posix()
+            if skill and name in SKILL_EXCLUDES:
+                continue
             if p.is_symlink() or (hasattr(p, "is_junction") and p.is_junction()):
                 raise ValueError("Linked artifact is not accepted: " + rel)
             if name.startswith(".env") or name.endswith((".webm", ".mp4")):

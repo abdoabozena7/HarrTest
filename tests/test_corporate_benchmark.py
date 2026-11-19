@@ -142,9 +142,11 @@ class CorporateBenchmarkTests(unittest.TestCase):
             self.assertNotIn(previously_retired, splits)
 
     def test_pin_does_not_expose_evaluator_or_corpus(self):
+        (self.new / '.git').write_text('gitdir: linked-worktree-metadata\n', encoding='utf-8')
         self.freeze()
         pinned=self.experiment/'packages/v5'
         self.assertTrue((pinned/'scripts/tool.py').is_file())
+        self.assertFalse((pinned/'.git').exists())
         self.assertFalse((pinned/'scripts/corporate_benchmark.py').exists())
         self.assertFalse((pinned/'assets/corporate').exists())
         self.assertEqual(bench.sha(self.experiment/'evaluator/cases.json'), bench.sha(bench.CORPUS))
