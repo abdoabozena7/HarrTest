@@ -16,6 +16,13 @@ under the owner's policies when the environment is ephemeral. Restored projects
 under a different absolute path get a distinct memory store (avoid accidental
 cross-repository leakage); migrate explicitly after identity review.
 
+For new implementation work, use the
+[preservation and completion protocol](feature-preservation-and-completion.md).
+Its exact request, scoped baseline, decisions, TODO progress and review are
+retained in this same private database. `mission.py status` is the authoritative
+recovery view; `brief` and task packs surface the mission context. A different
+session is not a new mission. Re-read current files before relying on old facts.
+
 ## Preflight
 
 Use `python <skill>/scripts/project_memory.py --project PATH bootstrap`
@@ -62,11 +69,12 @@ blocks typical secret files, environment files, virtual envs and generated trees
 No repository files are uploaded or read wholesale automatically. The manifest
 scans at most 2000 filenames, excluding private/generated directories.
 
-After real execution use `checkpoint --label ... --state ... --text ...
+For historical observations use `checkpoint --label ... --state ... --text ...
 --evidence RELATIVE_PATH`. States are TODO, IN_PROGRESS, IMPLEMENTED,
 VERIFIED_CHILD, BLOCKED. VERIFIED_CHILD and BLOCKED require source-bound evidence
 files. These records explain what previously happened; their state is not accepted
-as fresh root verification, nor a substitute for a `workflow.py` result.
+as fresh root verification, nor a substitute for a `workflow.py` result or a
+requirement-linked completion ledger.
 
 ## Select task context, not entire history
 

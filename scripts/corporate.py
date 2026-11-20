@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
+import sqlite3
 import statistics
 
 import proof
@@ -419,6 +420,8 @@ def verifier_identity(contract):
              'planning.py', 'strict_io.py'}
     if 'production_team' in contract:
         names.update(('team.py', 'team_v2.py'))
+    if contract.get('mission_protocol') == 'preservation-v1':
+        names.update(('mission.py', 'project_memory.py'))
     files = {name: proof.file_hash(path(package, name)) for name in sorted(names)}
     return {'files': files, 'digest': proof.digest(files)}
 
@@ -590,6 +593,7 @@ def scaffold(goal, proof_task, baseline_checks, author):
     import coverage
     import root_gate
     import team
+    import team_v2
 
     project, goal = goal_project(goal)
     require(not any((goal / name).exists() for name in ('root-contract.json', 'corporate-plan.json', 'root-seal.json')),
@@ -613,6 +617,9 @@ def scaffold(goal, proof_task, baseline_checks, author):
     baseline_source = source_snapshot(project, source_paths)
     require(all(baseline_source['files'].get(rel) == digest for rel, digest in state['baseline'].items()),
             'Current source differs from the registered Team baseline')
+    managed = team_v2.managed_mission(project, state)
+    if managed is not None:
+        root_gate.require_mission_baseline(managed, baseline_source)
     require(baseline_checks and len(baseline_checks) == len(set(baseline_checks)),
             'Select distinct actual baseline checks')
     refs, known_failures, ended = [], [], []
@@ -632,6 +639,10 @@ def scaffold(goal, proof_task, baseline_checks, author):
     requirements = [{'id': rid, 'impacts': [], 'tasks': [owner['id'] for owner in team_plan['tasks']
                      if rid in owner['outcomes']]} for rid in team_plan['outcomes']]
     contract = proof.load(proof.SKILL / 'assets/templates/root-contract-v4.json')
+    if managed is None:
+        contract.pop('mission_protocol', None)
+    else:
+        contract['mission_protocol'] = team_plan['mission_protocol']
     contract.update({'goal_id': goal.name, 'production_team': goal.name, 'request_sha256': request_sha256,
                      'scope_statement': None, 'coverage_review': None,
                      'request_segments': coverage.inventory(original.read_text(encoding='utf-8')),
@@ -804,7 +815,7 @@ def main():
             result = execution_reference(args.project.resolve(), args.receipt)
         print(json.dumps(result, indent=2))
         return 0
-    except (ValueError, OSError, KeyError, TypeError, proof.ProofError) as exc:
+    except (ValueError, OSError, KeyError, TypeError, proof.ProofError, sqlite3.Error) as exc:
         print(str(exc))
         return 2
 

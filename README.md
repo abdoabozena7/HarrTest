@@ -6,9 +6,13 @@ the existing project's architecture, contracts, and measured baseline. It
 assigns independent changes to native implementation owners and uses separate
 QA to verify the integrated result on current source.
 
-The current V5 release is a **Preview**, not a qualified stable release.
-See the [validation record](references/v5-validation.md) for measured results
-and limits.
+The 5.1 preview adds a scoped
+[Feature Preservation Contract and Completion Ledger](references/feature-preservation-and-completion.md).
+HarrTest replays relevant old behavior, keeps unresolved destructive decisions
+scoped, and refuses verified completion while mandatory work or evidence is open.
+
+**Preview, not a qualified stable release.** See the
+[validation record](references/v5-validation.md) for measured results and limits.
 
 [How it works](#how-it-works) · [Luna/low example](#beacon-courier) ·
 [Install](#install) · [Try it in two chats](references/two-chat-trial.md) ·
@@ -81,12 +85,12 @@ experiment ([plain frame](visual/comparison/without-harrtest.png) ·
 
 ## Install
 
-Download the single installable [`skill.zip` for HarrTest 5 Preview 2](https://github.com/abdoabozena7/HarrTest/releases/download/v5.0.0-rc.2/skill.zip).
+Download the single installable [`skill.zip` for HarrTest 5.1 Preview](https://github.com/abdoabozena7/HarrTest/releases/download/v5.1.0-rc.1/skill.zip).
 Extract it to get the `harrtest` folder, including its Python 3.10+ scripts
 and references. If you already use HarrTest, update your existing installation
 instead of adding a second copy.
 
-To hand this to an agent, point it to the [Preview 2 release](https://github.com/abdoabozena7/HarrTest/releases/tag/v5.0.0-rc.2)
+To hand this to an agent, point it to the [5.1 Preview release](https://github.com/abdoabozena7/HarrTest/releases/tag/v5.1.0-rc.1)
 and ask it to install the `harrtest` skill for the current project, confirm it
 loaded that copy, and use it for the next task. Reload skill discovery or open
 a fresh chat if the host does not pick it up in the current session.
@@ -105,10 +109,11 @@ py -3 C:\path\to\harrtest\scripts\install.py --agent copilot --scope project --p
 py -3 C:\path\to\harrtest\scripts\install.py --agent copilot --scope project --project . --update
 ```
 
-Review the dry run before installing. `VERSION` identifies the `5.0.0`
-workflow; use the release tag or its asset digest to identify the preview build.
-Keep active missions pinned to the build that sealed their contracts. Optional
-instructions and hooks are described in the [workflow guide](references/corporate-workflow.md).
+Review the dry run before installing. Reload skill discovery and confirm
+that your host loaded the project copy with `VERSION` set to `5.1.0`. Use the
+release tag or its asset digest to identify the preview build. Keep active
+missions pinned to the build that sealed their contracts. Optional instructions
+and hooks are described in the [workflow guide](references/corporate-workflow.md).
 
 ## Start a task
 
@@ -121,7 +126,10 @@ $harrtest
 
 Use the [Corporate workflow](references/corporate-workflow.md) for substantial
 existing-code changes and [production teams](references/production-teams.md)
-for scoped native handoffs. Independently check functionality, preservation,
+for scoped native handoffs. The agent creates and maintains the preservation
+contract and ledger; users do not need to author state files. Resume by the same
+goal ID and inspect current source before relying on old evidence.
+Independently check functionality, preservation,
 architecture, security, performance and resilience as applicable. A required
 check without evidence stays unverified; an aggregate score does not waive it.
 
@@ -133,7 +141,7 @@ check without evidence stays unverified; an aggregate score does not waive it.
 - [Project Builder](references/project-builder.md) coordinates and verifies
   runnable milestones for a new product.
 - [Project Memory](references/project-context-memory.md) keeps source-qualified
-  facts and task context outside installed skill files.
+  facts, mission evidence and task context outside installed skill files.
 - [CI](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml)
   exercises Windows and Linux and packages the skill.
 

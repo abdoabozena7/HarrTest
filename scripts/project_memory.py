@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Persistent, local-first HarrTest project memory and source-qualified context packs.
 
-Only user/host-provided goal text and explicit, source-backed notes are persisted.
+Only local goal text, source-qualified context, and explicit mission records are persisted.
 No LLM client, background process, external network request or authority grant.
 Project state lives OUTSIDE the replaceable installed skill and target repository.
 """
@@ -85,10 +85,11 @@ def workspace(project: Path, *, create=True) -> Path:
     return target
 
 
-def safe_source(project: Path, name: str, *, goal_source=False, evidence_source=False) -> Path:
+def source_path(project: Path, name: str, *, goal_source=False, evidence_source=False,
+                must_exist=True, allow_directory=False) -> Path:
     if not isinstance(name, str):
         raise ValueError('Source must be a relative file path')
-    path = strict_io.scoped_path(project, name)
+    path = strict_io.scoped_path(project, name, must_exist=must_exist)
     rel = path.relative_to(project)
     root_goal = (len(rel.parts) == 4 and rel.parts[0] == '.runtime-proof'
                  and rel.parts[1] == 'root-goals' and rel.parts[-1] == 'original-request.txt')
@@ -96,9 +97,15 @@ def safe_source(project: Path, name: str, *, goal_source=False, evidence_source=
     if ((any(part.casefold() in DENY for part in rel.parts) and not allowed_proof)
             or path.name.startswith('.env') or path.suffix.casefold() in SECRET_ENDINGS):
         raise ValueError('Secret, generated, or private evidence path excluded from context memory')
+    if not path.exists() or (allow_directory and path.is_dir()):
+        return path
     if not path.is_file() or path.stat().st_size > (16_000_000 if evidence_source else 2_000_000):
         raise ValueError('Source must be a bounded regular file')
     return path
+
+
+def safe_source(project: Path, name: str, *, goal_source=False, evidence_source=False) -> Path:
+    return source_path(project, name, goal_source=goal_source, evidence_source=evidence_source)
 
 
 def manifest(project: Path) -> list[str]:
@@ -145,6 +152,11 @@ class Memory:
                     id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, label TEXT NOT NULL,
                     state TEXT NOT NULL, description TEXT NOT NULL, evidence TEXT,
                     evidence_sha TEXT, created TEXT NOT NULL);
+                  CREATE TABLE IF NOT EXISTS missions(
+                    goal_id TEXT PRIMARY KEY, binding TEXT NOT NULL,
+                    spec TEXT NOT NULL, state TEXT NOT NULL);
+                  CREATE TABLE IF NOT EXISTS mission_history(
+                    goal_id TEXT NOT NULL, replaced_at TEXT NOT NULL, previous TEXT NOT NULL);
                 ''')
                 rows = db.execute('SELECT schema FROM metadata').fetchall()
                 if rows != [(SCHEMA,)]:
@@ -156,10 +168,11 @@ class Memory:
                 db.execute('UPDATE metadata SET project=?', (identity,))
 
     @contextmanager
-    def db(self):
-        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+    def db(self, *, read_only=False):
+        location = self.path.as_uri() + '?mode=ro' if read_only else self.path
+        conn = sqlite3.connect(location, uri=read_only, timeout=10, isolation_level=None)
         conn.execute('PRAGMA busy_timeout=10000')
-        conn.execute('BEGIN IMMEDIATE')
+        conn.execute('BEGIN' if read_only else 'BEGIN IMMEDIATE')
         try:
             yield conn
             if conn.in_transaction:
@@ -171,8 +184,46 @@ class Memory:
         finally:
             conn.close()
 
+    def _has_missions(self, db):
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='missions'").fetchone():
+            return False  # Existing Memory schema 1 database, not enrolled.
+        if db.execute('SELECT schema,project FROM metadata').fetchall() != [(SCHEMA, repository_identity(self.project))]:
+            raise ValueError('Invalid project identity for managed mission')
+        return True
+
+    def mission_ids(self):
+        if not self.path.is_file():
+            return []
+        with self.db(read_only=True) as db:
+            if not self._has_missions(db):
+                return []
+            return [row[0] for row in db.execute('SELECT goal_id FROM missions ORDER BY goal_id')]
+
+    def mission_record(self, goal_id, *, db=None):
+        if db is None:
+            if not self.path.is_file():
+                return None
+            with self.db(read_only=True) as reader:
+                return self.mission_record(goal_id, db=reader)
+        if not self._has_missions(db):
+            return None
+        row = db.execute('SELECT binding,spec,state FROM missions WHERE goal_id=?', (goal_id,)).fetchone()
+        if row is None:
+            return None
+        binding, raw_spec, raw_state = row
+        spec = strict_io.loads(raw_spec)
+        if (strict_io.digest(spec) != binding or spec['draft']['goal_id'] != goal_id or
+                sha(spec['request'].encode('utf-8')) != spec['request_sha256']):
+            raise ValueError('Immutable mission request or plan binding changed')
+        return binding, spec, strict_io.loads(raw_state)
+
     def goal(self, goal_id='main'):
         with self.db() as db:
+            managed = self.mission_record(goal_id, db=db)
+            if managed:
+                binding, spec, _ = managed
+                return {'id': goal_id, 'revision': 1, 'text': spec['request'], 'sha256': spec['request_sha256'],
+                        'origin': spec['origin'], 'mission_sha256': binding}
             row = db.execute('SELECT revision,text,content_sha,origin FROM goals WHERE goal_id=? ORDER BY revision DESC LIMIT 1', (goal_id,)).fetchone()
         return {'id': goal_id, 'revision': row[0], 'text': row[1], 'sha256': row[2], 'origin': row[3]} if row else None
 
@@ -182,11 +233,16 @@ class Memory:
         raw = path.read_bytes()
         if len(raw) > MAX_GOAL:
             raise ValueError('Goal file too large; identify the authoritative concise request')
-        goal = raw.decode('utf-8-sig').strip()
-        if len(goal) < 12:
-            raise ValueError('The original goal is missing or too short')
-        digest = sha(goal.encode('utf-8'))
         with self.db() as db:
+            managed = self.mission_record(goal_id, db=db)
+            if managed:
+                if raw.decode('utf-8') != managed[1]['request']:
+                    raise ValueError('Managed mission original request changed; it cannot be revised')
+                return {'status': 'UNCHANGED', 'goal_id': goal_id, 'revision': 1, 'state_dir': str(self.directory)}
+            goal = raw.decode('utf-8-sig').strip()
+            if len(goal) < 12:
+                raise ValueError('The original goal is missing or too short')
+            digest = sha(goal.encode('utf-8'))
             prior = db.execute('SELECT revision,content_sha FROM goals WHERE goal_id=? ORDER BY revision DESC LIMIT 1', (goal_id,)).fetchone()
             if prior:
                 if prior[1] == digest:
@@ -262,14 +318,18 @@ class Memory:
                 [{'id': c[0], 'label': c[1], 'state': c[2], 'description': c[3], 'evidence': c[4],
                   'evidence_sha256': c[5], 'created': c[6], 'evidence_current': fresh(c[4], c[5])} for c in checkpoints])
 
-    def summary(self, goal_id='main') -> dict:
+    def summary(self, goal_id='main', *, include_mission=True) -> dict:
         goal = self.goal(goal_id)
         if not goal:
             raise ValueError('No goal registered: use bootstrap --goal-file')
         notes, checkpoints = self.records(goal_id)
-        return {'project': str(self.project), 'goal': goal, 'notes': notes, 'checkpoints': checkpoints,
-                'state_dir': str(self.directory), 'memory_is_not_root_gate': True,
-                'rule': 'Notes are source-bound observations, not permissions or acceptance. Reinspect stale observations.'}
+        result = {'project': str(self.project), 'goal': goal, 'notes': notes, 'checkpoints': checkpoints,
+                  'state_dir': str(self.directory), 'memory_is_not_root_gate': True,
+                  'rule': 'Notes are source-bound observations, not permissions or acceptance. Reinspect stale observations.'}
+        if include_mission and 'mission_sha256' in goal:
+            from mission import open_mission
+            result['mission'] = open_mission(self.project, goal_id, goal['mission_sha256']).context()
+        return result
 
     def write_brief(self, goal_id='main'):
         obj = self.summary(goal_id)
@@ -299,10 +359,11 @@ class Memory:
             raise ValueError('Task goal is required')
         if role not in {'investigate', 'implement', 'review', 'integrate', 'context-curator'}:
             raise ValueError('Unknown worker role')
-        brief = self.summary(goal_id)
+        brief = self.summary(goal_id, include_mission=False)
         goal = brief['goal']
+        managed = 'mission_sha256' in goal
         # The original goal is mandatory; never silently summarize away acceptance constraints.
-        if len(goal['text']) > budget // 2:
+        if len(goal['text']) > (budget - 1000 if managed else budget // 2):
             raise ValueError('Original goal too long for worker context; use higher budget or reviewed subgoal, without dropping original acceptance')
         terms = tokens(task)
         requested_scopes = tuple(scopes)
@@ -349,7 +410,19 @@ class Memory:
                    'verifier': 'Original sealed root and current product checks remain authoritative.',
                    'model_policy': 'Curate with a stronger host-provided model only if actually available and already authorized; never silently invoke an extra provider.'}
         def fits(value):
-            return len(strict_io.canonical(value)) <= budget
+            return len(strict_io.canonical(value)) + (64 if managed else 0) <= budget
+        if managed:
+            from mission import open_mission
+            active = open_mission(self.project, goal_id, goal['mission_sha256'])
+            payload['mission'] = active.context(scopes=requested_scopes)
+            if not fits({**payload, 'recommended_files': []}):
+                payload['mission'] = {
+                    'mission_sha256': active.binding, 'status': 'FULL_MISSION_CONTEXT_REQUIRED',
+                    'goal_id': goal_id,
+                    'status_command': ['python', '-B', str(Path(__file__).with_name('mission.py').resolve()),
+                                       '--project', str(self.project), '--goal', goal_id, 'status'],
+                    'instruction': 'Read full mission status and reinspect stale paths before editing.',
+                }
         for note in ranked_notes:
             candidate = dict(note)
             candidate['source_status'] = 'CURRENT_SOURCE' if note['current'] else 'STALE_RECHECK_BEFORE_USE'

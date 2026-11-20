@@ -88,6 +88,14 @@ class CorporateBenchmarkTests(unittest.TestCase):
         meta = bench.load(slot / 'attempt.json')
         self.assertTrue(meta['prompt'].startswith('$harrtest\n' + meta['case']['request']))
 
+    def test_freeze_accepts_and_pins_the_current_v5_package_version(self):
+        shutil.copyfile(ROOT / 'VERSION', self.new / 'VERSION')
+        self.freeze()
+        _, plan = bench.frozen(self.experiment)
+        version = self.experiment / 'packages' / 'v5' / 'VERSION'
+        self.assertEqual(version.read_bytes(), (ROOT / 'VERSION').read_bytes())
+        self.assertEqual(plan['packages']['v5']['manifest']['VERSION'], bench.sha(version))
+
     def test_acceptance_guard_profiles_v5_on_the_frozen_substantial_cases(self):
         shutil.copy2(ROOT / 'scripts/copilot_guard.py', self.new / 'scripts/copilot_guard.py')
         with patch.object(bench, 'preflight', return_value=self.fake_probe):

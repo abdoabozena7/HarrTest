@@ -265,8 +265,8 @@ def freeze(destination, baseline, candidate, models, *, tools=None, seconds=2400
         if not guard_cases:
             raise ValueError('Guarded comparison requires predeclared substantial held cases')
     baseline, candidate = Path(baseline).resolve(), Path(candidate).resolve()
-    for p, version in ((baseline, "4.1.0"), (candidate, "5.0.0")):
-        if (p / "VERSION").read_text().strip() != version or not (p / "SKILL.md").is_file():
+    for p, versions in ((baseline, {"4.1.0"}), (candidate, {"5.0.0", "5.1.0"})):
+        if (p / "VERSION").read_text().strip() not in versions or not (p / "SKILL.md").is_file():
             raise ValueError("Wrong skill version: " + str(p))
     if corporate_guard_goal and not (candidate / 'scripts/copilot_guard.py').is_file():
         raise ValueError('The pinned candidate does not include the Corporate editor guard')

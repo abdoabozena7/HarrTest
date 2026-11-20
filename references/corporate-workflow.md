@@ -13,6 +13,14 @@ architecture records and tests. Resolve meaning from controlling contracts first
 ask only about unanswered material choices. Cite exact source versions/excerpts.
 Archive needed evidence privately before changes, retaining its original authority.
 
+For new work initialize the
+[Feature Preservation Contract and Completion Ledger](feature-preservation-and-completion.md)
+using the same goal ID, original request, source scope and proof receipts.
+Use `mission_protocol: preservation-v1` on both the Team and root. Keep
+preserved behavior and required TODOs mapped through to the root, including
+any additional root integration requirement. Do not edit the product while
+discovery or an approval for the affected behavior is still unresolved.
+
 Before drafting proof contracts, make a short inventory of the affected public
 operations and preservation obligations. For each, record the observable
 assertion and the input or state that could disprove it. Include a separate
@@ -83,7 +91,8 @@ runs the listed `review-brief` command to get the complete criteria and verdict
 command for that revision. `review-brief` also returns the exact dispatch packet
 if the coordinator needs to retrieve it again. Native replay still checks for
 pre-edit writes in rejected revisions. The revision cannot
-replace a passed or admitted plan. If unsealed Corporate drafts already exist,
+replace a passed or admitted plan or change a sealed preservation ledger.
+Keep managed owners and requirements consistent with that ledger. If unsealed Corporate drafts already exist,
 archive them first rather than binding old coverage to new ownership. Keep the
 original request and reusable baseline receipts in place.
 
@@ -128,7 +137,7 @@ that artifact. The root seal needs both this coverage and the current Team plan 
 The root and Team bindings have the following shape.
 
 ```json
-{"schema":4,"protocol":"corporate-v1","production_team":"mission","team_decomposition":"reviewed-v1","corporate":{"plan":".runtime-proof/root-goals/mission/corporate-plan.json","report":".runtime-proof/root-goals/mission/corporate-report.json"}}
+{"schema":4,"protocol":"corporate-v1","mission_protocol":"preservation-v1","production_team":"mission","team_decomposition":"reviewed-v1","corporate":{"plan":".runtime-proof/root-goals/mission/corporate-plan.json","report":".runtime-proof/root-goals/mission/corporate-report.json"}}
 ```
 
 The plan is schema1 with request_sha256, author, created_at and source_paths:
@@ -244,6 +253,9 @@ source paths. Every changed file in that comparison needs a sealed Team owner
 or a declared integration output. Review the full project diff as well so a
 file omitted from the declared source paths can still be found.
 Run changed-behavior and preservation checks through the proof collector.
+The mission review records inventoried behavior, TODOs and changed tests with
+current check evidence; it does not replace the six-layer Corporate report or
+native QA. The root must pass both the managed ledger and the existing gates.
 If QA finds an apparent inherited fault, replay the same condition on baseline
 and candidate without changing the oracle. Record the affected requirements and
 evidence. Record unrelated existing findings with their limitations and keep

@@ -6,9 +6,11 @@ description: Change software with evidence-based planning, scoped implementation
 # HarrTest 5
 
 For an implementation request, start as coordinator. Record the baseline and
-open the [Team plan](references/production-teams.md) before the first product
-edit. Dispatch the actual implementation handoffs to native owners and keep
-the coordinator within its integration scope. For substantial work, complete
+initialize the [preservation contract and completion ledger](references/feature-preservation-and-completion.md),
+including for small fixes or new projects. New Team and root plans use
+`mission_protocol: preservation-v1`. Check pre-edit admission before the first
+product edit; dispatch the actual [Team packets](references/production-teams.md)
+to native owners and keep the coordinator within its integration scope. For substantial work, complete
 the [Corporate pre-dispatch seal](references/corporate-workflow.md) first.
 When the plan, seal, or native worker capability is missing, keep that work
 unverified and continue with authorized discovery and setup.
@@ -26,9 +28,9 @@ in the [coverage review](references/corporate-workflow.md#before-editing) even
 when the changed happy path does not exercise them. Run `root_gate.py check-draft`
 on the unsealed draft before asking for independent coverage. Send the exact
 `corporate.py coverage-packet` to a separate reviewer. Complete the root seal
-before dispatching implementation or editing. Without enrollment, a bounded
-change with one settled responsibility can use the minimal Team schema-2 path:
-one owner, integration and independent QA. Do not add extra gates without cause.
+before dispatching implementation or editing. Without Corporate enrollment, a
+bounded change with one settled responsibility can use the managed Team path
+with one owner, integration and independent QA, without a Corporate root.
 
 For a new product, use a `kind: greenfield` Team with reviewed decomposition
 instead of the existing-code Corporate baseline. Seal the intended behavior,
@@ -49,11 +51,13 @@ Read VERSION and pin the local package for the task. Check upstream only when
 the user requests it. Use the current host, approved tools and authentication;
 this skill does not grant permission or replace organization policy.
 
-Preserve the exact request. Inspect repository instructions, actual entrypoints,
-architecture decisions, public contracts, dependencies, callers and tests.
-Distinguish documented intention from observed behavior. Reuse the project's
-design and conventions. A new abstraction, dependency or architecture needs a
-task-linked reason; do not redesign unrelated code to satisfy a generic style.
+Preserve the exact request. On reconnect load the same goal's mission status,
+reinspect affected source and dependencies, refresh stale context, and resume
+unfinished authorized TODOs. Discover behavior in actual entrypoints, callers,
+tests, configuration and failure paths. Preserve existing behavior including
+undocumented options, except for precisely authorized changes. Distinguish
+observations and contracts from implementation details and assumptions.
+Reuse the project's design and conventions; unrelated redesign is out of scope.
 
 Before editing retain a source-qualified baseline: reproduce relevant behavior,
 run existing checks, record known failures and measure affected resource limits.
@@ -66,8 +70,10 @@ diagnostic checks privately when their locations are not authorized deliverables
 Map every requirement to affected contracts/components, risks, owners and
 observable acceptance checks. Cite repository paths and exact source identity,
 user decisions, real observations or version-matched official sources for
-consequential choices. Ask only about unresolved material meaning or external
-effects; continue independent discovery while awaiting an answer.
+consequential choices. Ask only about unresolved material decisions. If a
+destructive conflict survives reasonable compatible alternatives, get and
+record the user's specific decision before changing that behavior. Preserve it
+without approval and continue independent work; only dependent TODOs are blocked.
 
 Use measured test duration, dependency impact and observed workload in planning.
 Label estimates and assumptions; revise them after the first measured result.
@@ -258,9 +264,10 @@ Keep ordinary diagnosis and repair in the active mission. A handoff, failed revi
 or attempt timebox is not completion. Respect authorization, actual resource
 limits, cancellation and host limits. Report missing capabilities honestly while
 continuing useful authorized work.
-Qualify completion claims to the behavior and inputs actually verified. If an
-applicable criterion is still open, report the affected requirement as incomplete
-alongside check results already established.
+Use current independent QA to verify ledger items, and reconcile every original
+requirement at the final gate. Reopen stale or failed evidence; IMPLEMENTED is
+not VERIFIED. If any mandatory work or existing root gate remains open, report
+the affected requirements as incomplete alongside results already established.
 
 For harness improvement keep product edits and task-specific repair coaching out
 of the experiment. Improve the general mechanism, pin a new version and retain

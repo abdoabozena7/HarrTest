@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -59,6 +60,18 @@ def concrete(value, label):
     proof.meaningful(value, label)
     require(len(value) <= MAX_PACKET_CHARS,
             f'{label} is too long for a focused packet ({len(value)}/{MAX_PACKET_CHARS} characters)')
+
+
+def check_mission_registration(project, plan):
+    """Only new registration checks for downgrade; existing legacy states are pinned."""
+    import mission
+
+    if 'mission_protocol' in plan:
+        require(plan.get('schema') == 2 and plan['mission_protocol'] == mission.PROTOCOL,
+                'Managed Team registration requires schema 2 with mission_protocol: preservation-v1')
+    else:
+        require(not mission.enrolled(project, plan['id']),
+                'This goal is enrolled; register a Team with mission_protocol: preservation-v1')
 
 
 def file_list(project, values, label):
@@ -194,6 +207,7 @@ def init(project, plan):
         import team_v2
         return team_v2.init(project, plan)
     tasks, owned = validate_plan(project, plan)
+    check_mission_registration(project, plan)
     baseline = snapshot(project, owned)
     if plan['kind'] == 'greenfield':
         require(not any(baseline.values()), 'Seal a greenfield plan before creating its product files')
@@ -219,6 +233,25 @@ def load_state(project, team_id):
     return state
 
 
+def request_matches(project, plan, request_sha256, *, exact=False):
+    request = plan['request']
+    if hashlib.sha256(request.encode('utf-8')).hexdigest() == request_sha256:
+        return True
+    if exact:
+        return False
+    normalized = request.replace('\r\n', '\n')
+    if any(hashlib.sha256(text.encode('utf-8')).hexdigest() == request_sha256
+           for text in (normalized, normalized.replace('\n', '\r\n'))):
+        return True
+    # New root intake retains even mixed line endings. Old plans and coverage still
+    # see universal-newline text; this fallback requires the actual saved request hash.
+    root = strict_io.scoped_path(project, f'{proof.STATE}/root-goals/{plan["id"]}/original-request.txt',
+                                 must_exist=False)
+    if not root.is_file() or proof.file_hash(root) != request_sha256:
+        return False
+    return root.read_text(encoding='utf-8') == normalized.replace('\r', '\n')
+
+
 def binding(project, team_id, request_sha256):
     state = load_state(project, team_id)
     if state['plan'].get('schema') == 2:
@@ -226,10 +259,7 @@ def binding(project, team_id, request_sha256):
         return team_v2.binding(project, team_id, request_sha256)
     plan = state['plan']
     # Root request snapshots may use native Windows line endings.
-    request = plan['request'].replace('\r\n', '\n')
-    digests = {hashlib.sha256(text.encode('utf-8')).hexdigest()
-               for text in (request, request.replace('\n', '\r\n'))}
-    require(request_sha256 in digests, 'Production team is for a different original request')
+    require(request_matches(project, plan, request_sha256), 'Production team is for a different original request')
     tasks = {row['id']: {key: row[key] for key in ('outputs', 'depends_on')} for row in plan['tasks']}
     return {'plan_sha256': state['plan_sha256'], 'tasks': tasks,
             'integration_outputs': [*plan['integration']['outputs'],
@@ -387,6 +417,15 @@ def ready_packets(project, state):
 
 def repair(project, state, tid, evidence, observation):
     """Bind a failed integrated observation to an existing implementation owner."""
+    if state['plan'].get('schema') == 2 and 'mission_protocol' in state['plan']:
+        import team_v2
+        return team_v2.repair(project, state, tid, evidence, observation)
+    request, task = _record_repair(project, state, tid, evidence, observation)
+    return {'team': state['plan']['id'], 'action': 'repair', 'mission_complete': False,
+            'repair': request['sha256'], 'owner': tid, 'packet': packet(project, state, task)}
+
+
+def _record_repair(project, state, tid, evidence, observation):
     if state['plan'].get('schema') == 2 and state['plan'].get('root_protocol') == 'corporate-v1':
         import team_v2
         team_v2.corporate_admission(project, state)
@@ -416,8 +455,7 @@ def repair(project, state, tid, evidence, observation):
     request = record(project, state, 'repair-' + tid, {retained: digest},
                      observation=observation, qa=qa['sha256'], integration=integrated['sha256'],
                      handoff=owner['sha256'], owner=tid)
-    return {'team': state['plan']['id'], 'action': 'repair', 'mission_complete': False,
-            'repair': request['sha256'], 'owner': tid, 'packet': packet(project, state, tasks[tid])}
+    return request, tasks[tid]
 
 
 def integrate(project, state):
@@ -549,6 +587,13 @@ def runtime_check(project, state, argv):
 
 
 def review(project, state, evidence, verdict):
+    if state['plan'].get('schema') == 2 and 'mission_protocol' in state['plan']:
+        import team_v2
+        return team_v2.review(project, state, evidence, verdict)
+    return _record_review(project, state, evidence, verdict)
+
+
+def _record_review(project, state, evidence, verdict, *, body=None, **extra):
     validation_message(project, state)
     integrated = current_receipt(project, state, 'integration')
     team_id = state['plan']['id']
@@ -565,19 +610,20 @@ def review(project, state, evidence, verdict):
                 'Assigned repairs need fresh owner handoffs before QA acceptance')
         require(integrated['inputs'] == {tid: row['sha256'] for tid, row in children.items()},
                 'Reintegrate fresh owner handoffs before QA acceptance')
-    digest = proof.file_hash(path)
+    digest = proof.file_hash(path) if body is None else hashlib.sha256(body).hexdigest()
+    require(body is None or proof.file_hash(path) == digest, 'QA evidence changed during review')
     retained = f'{prefix}review-evidence/{digest}.txt'
     destination = strict_io.scoped_path(project, retained, must_exist=False)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not destination.exists():
         with destination.open('xb') as saved:
-            saved.write(path.read_bytes())
+            saved.write(path.read_bytes() if body is None else body)
     require(proof.file_hash(destination) == digest, 'Retained QA evidence changed')
     if verdict == 'pass' and state['plan'].get('schema') == 2 and state['plan']['integration'].get('detail_review'):
         import team_v2
         team_v2.verify_detail_review(project, state, check, destination)
     return record(project, state, 'qa', {retained: digest}, evidence_source=evidence,
-                  integration=integrated['sha256'], check=check.get('sha256'), verdict=verdict)
+                  integration=integrated['sha256'], check=check.get('sha256'), verdict=verdict, **extra)
 
 
 def instant(value):
@@ -1318,6 +1364,12 @@ def main(argv=None):
             tasks = {row['id']: row for row in state['plan']['tasks']}
             if args.command == 'packets':
                 result = {'ready': ready_packets(project, state)}
+                if 'mission_sha256' in state:
+                    import team_v2
+                    result['mission_status'] = team_v2.mission_command(project, state, 'status')
+                    glue = team_v2.integration_packet(project, state)
+                    if glue is not None:
+                        result['integration'] = glue
             elif args.command == 'review-brief':
                 import team_v2
                 require('revision' in state and args.revision == state['revision'],
@@ -1347,11 +1399,13 @@ def main(argv=None):
                     result = {**result, 'passed': False, 'action': 'assign-owner-repair', 'mission_complete': False,
                               'next': 'Use repair --task OWNER --evidence FILE --observation TEXT; '
                                       'dispatch the full returned packet to that owner, then reintegrate and rerun QA.'}
+                    if 'mission_sha256' in state:
+                        result['next'] += ' If no packet is authorized, follow the repair reinspection and redispatch instructions.'
             if 'sha256' in result:
                 print(RECEIPT + result['sha256'])
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1 if result.get('passed') is False else 0
-    except (ValueError, TypeError, KeyError, OSError, proof.ProofError) as exc:
+    except (ValueError, TypeError, KeyError, OSError, proof.ProofError, sqlite3.Error) as exc:
         print(json.dumps({'passed': False, 'errors': [str(exc)]}))
         return 2
 

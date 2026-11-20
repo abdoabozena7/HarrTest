@@ -19,11 +19,40 @@ def root_dir(project: Path, goal_id: str) -> Path:
     return project.resolve() / proof.STATE / ROOT_DIR / goal_id
 
 
-def validate(project: Path, goal: Path, contract: dict) -> None:
-    _validate(project, goal, contract, draft=False)
+def root_mission(project, goal, contract):
+    try:
+        import mission
+    except ModuleNotFoundError as exc:
+        # A legacy Corporate verifier bundle can contain only the files in its seal.
+        if exc.name == 'mission' and 'mission_protocol' not in contract and (goal / 'root-seal.json').is_file():
+            return None
+        raise proof.ProofError('Preservation mission module is unavailable') from exc
+
+    if 'mission_protocol' not in contract:
+        if mission.enrolled(project, goal.name):
+            raise proof.ProofError('This goal is enrolled; the root must select mission_protocol: preservation-v1')
+        return None
+    if contract['mission_protocol'] != mission.PROTOCOL:
+        raise proof.ProofError('Unknown root mission_protocol')
+    managed = mission.open_mission(project, goal.name)
+    if (goal / 'original-request.txt').read_bytes() != managed.request.encode('utf-8'):
+        raise proof.ProofError('Root must bind the exact enrolled request')
+    return managed
 
 
-def _validate(project: Path, goal: Path, contract: dict, *, draft: bool) -> None:
+def require_mission_seal(managed, seal):
+    if managed is None:
+        if 'mission_sha256' in seal:
+            raise proof.ProofError('Mission protocol missing from the sealed root contract')
+    elif seal.get('mission_sha256') != managed.binding:
+        raise proof.ProofError('Root mission differs from the sealed preservation contract')
+
+
+def validate(project: Path, goal: Path, contract: dict):
+    return _validate(project, goal, contract, draft=False)
+
+
+def _validate(project: Path, goal: Path, contract: dict, *, draft: bool):
     if not isinstance(contract, dict) or contract.get("schema") not in {2, 3, 4}:
         raise proof.ProofError("Root contract must have schema 2, 3 or 4")
     schema = contract['schema']
@@ -53,6 +82,7 @@ def _validate(project: Path, goal: Path, contract: dict, *, draft: bool) -> None
     proof.meaningful(original, "original user request", 15)
     if proof.file_hash(original_file) != contract.get("request_sha256"):
         raise proof.ProofError("Root user request was modified or replaced")
+    managed = root_mission(project, goal, contract)
     proof.meaningful(contract.get("scope_statement"), "root scope", 20)
     if not draft:
         review = contract.get("coverage_review")
@@ -80,7 +110,7 @@ def _validate(project: Path, goal: Path, contract: dict, *, draft: bool) -> None
         proof.meaningful(excerpt, rid + " original source excerpt", 3)
         source = row.get("source")
         if source == "user_request":
-            if excerpt not in original:
+            if excerpt not in original and (managed is None or excerpt not in managed.request):
                 raise proof.ProofError(rid + " excerpt absent from original user request")
         elif source == "repository_contract":
             src = proof.relative_file(project, row.get("source_path") or "")
@@ -126,7 +156,12 @@ def _validate(project: Path, goal: Path, contract: dict, *, draft: bool) -> None
             coverage.validate(original, contract, goal)
     if schema == 4:
         import corporate
-        corporate.validate(project, goal, contract)
+        corporate_plan = corporate.validate(project, goal, contract)
+        if managed is not None:
+            require_mission_baseline(managed, corporate_plan['baseline']['source'])
+    if managed is not None:
+        validate_mission_scope(project, contract, managed)
+    return managed
 
 
 def check_draft(goal: Path) -> dict:
@@ -149,13 +184,65 @@ def mode_satisfies(required: str, actual: str) -> bool:
     return actual == required or (required == "offline" and actual == "live")
 
 
-def require_team_sources(project, child, outputs):
+def require_team_sources(project, child, outputs, *, label='Team output'):
     """Ensure the sealed runtime proof fingerprints the exact Team outputs."""
     sources = [proof.relative_file(project, path, must_exist=False) for path in child["source_paths"]]
     for output in sorted(set(outputs)):
         path = proof.relative_file(project, output, must_exist=False)
         if not any(path.is_relative_to(source) for source in sources):
-            raise proof.ProofError(f'{child["task_id"]} proof must fingerprint Team output: {output}')
+            raise proof.ProofError(f'{child["task_id"]} proof must fingerprint {label}: {output}')
+
+
+def require_mission_baseline(managed, baseline):
+    files = baseline['files']
+    if any(rel not in files or files[rel] != digest for rel, digest in managed.plan['sources'].items()):
+        raise proof.ProofError('Corporate baseline omits or changes an enrolled mission source')
+
+
+def validate_mission_scope(project, contract, managed):
+    import team
+
+    project = Path(project).resolve()
+    goal_id = contract['goal_id']
+    if 'production_team' in contract:
+        binding = team.binding(project, contract['production_team'], contract['request_sha256'])
+        if binding.get('mission_sha256') != managed.binding:
+            raise proof.ProofError('Managed root and Team must select and bind the same mission')
+        outputs = team_outputs(binding)
+        if not outputs <= managed.plan['sources'].keys():
+            raise proof.ProofError('Root mission omits a managed Team output')
+    else:
+        state_path = team.team_path(project, goal_id, must_exist=False)
+        if state_path.is_file():
+            raise proof.ProofError('Managed root must include its registered production Team')
+
+    selected = {rid: set() for rid in managed.plan['requirements']}
+    if set(selected) != {row['id'] for row in contract['requirements']}:
+        raise proof.ProofError('Root requirements must match the complete enrolled requirement inventory')
+    for row in managed.plan['tasks']:
+        selected[row['requirement_id']].update(row['checks'])
+    children = {}
+    for row in contract['requirements']:
+        rid = row['id']
+        for link in row['satisfiers']:
+            tid = link['task_id']
+            if tid not in children:
+                task = proof.relative_file(project / proof.STATE, tid)
+                _, actual_project, child = proof.task_context(task)
+                if (actual_project != project or child['task_id'] != tid or
+                        proof.load(task / 'context.json').get('root_goal') != goal_id):
+                    raise proof.ProofError('Managed root proof belongs to a different project, task or root goal')
+                children[tid] = child
+            child = children[tid]
+            requirement = next((r for r in child['requirements'] if r['id'] == link['requirement_id']), None)
+            if requirement is None or not any(
+                    c['id'] in requirement['checks'] and c['role'] == 'acceptance'
+                    and mode_satisfies(row['evidence_mode'], c['mode']) and f'{tid}/{c["id"]}' in selected[rid]
+                    for c in child['checks']):
+                raise proof.ProofError(f'{rid}: enrolled TODOs must link a sealed acceptance check for '
+                                       f'{tid}/{link["requirement_id"]} in the required evidence mode')
+    integration = children[contract['integration']['task_id']]
+    require_team_sources(project, integration, managed.plan['sources'], label='managed mission source')
 
 
 def team_outputs(binding):
@@ -274,9 +361,12 @@ def require_corporate_dispatch(project, state, *, baseline_current):
         raise proof.ProofError(f'Corporate dispatch needs a sealed schema-4 root for {goal_id}. '
                                'Prepare and review the root, then run root_gate.py seal.') from exc
     contract, seal = corporate.document(root_path), corporate.document(seal_path)
-    validate(project, goal, contract)
+    managed = validate(project, goal, contract)
     if seal.get('root_hash') != proof.digest(contract) or seal.get('request_sha256') != contract['request_sha256']:
         raise proof.ProofError('Corporate dispatch root contract differs from its seal')
+    require_mission_seal(managed, seal)
+    if managed is not None and baseline_current:
+        managed.bind_baseline()
     reviewed = _corporate_dispatch_inputs(project, contract, state, baseline_current=baseline_current)
     if (seal.get('reviewed_team') != reviewed
             or seal.get('corporate_team_sha256') != state['state_sha256']):
@@ -300,11 +390,12 @@ def check_root(goal: Path) -> dict:
     contract = None
     try:
         contract = proof.load(goal / "root-contract.json")
-        validate(project, goal, contract)
+        managed = validate(project, goal, contract)
         sealed = proof.load(goal / "root-seal.json")
         if (sealed.get("root_hash") != proof.digest(contract) or
             sealed.get("request_sha256") != contract["request_sha256"] or not sealed.get("sealed_at")):
             raise proof.ProofError("Root contract/request changed after sealing; do not narrow the original goal")
+        require_mission_seal(managed, sealed)
         production_team = None
         if "production_team" in contract:
             try:
@@ -366,6 +457,12 @@ def check_root(goal: Path) -> dict:
                                   (corporate_result.get('errors') or ['Required quality layers are unverified']))
             except (proof.ProofError, KeyError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
                 errors.append('Corporate gate: ' + str(exc))
+        mission_result = None
+        if managed is not None:
+            try:
+                mission_result = managed.verify()
+            except (proof.ProofError, KeyError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+                errors.append('Preservation mission: ' + str(exc))
         return {"schema": contract["schema"], "goal_id": contract["goal_id"],
                 "root_status": "ROOT_GOAL_VERIFIED" if not errors else "ROOT_GOAL_UNVERIFIED",
                 "root_goal_achieved": not errors,
@@ -377,9 +474,10 @@ def check_root(goal: Path) -> dict:
                 **({"golden": gold} if contract.get("protocol") == "golden-v1" else {}),
                 **({"corporate": corporate_result} if contract['schema'] == 4 else {}),
                 **({"production_team": production_team} if "production_team" in contract else {}),
+                **({"mission": mission_result, "mission_sha256": managed.binding} if managed is not None else {}),
                 "errors": errors,
                 "limitation": "Mechanical coverage of a sealed scope does not prove the completeness or validity of self-authored natural-language oracles."}
-    except (proof.ProofError, KeyError, OSError, TypeError, ValueError) as exc:
+    except (proof.ProofError, KeyError, OSError, TypeError, ValueError, sqlite3.Error) as exc:
         return {"schema": contract.get('schema', 2) if isinstance(contract, dict) else 2,
                 "goal_id": goal.name, "root_status": "ROOT_GOAL_UNVERIFIED",
                 "root_goal_achieved": False, "requirements": details, "errors": [str(exc)]}
@@ -451,8 +549,10 @@ def main() -> int:
         if args.action == "seal":
             c = proof.load(goal / "root-contract.json")
             project = goal.parents[2]
-            validate(project, goal, c)
+            managed = validate(project, goal, c)
             sealed = {"root_hash": proof.digest(c), "request_sha256": c["request_sha256"]}
+            if managed is not None:
+                sealed['mission_sha256'] = managed.bind_baseline()
             if c['schema'] == 4:
                 import corporate
                 import team
@@ -477,7 +577,7 @@ def main() -> int:
             proof.save(goal / "root-gate.json", result)
         print(json.dumps(result, indent=2))
         return 0 if result["root_goal_achieved"] else 1
-    except (proof.ProofError, ValueError, OSError, KeyError, TypeError) as exc:
+    except (proof.ProofError, ValueError, OSError, KeyError, TypeError, sqlite3.Error) as exc:
         print("ROOT_GOAL_UNVERIFIED: " + str(exc), file=sys.stderr)
         return 2
 

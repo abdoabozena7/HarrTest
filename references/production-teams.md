@@ -79,6 +79,10 @@ its `.json` suffix. Then use `review` with the returned `qa-evidence.json` path:
 }
 ```
 
+With `preservation-v1`, add `check_sha256`, `observations` and `details` to
+the full JSON from `mission.py review-input`. The completion ledger still
+requires all original review sections and current proof selectors.
+
 Use `fail` or `unverified` for a detail not demonstrated; submit the overall
 review as `fail` and retain the evidence. A passing review requires exactly
 the sealed IDs, a concrete PASS per detail and at least one captured artifact
@@ -94,6 +98,12 @@ placeholders with the actual request, interface, owned files and checks. Set
 host.kind to the observed host and add actual model/reasoning_effort pins when
 required. Keep the plan under `.runtime-proof/team-plan.json`.
 Do this before any product edit, including a narrow one-file fix.
+
+For new plans keep `mission_protocol: preservation-v1` and initialize the
+[mission contract and ledger](feature-preservation-and-completion.md) first.
+The same goal ID, exact request, outputs and ownership must match. A Team
+packet carries the applicable feature obligations and TODOs. Owners record
+each TODO's own progress; the Team handoff remains a child receipt.
 
 Use `validation_context` for unchanged inputs such as the existing contract,
 runtime instructions, explicitly protected adapters and retained baseline
@@ -199,6 +209,10 @@ Track and release separate resources only if the worker started them.
 QA can report `PASS`, `FAIL`, `UNVERIFIED` or `NOT_APPLICABLE` for each layer.
 Retain observed failures and blockers. Accept a passing review only after all
 required checks pass and any exclusions have supporting evidence.
+On a managed Team also run the ledger's required `proof.py` checks and submit
+the structured mission review as directed by the QA packet. Compare old
+behavior and changed tests with the original inventory before granting any
+passing verdict. Missing or stale TODO evidence keeps Team acceptance open.
 
 Confirm the QA worker type can run checks and write the private evidence file.
 Give it the documented runtime and any approved workspace-local temporary

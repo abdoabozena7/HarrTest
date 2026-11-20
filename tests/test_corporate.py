@@ -159,7 +159,7 @@ class CorporateTests(unittest.TestCase):
                        'outputs': ['src/calc.py'], 'depends_on': [], 'outcomes': ['R01']}],
             'integration': {'outputs': [], 'check': 'Exercise the real calculator interface, old sums and rejected malformed input.'},
             'host': {'kind': 'codex'}}
-        team.init(self.project, self.team_plan)
+        self.register_controlled_team()
         self.team_state = team.load_state(self.project, 'mission')
         proof.save(self.goal / 'root-contract.json', self.root)
         sealed = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/root_gate.py'), 'seal', '--goal', str(self.goal)],
@@ -171,6 +171,15 @@ class CorporateTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def register_controlled_team(self):
+        team.init(self.project, self.team_plan)
+
+    def review_controlled_team(self, evidence):
+        proof.save(self.project / evidence, {
+            'classification': 'controlled native-format fixture; not live-host evidence',
+            'observation': 'Actual subprocess imported the calculator and asserted new and preserved sums.'})
+        return team.review(self.project, self.team_state, evidence, 'pass')
 
     def run_check(self, cid):
         with contextlib.redirect_stdout(io.StringIO()):
@@ -227,10 +236,7 @@ class CorporateTests(unittest.TestCase):
         checked = team.runtime_check(self.project, self.team_state, command)
         self.assertEqual(checked['exit_code'], 0)
         evidence = '.runtime-proof/teams/mission/controlled-review.txt'
-        proof.save(self.project / evidence, {
-            'classification': 'controlled native-format fixture; not live-host evidence',
-            'observation': 'Actual subprocess imported the calculator and asserted new and preserved sums.'})
-        reviewed = team.review(self.project, self.team_state, evidence, 'pass')
+        reviewed = self.review_controlled_team(evidence)
         parent = str(uuid4())
         sessions = self.project / 'controlled-native-sessions'
         logs = sessions / '2026/01/01'
@@ -261,8 +267,12 @@ class CorporateTests(unittest.TestCase):
             (logs / ('rollout-controlled-' + uid + '-' + role + '.jsonl')).write_text(
                 ''.join(json.dumps(row) + '\n' for row in rows), encoding='utf-8')
         owner_at, integration_at = team.instant(owner['at']), team.instant(integrated['at'])
-        native('calculator', epoch + gap, owner_at + gap * 3,
-               [('src/calc.py', epoch + gap * 2)], [owner])
+        started = epoch + gap
+        if 'mission_sha256' in self.team_state:
+            admission = team_v2.current_receipt(self.project, self.team_state, 'mission-admission-calculator')
+            started = team.instant(admission['at']) + gap
+        native('calculator', started, owner_at + gap * 3,
+               [('src/calc.py', started + gap)], [owner])
         native('integration', epoch - gap, None, [], [integrated])
         native('qa', integration_at + gap * 3, team.instant(reviewed['at']) + gap * 3, [], [checked, reviewed])
         proof.save(self.project / '.runtime-proof/teams/mission/host.json',

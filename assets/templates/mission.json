@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "goal_id": "mission",
+  "kind": "change",
+  "author": "REPLACE_ME actual coordinating author",
+  "sources": {
+    "src/component.ext": "REPLACE_ME actual source SHA-256",
+    "tests/legacy.ext": "REPLACE_ME actual existing test SHA-256"
+  },
+  "requirements": {
+    "R01": {
+      "claim": "REPLACE_ME observable outcome from the original requirement",
+      "excerpt": "REPLACE_ME exact original request excerpt"
+    }
+  },
+  "tasks": [
+    {
+      "id": "T01",
+      "requirement_id": "R01",
+      "description": "REPLACE_ME concrete implementation or integration work",
+      "owner": "component",
+      "depends_on": [],
+      "done": "REPLACE_ME observable Definition of Done including the old behavior",
+      "checks": ["integration/requested", "integration/replay"]
+    }
+  ],
+  "features": [
+    {
+      "id": "legacy_mode",
+      "behavior": "REPLACE_ME observable old behavior including accepted inputs, outputs or side effects",
+      "path": "src/component.ext",
+      "location": "REPLACE_ME source symbol, declaration or lines",
+      "contract": "public",
+      "basis": "observed",
+      "related_paths": [],
+      "test_paths": ["tests/legacy.ext"],
+      "effect": "PRESERVE",
+      "reason": "REPLACE_ME why the behavior is relevant and how existing callers rely on it",
+      "planned_effect": "REPLACE_ME what stays the same and any compatible changes",
+      "uncertainty": null,
+      "tasks": ["T01"],
+      "checks": ["integration/replay"]
+    }
+  ]
+}
