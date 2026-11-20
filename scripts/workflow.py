@@ -117,6 +117,47 @@ def bind_production_team(project, contract, index, children, integration):
     return binding
 
 
+def validate_mission_owners(project, spec, children, managed, team_binding):
+    index = {node['id']: node for node in spec['tasks']}
+    plan = managed.plan
+    todos = {todo['id']: todo for todo in plan['tasks']}
+    owners = {todo['owner'] for todo in todos.values()}
+    if not owners <= index.keys():
+        raise ValueError('Workflow omits an enrolled TODO owner')
+    writers = {}
+    for tid, node in index.items():
+        role = node.get('role', 'implement')
+        writes = node.get('write_scope', [])
+        if writes or role == 'implement' or tid in owners:
+            if tid not in owners or role not in {'implement', 'integrate'}:
+                raise ValueError(f'{tid}: implementation writes and TODOs need a linked mission owner')
+            if not set(writes) <= plan['sources'].keys():
+                raise ValueError(f'{tid}: managed writes must be explicit files in the enrolled mission scope')
+            root_gate.require_team_sources(project, children[tid], writes, label='managed workflow output')
+        if team_binding is not None and tid in owners:
+            if tid in team_binding['tasks']:
+                outputs = team_binding['tasks'][tid]['outputs']
+            else:
+                outputs = set(team_binding['integration_outputs']) - {
+                    rel for row in team_binding['tasks'].values() for rel in row['outputs']}
+            if set(writes) != set(outputs):
+                raise ValueError(f'{tid}: managed workflow writes must match exact Team-owned outputs')
+        for path in writes:
+            writers.setdefault(path, set()).add(tid)
+    for todo in todos.values():
+        owner = todo['owner']
+        ancestors = dependencies(index, owner)
+        if any(todos[dep]['owner'] not in ancestors | {owner} for dep in todo['depends_on']):
+            raise ValueError(f'{owner}: workflow must follow cross-owner TODO prerequisites')
+    for feature in plan['features']:
+        if feature['effect'] in {'PRESERVE', 'EXTEND'} and not feature.get('relocation'):
+            continue
+        linked_owners = {todos[tid]['owner'] for tid in feature['tasks']}
+        paths = (feature['path'], feature.get('relocation'))
+        if any(not writers.get(path, set()) <= linked_owners for path in paths):
+            raise ValueError(f'{feature["id"]}: directly owned feature path must link to its writer TODOs')
+
+
 def validate_bindings(project, spec):
     # Normalize aliases (notably Windows short names) before identity/containment checks.
     project = Path(project).resolve()
@@ -124,16 +165,17 @@ def validate_bindings(project, spec):
     if not goal.is_relative_to(project / proof.STATE / root_gate.ROOT_DIR):
         raise ValueError('Workflow root must be an existing original .runtime-proof/root-goals directory')
     contract = proof.load(goal / 'root-contract.json')
-    root_gate.validate(project, goal, contract)
+    managed = root_gate.validate(project, goal, contract)
     is_golden = contract.get('protocol') == 'golden-v1'
     is_team = 'production_team' in contract
     if is_golden != ('golden' in spec):
         raise ValueError('Golden workflow plan and sealed original root must both select golden-v1')
-    if (is_golden or is_team) and goal != root_gate.root_dir(project, spec['goal_id']):
+    if (is_golden or is_team or managed is not None) and goal != root_gate.root_dir(project, spec['goal_id']):
         raise ValueError('Workflow ID must match its sealed original root goal ID')
     seal = proof.load(goal / 'root-seal.json')
     if seal.get('root_hash') != proof.digest(contract):
         raise ValueError('Workflow root is not sealed or was changed')
+    root_gate.require_mission_seal(managed, seal)
     children = {s['task_id'] for r in contract['requirements'] for s in r['satisfiers']}
     present = set()
     child_bindings = {}
@@ -143,7 +185,7 @@ def validate_bindings(project, spec):
         _, actual_project, child = proof.task_context(path)
         if actual_project != project or path.name not in children:
             raise ValueError('Task is not a sealed child of this original goal')
-        if ((is_golden or is_team) and
+        if ((is_golden or is_team or managed is not None) and
                 (path != project / proof.STATE / path.name or child['task_id'] != path.name
                  or proof.load(path / 'context.json').get('root_goal') != goal.name)):
             raise ValueError('Task must bind the canonical sealed proof child of this original goal')
@@ -172,10 +214,64 @@ def validate_bindings(project, spec):
     if is_team:
         bindings['production_team'] = bind_production_team(project, contract, index, child_contracts,
                                                             integration_nodes[0]['id'])
+    if managed is not None:
+        validate_mission_owners(project, spec, child_contracts, managed, bindings.get('production_team'))
+        bindings['mission_sha256'] = managed.binding
     return bindings
 
 
-def packet(project, spec, task):
+def managed_packet(project, spec, task, original_file, *, authorize):
+    bindings = spec['_bindings']
+    if 'mission_sha256' not in bindings:
+        return None
+    import mission
+
+    managed = mission.open_mission(project, spec['goal_id'], binding=bindings['mission_sha256'])
+    if original_file.read_bytes() != managed.request.encode('utf-8'):
+        raise ValueError('Workflow request differs from the exact enrolled request')
+    tid = task['id']
+    owner = tid if any(row['owner'] == tid for row in managed.plan['tasks']) else None
+    writes = tuple(task.get('write_scope', []))
+    scopes = writes + tuple(task.get('read_scope', []))
+    if authorize and owner is not None:
+        if 'production_team' in bindings:
+            import team
+            import team_v2
+
+            state = team.load_state(project, spec['goal_id'])
+            team_v2.approved_decomposition(project, state)
+            if tid == 'integration':
+                admitted = team_v2.integration_packet(project, state) is not None
+            else:
+                native_task = next(row for row in state['plan']['tasks'] if row['id'] == tid)
+                admission = team_v2.corporate_admission(project, state, issue=True)
+                admitted = team_v2.authorize_owner(project, state, native_task, managed, admission)
+        else:
+            admitted = managed.admit(owner, writes=writes)
+        if not admitted:
+            raise ValueError(f'{tid}: managed dispatch is blocked; inspect mission status, resolve blockers '
+                             'and record diagnosed reinspection before retrying')
+    command = (f'python -B "{Path(__file__).with_name("mission.py").resolve().as_posix()}" '
+               f'--project "{Path(project).as_posix()}" --goal {spec["goal_id"]}')
+    # Keep the exact long request and the scoped ledger readable without serializing them
+    # twice in the lease packet or asking Memory.bootstrap to normalize its contents.
+    original = ({'original_request': managed.request} if len(managed.request) <= 8000
+                else {'original_request_path': original_file.as_posix()})
+    context = managed.context(owner=owner, scopes=scopes)
+    if len(strict_io.canonical(context)) > 12_000:
+        context = {'status_command': command + ' status', 'scoped_owner': owner, 'scopes': scopes,
+                   'instruction': 'Read the full ledger and use only your authorized owner and file scopes.'}
+    return {**original, 'original_request_sha256': proof.file_hash(original_file),
+            'mission_sha256': managed.binding, 'mission_context': context,
+            'mission_status_command': command + ' status',
+            'mission_authorized_owner': owner if authorize else None,
+            'mission_instruction': ('Read the exact request and inspect the scoped source. If an owner, explicitly '
+                                    f'record each completed TODO with {command} step --task ID --status IMPLEMENTED '
+                                    '--note OBSERVATION. A lease, handoff or child proof never verifies the ledger. '
+                                    'Preserve the checks, retain genuine independent current review, and use root for acceptance.')}
+
+
+def packet(project, spec, task, *, authorize=False):
     """Explicit context, source identities and scope; no secret environment dump."""
     project = Path(project).resolve()
     context = []
@@ -198,6 +294,7 @@ def packet(project, spec, task):
         if sum(len(c['text']) for c in context) + len(content) > 256_000:
             raise ValueError('Context pack exceeds 256k characters; narrow the task context')
         context.append({'path': name, 'sha256': proof.file_hash(path), 'text': content})
+    managed = managed_packet(project, spec, task, original_file, authorize=authorize)
     if 'golden' in spec:
         path = strict_io.scoped_path(project, task['proof_task'])
         _, _, contract = proof.task_context(path)
@@ -207,7 +304,15 @@ def packet(project, spec, task):
                 'previous_observation': previous, 'host_execution_required': True,
                 'instruction': 'Use the scoped host tools and retain actual run evidence. '
                                'Report expected and observed results for each sealed check. '
-                               'Do not alter the acceptance contract or exceed the declared scope.'}
+                               'Do not alter the acceptance contract or exceed the declared scope.',
+                **(managed or {})}
+    if managed is not None:
+        return {'goal_id': spec['goal_id'], 'original_root': spec['root_goal'],
+                'previous_observation': previous, 'root_binding': spec['_bindings']['root_sha256'],
+                'task': task, 'context': context, 'host_execution_required': True, 'provider_changed': False,
+                'instruction': 'Use actual host tools. Report real invocation IDs and raw evidence. '
+                               'Do not alter the acceptance contract or exceed the declared scope.',
+                **managed}
     # Durable, project-scoped memory lives in ~/.harrtest, not in the project
     # repository nor in the replaceable installed skill directory.
     memory = project_memory.Memory(project)
@@ -336,7 +441,36 @@ def golden_readiness(project, rows):
                 break
 
 
-def golden_handoff(project, store, goal, task, token, path):
+def record_handoff(project, store, goal, task, token, receipt, *, bindings=None):
+    tid = task['id']
+    if not bindings or 'mission_sha256' not in bindings or 'production_team' in bindings:
+        return store.handoff(goal, tid, token, receipt)
+
+    import mission
+
+    managed = mission.open_mission(project, goal, binding=bindings['mission_sha256'])
+    if not any(row['owner'] == tid for row in managed.plan['tasks']):
+        return store.handoff(goal, tid, token, receipt)
+    with store.transaction() as db:
+        store.owned(db, goal, tid, token)
+    outputs = task.get('write_scope', [])
+    managed.guard_candidate(paths=outputs)
+    for row in managed.context(owner=tid, scopes=tuple(outputs))['tasks']:
+        if row['owner'] != tid:
+            continue
+        recorded = row.get('recorded_status', row['status'])
+        if row['blocked_features'] or recorded not in {'IMPLEMENTED', 'VERIFYING', 'VERIFIED'}:
+            raise ValueError(f'{tid}: explicitly implement and record TODO {row["id"]} before handing off')
+        if recorded != 'IMPLEMENTED' and row.get('handoff') != receipt['sha256']:
+            raise ValueError(f'{tid}: reopen TODO {row["id"]} before replacing its handoff')
+
+    # The store still owns lease consumption and all handoff checks. Attach only
+    # an artifact it actually accepted, never advance the TODO on receipt alone.
+    store.handoff(goal, tid, token, receipt)
+    managed.handoff(tid, receipt['sha256'])
+
+
+def golden_handoff(project, store, goal, task, token, path, *, bindings=None):
     retained = artifact(project, path)
     raw = proof.load(strict_io.scoped_path(project, path))
     if not isinstance(raw, dict):
@@ -401,7 +535,7 @@ def golden_handoff(project, store, goal, task, token, path):
                 implementer = current_handoff(project, rows[target])
                 if host_worker.casefold() == implementer['host_worker_id'].casefold():
                     raise ValueError('Independent QA cannot reuse the reviewed implementer native host identity')
-    store.handoff(goal, task['id'], token, receipt)
+    record_handoff(project, store, goal, task, token, receipt, bindings=bindings)
 
 
 def check_golden_root(project, store, spec):
@@ -507,8 +641,11 @@ def main(argv=None):
             spec = proof.load(args.plan)
             Store.validate(spec)
             spec['_bindings'] = validate_bindings(project, spec)
-            if 'production_team' in spec['_bindings'] and 'build' in spec:
-                raise ValueError('Use builder.py init to register a production team build with milestones')
+            if 'build' in spec:
+                if 'production_team' in spec['_bindings']:
+                    raise ValueError('Use builder.py init to register a production team build with milestones')
+                if 'mission_sha256' in spec['_bindings']:
+                    raise ValueError('Use builder.py init to register a managed build with milestones')
             result = {'created': store.create(spec), 'goal_id': spec['goal_id'], 'status': 'ROOT_GOAL_UNVERIFIED'}
         else:
             spec = store.goal(args.goal)
@@ -516,9 +653,11 @@ def main(argv=None):
             current = validate_bindings(project, spec)
             if current != spec['_bindings']:
                 raise ValueError('Workflow acceptance changed; preserve old workflow and create a reviewed revision')
-            if 'production_team' in current and 'build' in spec and args.command in {'claim', 'retry'}:
+            if ('build' in spec and ('production_team' in current or 'mission_sha256' in current)
+                    and args.command in {'claim', 'retry'}):
                 action = 'claim' if args.command == 'claim' else 'reopen'
-                raise ValueError(f'Use builder.py {action} so production team milestone gates are checked')
+                label = 'production team' if 'production_team' in current else 'managed build'
+                raise ValueError(f'Use builder.py {action} so {label} milestone gates are checked')
             task = next((n for n in spec['tasks'] if n['id'] == getattr(args, 'task', None)), None)
             if args.command in {'status', 'ready'}:
                 rows = store.inspect(args.goal)
@@ -530,7 +669,7 @@ def main(argv=None):
                           'note': 'Use root for fresh acceptance; source drift can invalidate stored VERIFIED state.'}
             elif args.command == 'claim':
                 if task is None: raise ValueError('Unknown task')
-                context = packet(project, spec, task)
+                context = packet(project, spec, task, authorize=True)
                 if is_golden:
                     result = golden_claim(project, store, spec, task, args.worker, args.lease_seconds, context)
                 else:
@@ -541,9 +680,10 @@ def main(argv=None):
             elif args.command == 'handoff':
                 if task is None: raise ValueError('Unknown task')
                 if is_golden:
-                    golden_handoff(project, store, args.goal, task, args.token, args.evidence)
+                    golden_handoff(project, store, args.goal, task, args.token, args.evidence, bindings=current)
                 else:
-                    store.handoff(args.goal, args.task, args.token, artifact(project, args.evidence))
+                    record_handoff(project, store, args.goal, task, args.token, artifact(project, args.evidence),
+                                   bindings=current)
                 result = {'status': 'IMPLEMENTED_NOT_VERIFIED'}
             elif args.command == 'recover':
                 store.recover(args.goal, args.task, artifact(project, args.evidence)); result = {'status': 'TODO_AFTER_EXPLICIT_RECONCILIATION'}

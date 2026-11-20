@@ -1,6 +1,7 @@
 {
   "schema": 4,
   "protocol": "corporate-v1",
+  "mission_protocol": "preservation-v1",
   "goal_id": "mission",
   "production_team": "mission",
   "team_decomposition": "reviewed-v1",

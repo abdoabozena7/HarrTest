@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.1.0 — preview
+
+- New implementation plans bind a scoped Feature Preservation Contract and a
+  requirement-linked completion ledger before editing. Preserve observed
+  behavior by default, collect real baseline replays, and record exact, scoped
+  user decisions for material destructive changes.
+- Reuse private project memory to resume unfinished work. Compare current
+  files and receipts instead of treating previous handoffs or conversation
+  history as current evidence.
+- Add `preservation-v1` admission and acceptance gates to Team and root
+  verification. Unmarked legacy plans retain their original semantics and
+  active seals remain pinned to their verifier.
+
 ## 5.0.0 — preview (`v5.0.0-rc.1`)
 
 - Reorganize the skill around evidence-backed changes to existing code,

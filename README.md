@@ -6,6 +6,11 @@ the existing project's architecture, contracts, and measured baseline. It
 assigns independent changes to native implementation owners and uses separate
 QA to verify the integrated result on current source.
 
+The 5.1.0 preview adds a scoped
+[Feature Preservation Contract and Completion Ledger](references/feature-preservation-and-completion.md).
+HarrTest replays relevant old behavior, keeps unresolved destructive decisions
+scoped, and refuses verified completion while mandatory work or evidence is open.
+
 **Version 5 preview:** the fourth Copilot comparison did not meet the stable
 release criteria. A subsequent development run verified the repaired workflow
 end to end; it does not establish a general quality improvement. See the
@@ -17,8 +22,8 @@ end to end; it does not establish a general quality improvement. See the
 
 ## Install
 
-Download the [single installable `skill.zip`](https://github.com/abdoabozena7/HarrTest/releases/download/v5.0.0-rc.1/skill.zip)
-from the [version 5 preview](https://github.com/abdoabozena7/HarrTest/releases/tag/v5.0.0-rc.1).
+The [5.0 preview](https://github.com/abdoabozena7/HarrTest/releases/tag/v5.0.0-rc.1)
+has a published [installable `skill.zip`](https://github.com/abdoabozena7/HarrTest/releases/download/v5.0.0-rc.1/skill.zip).
 Extract it to get the `harrtest` folder, including its Python 3.10+ scripts
 and references. If you already use HarrTest, update your existing installation
 instead of adding a second copy.
@@ -38,7 +43,7 @@ py -3 C:\path\to\harrtest\scripts\install.py --agent copilot --scope project --p
 ```
 
 Review the dry run before installing. Reload skill discovery and confirm
-that your host loaded `harrtest` version `5.0.0`. Keep active missions pinned
+that your host loaded the `harrtest` version you installed. Keep active missions pinned
 to the version that sealed their contracts. Optional instructions and hooks
 are described in the [workflow guide](references/corporate-workflow.md).
 
@@ -53,7 +58,10 @@ $harrtest
 
 Use the [Corporate workflow](references/corporate-workflow.md) for substantial
 existing-code changes and [production teams](references/production-teams.md)
-for scoped native handoffs. Independently check functionality, preservation,
+for scoped native handoffs. The agent creates and maintains the preservation
+contract and ledger; users do not need to author state files. Resume by the same
+goal ID and inspect current source before relying on old evidence.
+Independently check functionality, preservation,
 architecture, security, performance and resilience as applicable. A required
 check without evidence stays unverified; an aggregate score does not waive it.
 
@@ -65,7 +73,7 @@ check without evidence stays unverified; an aggregate score does not waive it.
 - [Project Builder](references/project-builder.md) coordinates and verifies
   runnable milestones for a new product.
 - [Project Memory](references/project-context-memory.md) keeps source-qualified
-  facts and task context outside installed skill files.
+  facts, mission evidence and task context outside installed skill files.
 - [CI](https://github.com/abdoabozena7/HarrTest/actions/workflows/verify.yml)
   exercises Windows and Linux and packages the skill.
 

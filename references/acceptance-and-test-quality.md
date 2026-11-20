@@ -68,6 +68,12 @@ unrequested input modes.
   copy, confirm that the current check fails when the retained invariant is
   violated.
 
+In the [managed mission review](feature-preservation-and-completion.md), assess
+each inventoried behavior and changed or deleted test on current source. Bind
+the review to actual proof receipts. A changed test hash requires independent
+review, but neither a changed nor an unchanged hash establishes the strength
+of an oracle. Reject any non-equivalent replacement for preserved behavior.
+
 ## Negative controls and anti-theater checks
 
 Use safe negative controls to establish that a meaningful failure is detectable:

@@ -6,8 +6,10 @@ worker identity. Host adapters must establish that separate claim explicitly.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -22,6 +24,8 @@ MAX_NATIVE_WINDOW_EVENTS = 100_000
 MAX_NATIVE_PENDING_CALLS = 4096
 MAX_NATIVE_SCAN_BYTES = 1024 * 1024 * 1024
 COPILOT_COVERAGE_REVIEW = 'coverage_review'
+MAX_MANAGED_REQUEST_BYTES = 200_000
+MAX_INLINE_MISSION_CONTEXT = 12_000
 
 
 class HostEvidenceUnavailable(ValueError):
@@ -170,7 +174,15 @@ def validate_plan(project, plan):
               and plan['schema'] == 2, 'Expected a schema-2 production team plan')
     proof.identifier(plan.get('id'), 'production team ID')
     t.require(plan.get('kind') in ('change', 'greenfield'), 'Choose change or greenfield')
-    t.concrete(plan.get('request'), 'Original request')
+    if 'mission_protocol' in plan:
+        import mission
+        t.require(plan['mission_protocol'] == mission.PROTOCOL, 'Unknown Team mission_protocol')
+        request = plan.get('request')
+        proof.meaningful(request, 'Original request')
+        t.require(len(request.encode('utf-8')) <= MAX_MANAGED_REQUEST_BYTES,
+                  'Original request exceeds bounded managed intake; do not truncate it')
+    else:
+        t.concrete(plan.get('request'), 'Original request')
     t.concrete(plan.get('contract'), 'Shared contract')
     t.validation_files(project, plan)
     reviewed = plan.get('decomposition') == 'reviewed-v1'
@@ -271,9 +283,87 @@ def independent_pairs(tasks):
             if a not in parents[b] and b not in parents[a]]
 
 
+def managed_mission(project, state):
+    plan = state['plan']
+    if 'mission_protocol' not in plan:
+        common().require('mission_sha256' not in state, 'Mission protocol missing from Team state')
+        return None
+    import mission
+
+    common().require(state.get('mission_sha256'), 'Managed Team state lacks a sealed mission')
+    return mission.open_mission(project, plan['id'], binding=state['mission_sha256'])
+
+
+def register_mission(project, plan, tasks, baseline):
+    if 'mission_protocol' not in plan:
+        return None
+    import mission
+
+    t = common()
+    managed = mission.open_mission(project, plan['id'])
+    t.require(managed.request == plan['request'], 'Team must bind the exact enrolled request')
+    t.require(managed.plan['kind'] == plan['kind'], 'Team kind differs from the enrolled mission')
+    sources = managed.plan['sources']
+    t.require(all(rel in sources and sources[rel] == digest for rel, digest in baseline.items()),
+              'Every Team output must be in the enrolled mission baseline, including planned absence')
+    rows = {row['id']: row for row in managed.plan['tasks']}
+    pairs = {(row['owner'], row['requirement_id']) for row in rows.values()}
+    glue = plan['integration']['outputs']
+    t.require({rid for _, rid in pairs} == set(plan['outcomes'])
+              and {(owner, rid) for owner, rid in pairs if owner != 'integration'}
+              == {(owner, rid) for owner, task in tasks.items() for rid in task['outcomes']}
+              and bool(glue) == any(owner == 'integration' for owner, _ in pairs),
+              'Managed TODOs must match Team owners/outcomes; glue needs integration-owned TODOs')
+    parents = t.ancestors(tasks)
+    if glue:
+        parents['integration'] = set(tasks)
+    for row in rows.values():
+        owner = row['owner']
+        t.require(all(rows[dep]['owner'] in parents[owner] | {owner} for dep in row['depends_on']),
+                  f'{owner}: Team dependencies must cover cross-owner TODO prerequisites')
+    writers = {rel: owner for owner, task in tasks.items() for rel in task['outputs']}
+    writers.update({rel: 'integration' for rel in glue})
+    for feature in managed.plan['features']:
+        if feature['effect'] in {'PRESERVE', 'EXTEND'} and not feature.get('relocation'):
+            continue
+        linked_owners = {rows[tid]['owner'] for tid in feature['tasks']}
+        for rel in (feature['path'], feature.get('relocation')):
+            t.require(rel not in writers or writers[rel] in linked_owners,
+                      f'{feature["id"]}: directly owned feature path must link to its writer TODOs')
+    return managed.bind_baseline()
+
+
+def mission_command(project, state, action):
+    script = Path(__file__).with_name('mission.py').resolve().as_posix()
+    return f'python -B "{script}" --project "{Path(project).resolve().as_posix()}" --goal {state["plan"]["id"]} {action}'
+
+
+def request_context(project, state):
+    request = state['plan']['request']
+    if 'mission_sha256' in state and len(request) > 8000:
+        path = common().team_path(project, state['plan']['id']).as_posix()
+        return f'Read the full exact request in plan.request at {path}; all requirements still apply.'
+    return request
+
+
+def mission_context(project, state, managed, *, owner=None, scopes=()):
+    context = managed.context(owner=owner, scopes=scopes)
+    text = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    if len(text) <= MAX_INLINE_MISSION_CONTEXT:
+        return text
+    digest = strict_io.digest(context)
+    path = common().team_path(project, state['plan']['id'], f'mission-context/{digest}.json', must_exist=False)
+    try:
+        proof.save(path, context, exclusive=True)
+    except FileExistsError:
+        common().require(strict_io.digest(proof.load(path)) == digest, 'Managed context artifact changed')
+    return f'Read the complete scoped projection at {path.as_posix()} (SHA-256 {digest}).'
+
+
 def init(project, plan):
     t = common()
     tasks, owned = validate_plan(project, plan)
+    t.check_mission_registration(project, plan)
     if plan.get('root_protocol') == 'corporate-v1' and plan.get('host', {}).get('kind') == 'copilot':
         t.require(COPILOT_COVERAGE_REVIEW not in tasks, 'Reserved Corporate coverage reviewer name')
     validation_inputs = t.validation_snapshot(project, plan)
@@ -300,11 +390,17 @@ def init(project, plan):
             t.require(baseline[move['to']] is None, 'Rename destination must be absent at baseline')
     state = {'plan': plan, 'plan_sha256': strict_io.digest(plan), 'baseline': baseline,
              'created': proof.now(), 'validation_inputs': validation_inputs}
+    binding = register_mission(project, plan, tasks, baseline)
+    if binding is not None:
+        state['mission_sha256'] = binding
     state['state_sha256'] = strict_io.digest(state)
     proof.save(t.team_path(project, plan['id'], must_exist=False), state, exclusive=True)
     if plan.get('decomposition') == 'reviewed-v1':
         return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
                 'plan_review': plan_review_packet(project, state), 'ready': []}
+    if binding is not None:
+        return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
+                'ready': ready_packets(project, state)}
     return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
             'ready': [packet(project, state, row) for row in tasks.values() if not row['depends_on']]}
 
@@ -319,18 +415,20 @@ def load_state(project, team_id):
               'Sealed production plan changed')
     t.require(set(owned) == set(state['baseline']), 'Production baseline scope changed')
     t.validation_message(project, state)
+    managed_mission(project, state)
     return state
 
 
 def binding(project, team_id, request_sha256):
     state = load_state(project, team_id)
     plan = state['plan']
-    request = plan['request'].replace('\r\n', '\n')
-    hashes = {hashlib.sha256(s.encode('utf-8')).hexdigest() for s in (request, request.replace('\n', '\r\n'))}
-    common().require(request_sha256 in hashes, 'Production team belongs to another request')
+    t = common()
+    t.require(t.request_matches(project, plan, request_sha256, exact='mission_sha256' in state),
+              'Production team belongs to another request')
     return {'plan_sha256': state['plan_sha256'],
             'tasks': {r['id']: {k: r[k] for k in ('outputs', 'depends_on')} for r in plan['tasks']},
-            'integration_outputs': list(state['baseline'])}
+            'integration_outputs': list(state['baseline']),
+            **({'mission_sha256': state['mission_sha256']} if 'mission_sha256' in state else {})}
 
 
 def deleted_paths(task):
@@ -379,6 +477,14 @@ def plan_review_packet(project, state):
                'Run the following review command by itself after saving evidence. Replace VERDICT '
                'with pass or fail based on the observations:\n'
                f'{command} --evidence {evidence} --verdict VERDICT')
+    managed = managed_mission(project, state)
+    if managed is not None:
+        message += ('\nAlso review the sealed preservation mission and TODO ledger independently before edits. '
+                    'Read the full original request from the Team state. Compare affected code, dependencies, '
+                    'existing behavior and baseline replay evidence against the feature classifications and '
+                    'owner/TODO/check map. Record missing behaviors, weak oracles, stale sources or overbroad '
+                    'approval; no product edits are authorized by this review.\n'
+                    + mission_context(project, state, managed))
     packet = {'task_name': 'plan_review', 'fork_turns': 'none', 'message': message}
     if plan.get('host', {}).get('kind') == 'copilot':
         packet['dispatch_note'] = ('Select a Copilot reviewer that can run commands and write private evidence. '
@@ -388,14 +494,19 @@ def plan_review_packet(project, state):
     return packet
 
 
-def packet(project, state, task, *, admission=None):
+def packet(project, state, task, *, admission=None, managed=None):
     t = common()
     plan, tid = state['plan'], task['id']
     if admission is None:
         admission = corporate_admission(project, state)
+    if managed is None:
+        managed = managed_mission(project, state)
+    if managed is not None:
+        if not authorize_owner(project, state, task, managed, admission):
+            return None
     text = (f'You own implementation scope {tid}. Project: {Path(project).resolve().as_posix()}.\n'
             f'Pinned HarrTest: {Path(__file__).resolve().parents[1].as_posix()}.\n'
-            f'Original request: {plan["request"]}\nExisting architecture/interfaces: {plan["contract"]}\n'
+            f'Original request: {request_context(project, state)}\nExisting architecture/interfaces: {plan["contract"]}\n'
             f'{t.validation_message(project, state)}Assignment: {task["brief"]}\n'
             f'Exclusive product paths: {", ".join(task["outputs"])}.\n'
             f'Declared removals: {sorted(deleted_paths(task))}; renames: {task.get("renames", [])}.\n'
@@ -418,6 +529,12 @@ def packet(project, state, task, *, admission=None):
         text += (f'\nRepair current finding: {repair["observation"]}. '
                  f'Read immutable evidence {next(iter(repair["files"]))}; retain the failed attempt. '
                  'Diagnose in your owned scope, rerun affected checks, then hand off again.')
+    if managed is not None:
+        text += ('\nManaged scope: inspect the listed sources and preserve the linked features before editing. '
+                 'No unlisted writes or implied destructive permission. Explicitly record each finished TODO '
+                 'as IMPLEMENTED with observations; this handoff only attaches evidence. Use '
+                 f'{mission_command(project, state, "step")} --task TODO_ID --status IMPLEMENTED --note OBSERVATION.\n'
+                 + mission_context(project, state, managed, owner=tid, scopes=tuple(task['outputs'])))
     return dispatch_packet(plan, tid, text)
 
 
@@ -444,6 +561,9 @@ def review_plan(project, state, evidence, verdict):
     t.validation_message(project, state)
     t.require(t.snapshot(project, state['baseline']) == state['baseline'],
               'Review the sealed baseline before any product edit')
+    managed = managed_mission(project, state)
+    if managed is not None:
+        managed.bind_baseline()
     prefix = f'{proof.STATE}/teams/{plan["id"]}/'
     t.require(evidence.startswith(prefix), 'Keep plan review evidence in the private team directory')
     path = strict_io.scoped_path(project, evidence)
@@ -506,27 +626,103 @@ def corporate_admission(project, state, *, issue=False):
     return {**admission, 'sha256': digest}
 
 
+def owner_inputs(project, state, task, admission):
+    return {dep: usable_handoff(project, state, dep, admission=admission)['sha256']
+            for dep in task['depends_on']}
+
+
+def repair_identity(project, state, tid):
+    if common().receipt_path(project, state, 'repair-' + tid).is_file():
+        return current_receipt(project, state, 'repair-' + tid)['sha256']
+    return None
+
+
+def owner_authorization(project, state, tid, inputs, repair, *, issue=False):
+    t = common()
+    key = 'mission-admission-' + tid
+    binding = {'mission_sha256': state['mission_sha256'], 'state_sha256': state['state_sha256'],
+               'inputs': inputs, 'repair': repair}
+    path = t.receipt_path(project, state, key)
+    if issue:
+        prior = current_receipt(project, state, key) if path.is_file() else {}
+        first = prior['first_authorized_at'] if prior else proof.now()
+        after = prior.get('after_handoff')
+        previous = t.receipt_path(project, state, tid)
+        if prior and previous.is_file():
+            handoff = proof.load(previous)
+            if handoff.get('mission_admission') == prior['sha256']:
+                after = handoff['sha256']
+        return record(project, state, key, {}, first_authorized_at=first, after_handoff=after, **binding)
+    t.require(path.is_file(), tid + ': issue an authorized managed Team packet before writing or handing off')
+    receipt = current_receipt(project, state, key)
+    t.require(all(receipt.get(k) == v for k, v in binding.items()),
+              tid + ': current prerequisites or repair need a fresh authorized packet')
+    return receipt
+
+
+def authorize_owner(project, state, task, managed, admission):
+    approved_decomposition(project, state)
+    tid = task['id']
+    plan = state['plan']
+    expected = next((row for row in plan['tasks'] if row['id'] == tid), None)
+    if tid == 'integration':
+        expected = {'id': tid, 'outputs': plan['integration']['outputs'],
+                    'depends_on': [row['id'] for row in plan['tasks']]}
+    common().require(task == expected, tid + ': managed dispatch must use the sealed Team owner scope')
+    inputs = owner_inputs(project, state, task, admission)
+    if not managed.admit(tid, writes=task['outputs']):
+        return None
+    return owner_authorization(project, state, tid, inputs, repair_identity(project, state, tid), issue=True)
+
+
+def guard_owner_handoff(managed, task):
+    tid, paths = task['id'], task['outputs']
+    managed.guard_candidate(paths=paths)
+    rows = managed.context(owner=tid, scopes=tuple(paths))['tasks']
+    open_items = [r['id'] for r in rows if r['owner'] == tid
+                  and r.get('recorded_status', r['status']) not in {'IMPLEMENTED', 'VERIFYING', 'VERIFIED'}]
+    common().require(not open_items, tid + ': implement and record the remaining TODOs before handing off: '
+                     + ', '.join(open_items))
+
+
+def require_ledger_handoff(managed, tid, receipt):
+    rows = managed.context(owner=tid)['tasks']
+    common().require(all(row.get('handoff') == receipt['sha256'] for row in rows if row['owner'] == tid),
+                     tid + ': managed TODO ledger needs the current owner handoff')
+
+
 def handoff(project, state, task):
     t = common()
     t.validation_message(project, state)
     admission = corporate_admission(project, state)
+    managed = managed_mission(project, state)
+    if managed is not None:
+        t.require(task in state['plan']['tasks'], 'Managed handoff must use the sealed Team owner scope')
     files = t.snapshot(project, task['outputs'])
     deleted = deleted_paths(task)
     for rel, digest in files.items():
         t.require((digest is None) == (rel in deleted), 'Only declared deletions may be absent: ' + rel)
     t.require(any(value != state['baseline'][rel] for rel, value in files.items()),
               task['id'] + ': handoff must contain an actual change')
-    inputs = {dep: usable_handoff(project, state, dep, admission=admission)['sha256'] for dep in task['depends_on']}
+    inputs = owner_inputs(project, state, task, admission)
     extra = {}
     review = approved_decomposition(project, state)
     if review:
         extra['plan_review'] = review['sha256']
     if admission:
         extra['root_seal_sha256'] = admission['binding']['seal_sha256']
-    path = t.receipt_path(project, state, 'repair-' + task['id'])
-    if path.is_file():
-        extra['repair'] = current_receipt(project, state, 'repair-' + task['id'])['sha256']
-    return record(project, state, task['id'], files, inputs=inputs, **extra)
+    tid = task['id']
+    repair = repair_identity(project, state, tid)
+    if repair is not None:
+        extra['repair'] = repair
+    if managed is not None:
+        auth = owner_authorization(project, state, tid, inputs, repair)
+        guard_owner_handoff(managed, task)
+        extra['mission_admission'] = auth['sha256']
+    receipt = record(project, state, tid, files, inputs=inputs, **extra)
+    if managed is not None:
+        managed.handoff(tid, receipt['sha256'])
+    return receipt
 
 
 def pending_repair(project, state, tid):
@@ -556,8 +752,14 @@ def usable_handoff(project, state, tid, *, admission=None):
         t.require(receipt.get('root_seal_sha256') == admission['binding']['seal_sha256'],
                   tid + ': handoff lacks the admitted Corporate root seal')
     t.require(set(receipt['files']) == set(task['outputs']), tid + ': receipt scope differs from sealed owner')
-    deps = {d: usable_handoff(project, state, d, admission=admission)['sha256'] for d in task['depends_on']}
+    deps = owner_inputs(project, state, task, admission)
     t.require(receipt.get('inputs') == deps, tid + ': stale prerequisite handoff')
+    if 'mission_sha256' in state:
+        auth = owner_authorization(project, state, tid, deps, repair_identity(project, state, tid))
+        t.require(receipt.get('mission_admission') == auth['sha256']
+                  and t.instant(receipt['at']) >= t.instant(auth['at']),
+                  tid + ': handoff was not produced under the current managed dispatch')
+        require_ledger_handoff(managed_mission(project, state), tid, receipt)
     return receipt
 
 
@@ -570,6 +772,7 @@ def ready_packets(project, state):
             return []
         approved_decomposition(project, state)
     admission = corporate_admission(project, state, issue=True)
+    managed = managed_mission(project, state)
     ready = []
     for row in state['plan']['tasks']:
         try:
@@ -580,8 +783,42 @@ def ready_packets(project, state):
         try:
             usable_handoff(project, state, row['id'], admission=admission)
         except (ValueError, proof.ProofError):
-            ready.append(packet(project, state, row, admission=admission))
+            candidate = packet(project, state, row, admission=admission, managed=managed)
+            if candidate is not None:
+                ready.append(candidate)
     return ready
+
+
+def integration_packet(project, state):
+    """Only for managed plans with coordinator-owned integration writes."""
+    plan = state['plan']
+    if 'mission_sha256' not in state or not plan['integration']['outputs']:
+        return None
+    t = common()
+    managed = managed_mission(project, state)
+    outputs = plan['integration']['outputs']
+    try:
+        admission = corporate_admission(project, state)
+        task = {'id': 'integration', 'depends_on': [row['id'] for row in plan['tasks']], 'outputs': outputs}
+        inputs = owner_inputs(project, state, task, admission)
+    except (ValueError, proof.ProofError, OSError):
+        return None
+    try:
+        integrated = current_receipt(project, state, 'integration')
+        auth = owner_authorization(project, state, 'integration', inputs, None)
+        t.require(integrated.get('mission_admission') == auth['sha256'], 'Integration dispatch changed')
+        require_ledger_handoff(managed, 'integration', integrated)
+    except (ValueError, proof.ProofError, OSError):
+        pass
+    else:
+        return None
+    if not authorize_owner(project, state, task, managed, admission):
+        return None
+    return {'owner': 'integration', 'outputs': outputs,
+            'message': ('Coordinator only: inspect these sources, edit only the integration outputs listed '
+                        'here, and explicitly mark each integration-owned TODO IMPLEMENTED before Team '
+                        'integrate. Do not dispatch a replacement owner.\n'
+                        + mission_context(project, state, managed, owner='integration', scopes=tuple(outputs)))}
 
 
 def integrate(project, state):
@@ -590,13 +827,28 @@ def integrate(project, state):
     plan = state['plan']
     admission = corporate_admission(project, state)
     children = {r['id']: usable_handoff(project, state, r['id'], admission=admission) for r in plan['tasks']}
-    receipt = record(project, state, 'integration', t.snapshot(project, state['baseline']),
-                     inputs={tid: row['sha256'] for tid, row in children.items()})
+    inputs = {tid: row['sha256'] for tid, row in children.items()}
+    managed = managed_mission(project, state)
+    extra = {}
+    if managed is not None:
+        managed.guard_candidate()
+        outputs = plan['integration']['outputs']
+        if outputs:
+            auth = owner_authorization(project, state, 'integration', inputs, None)
+            guard_owner_handoff(managed, {'id': 'integration', 'outputs': outputs})
+            extra['mission_admission'] = auth['sha256']
+    receipt = record(project, state, 'integration', t.snapshot(project, state['baseline']), inputs=inputs, **extra)
+    if managed is not None:
+        if plan['integration']['outputs']:
+            managed.handoff('integration', receipt['sha256'])
+        managed.integrate()
     evidence = f'{proof.STATE}/teams/{plan["id"]}/qa-evidence.txt'
+    if managed is not None:
+        evidence = evidence.removesuffix('.txt') + '.json'
     command = t.worker_command(project, plan['id'], 'check')
     review_command = t.worker_command(project, plan['id'], 'review')
     message = (f'You are independent QA. Project: {Path(project).resolve().as_posix()}.\n'
-               f'Original request: {plan["request"]}\nShared contract: {plan["contract"]}\n'
+               f'Original request: {request_context(project, state)}\nShared contract: {plan["contract"]}\n'
                f'{t.validation_message(project, state)}Integrated receipt: {receipt["sha256"]}.\n'
                f'Acceptance check: {plan["integration"]["check"]}\n'
                'Read current-source inputs and test the actual behavior independently. Cover applicable '
@@ -621,6 +873,17 @@ def integrate(project, state):
                'checks pass. Otherwise submit fail with the available evidence. Report and release '
                'any separate service or resource you actually started. '
                'A successful receipt proves the recorded process, not semantic correctness or native identity.')
+    if managed is not None:
+        message += ('\nManaged QA requires both the finite Team check above and real current runs of all '
+                    'sealed mission proof selectors using proof.py. Run '
+                    f'{mission_command(project, state, "review-input")} after those runs; fill the JSON '
+                    f'with your independent method, actual reviewer identity and observations in {evidence}. '
+                    'Check every TODO and feature, including changed tests: inspect old assertions and '
+                    'replay the same oracle on current source. Do not mark pass if old behavior or any '
+                    'mandatory requirement is unverified. For failure submit the retained findings using '
+                    'Team review --verdict fail so the coordinator can reopen and return the repair to '
+                    'the original owner. Do not submit a separate mission review in place of Team review.\n'
+                    + mission_context(project, state, managed))
     return receipt, dispatch_packet(plan, 'qa', message)
 
 
@@ -678,13 +941,50 @@ def runtime_check(project, state, argv):
 
 
 def review(project, state, evidence, verdict):
-    # Legacy review already binds immutable narrative, current finite check and owner inputs.
-    common().require(verdict in {'pass', 'fail'}, 'Review verdict must be pass or fail')
-    return common().review(project, state, evidence, verdict)
+    t = common()
+    t.require(verdict in {'pass', 'fail'}, 'Review verdict must be pass or fail')
+    managed = managed_mission(project, state)
+    if managed is None or verdict == 'fail':
+        return t._record_review(project, state, evidence, verdict)
+    verify_structural(project, state, require_qa=False)
+    prefix = f'{proof.STATE}/teams/{state["plan"]["id"]}/'
+    t.require(evidence.startswith(prefix), 'Keep QA observations in the private team directory')
+    path = strict_io.scoped_path(project, evidence)
+    t.require(path.is_file() and 0 < path.stat().st_size <= t.MAX_ROLLOUT_BYTES,
+              'Missing retained QA observations')
+    raw = path.read_bytes()
+    body = strict_io.loads(raw.decode('utf-8-sig'))
+    managed.validate_review(body)
+    receipt = t._record_review(project, state, evidence, verdict, body=raw,
+                               mission_sha256=managed.binding, mission_review_sha256=proof.digest(body))
+    managed.accept_review(body, evidence_ref=receipt['sha256'])
+    return receipt
 
 
 def repair(project, state, tid, evidence, observation):
-    return common().repair(project, state, tid, evidence, observation)
+    t = common()
+    managed = managed_mission(project, state)
+    if managed is None:
+        return t.repair(project, state, tid, evidence, observation)
+    request, task = t._record_repair(project, state, tid, evidence, observation)
+    managed.reopen(tid, observation)
+    blocker = None
+    try:
+        candidate = packet(project, state, task, managed=managed)
+    except (ValueError, proof.ProofError, OSError) as exc:
+        blocker = str(exc)
+        candidate = None
+    result = {'team': state['plan']['id'], 'action': 'repair', 'mission_complete': False,
+              'repair': request['sha256'], 'owner': tid, 'packet': candidate}
+    if candidate is None:
+        if blocker:
+            result['blocker'] = blocker
+        result['next'] = ('Retain the failed QA evidence. Diagnose the affected current sources and compare the '
+                          'preservation contract, then record reinspection with '
+                          f'{mission_command(project, state, "refresh")} --note DIAGNOSIS. '
+                          'Resolve any owner prerequisites or approvals. Use Team packets and send the full '
+                          'repair packet to the original owner, not a new identity.')
+    return result
 
 
 def verify_structural(project, state, require_qa):
@@ -703,6 +1003,17 @@ def verify_structural(project, state, require_qa):
                   'Missing successful current integrated subprocess')
         t.require(qa.get('verdict') == 'pass' and qa.get('integration') == integrated['sha256']
                   and qa.get('check') == check['sha256'], 'QA is failed or stale')
+        managed = managed_mission(project, state)
+        if managed is not None:
+            if state['plan']['integration']['outputs']:
+                auth = owner_authorization(project, state, 'integration', integrated['inputs'], None)
+                t.require(integrated.get('mission_admission') == auth['sha256'],
+                          'Integration lacks the current managed dispatch')
+                require_ledger_handoff(managed, 'integration', integrated)
+            verified = managed.verify(evidence_ref=qa['sha256'])
+            t.require(qa.get('mission_sha256') == managed.binding
+                      and qa.get('mission_review_sha256') == verified['review_sha256'],
+                      'Team QA does not bind the same current managed review')
     return children
 
 
@@ -1176,6 +1487,13 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         t.require_receipt_turn_finished(row, [receipt], tid)
         at = t.receipt_event(row, receipt, tid)
         t.require(row['end'] and t.completed_receipt(row, at), tid + ': worker turn has not completed')
+        if 'mission_sha256' in state:
+            auth = owner_authorization(project, state, tid, receipt['inputs'], receipt.get('repair'))
+            first = t.instant(auth['first_authorized_at'])
+            t.require(row['start'] >= first and t.turn_start(row, at) >= t.instant(auth['at'])
+                      and not any(when < first and not rel.startswith(proof.STATE + '/')
+                                  for when, rel in row['writes']),
+                      tid + ': native work preceded the authorized mission dispatch')
         allowed = {t.product_key(x) for x in task['outputs']}
         all_writes = {rel for _, rel in row['writes'] if not rel.startswith(proof.STATE + '/')}
         writes = {rel for when, rel in row['writes'] if when <= at and not rel.startswith(proof.STATE + '/')}
@@ -1210,6 +1528,11 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
                         if state['baseline'][x] != integrated['files'][x]}
         glue_writes = {rel for at, rel in coordinator['writes'] if at <= when}
         t.require(changed_glue <= glue_writes, 'Integration changes lack native write evidence')
+        if 'mission_sha256' in state and plan['integration']['outputs']:
+            auth = owner_authorization(project, state, 'integration', integrated['inputs'], None)
+            t.require(not any(at < t.instant(auth['first_authorized_at']) and rel in glue
+                              for at, rel in coordinator['writes']),
+                      'Native integration writes preceded managed integration authorization')
         t.require('qa' in rows, 'Missing native QA worker')
         reviewer = rows['qa']
         t.require(not reviewer.get('failed'), 'Native QA worker failed')
@@ -1255,7 +1578,8 @@ def verify_registered(project, team_id, *, require_qa=True, parent=None, session
                     'host_assurance': {'status': 'UNVERIFIED', 'host': kind}, 'mission_complete': False}
         host = (copilot_adapter if kind == 'copilot' else codex_adapter)(project, state, parent, sessions, require_qa)
         return {'passed': True, 'status': 'PASS', 'team': team_id,
-                'structural_passed': True, 'host_assurance': host, 'independent_qa': require_qa}
+                'structural_passed': True, 'host_assurance': host, 'independent_qa': require_qa,
+                **({'mission_complete': False} if 'mission_sha256' in state and not require_qa else {})}
     except HostEvidenceUnavailable as exc:
         return {'passed': False, 'status': 'UNVERIFIED', 'team': team_id,
                 'structural_passed': True, 'errors': [str(exc)], 'mission_complete': False,
@@ -1264,5 +1588,5 @@ def verify_registered(project, team_id, *, require_qa=True, parent=None, session
         return {'passed': False, 'status': 'pending-native-turn', 'team': team_id,
                 'errors': [str(exc)], 'retryable': True, 'pending_workers': [exc.worker],
                 'mission_complete': False}
-    except (ValueError, TypeError, KeyError, AttributeError, OSError, proof.ProofError) as exc:
+    except (ValueError, TypeError, KeyError, AttributeError, OSError, proof.ProofError, sqlite3.Error) as exc:
         return {'passed': False, 'status': 'FAIL', 'team': team_id, 'errors': [str(exc)]}

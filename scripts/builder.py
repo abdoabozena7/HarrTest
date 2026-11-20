@@ -295,7 +295,7 @@ def claim(project, store, spec, shape, tid, owner, seconds):
     repair = repair_pending(store, spec, row)
     require(repair or all(by_id[m]['passed'] for m in shape['parents'][target]),
             'Earlier milestone integration is missing or stale; do not advance')
-    context = workflow.packet(project, spec, shape['tasks'][tid])
+    context = workflow.packet(project, spec, shape['tasks'][tid], authorize=True)
     context['build_context'] = {'milestone': target, 'architecture': spec['build']['architecture'],
                                'interfaces': [i for i in spec['build'].get('interfaces', [])
                                               if tid == i['producer'] or tid in i['consumers']],
@@ -340,6 +340,12 @@ def bootstrap(project, gid, request):
     data = Path(request).read_bytes()
     require(len(data) <= 200000, 'Original request exceeds bounded intake; do not silently truncate')
     proof.meaningful(data.decode('utf-8-sig'), 'original request', 15)
+    import mission
+    import project_memory
+
+    managed = mission.open_mission(project, gid) if mission.enrolled(project, gid) else None
+    if managed is not None:
+        require(data == managed.request.encode('utf-8'), 'Builder must retain the exact enrolled request')
     folder = strict_io.scoped_path(project, '.runtime-proof/root-goals/' + gid, must_exist=False)
     if folder.exists():
         require((folder / 'original-request.txt').is_file() and (folder / 'original-request.txt').read_bytes() == data,
@@ -348,9 +354,9 @@ def bootstrap(project, gid, request):
     else:
         folder.mkdir(parents=True)
         (folder / 'original-request.txt').write_bytes(data); created = True
-    import project_memory
     memory = project_memory.Memory(project)
-    memory.bootstrap(folder.relative_to(project).as_posix() + '/original-request.txt', goal_id=gid)
+    if managed is None:
+        memory.bootstrap(folder.relative_to(project).as_posix() + '/original-request.txt', goal_id=gid)
     return {'status': 'INTAKE_PRESERVED_NOT_IMPLEMENTED', 'created': created,
             'goal': folder.relative_to(project).as_posix(), 'request_sha256': proof.file_hash(folder / 'original-request.txt'),
             'next': 'Host drafts architecture/acceptance; create only minimal setup, seal proof children/root, then register build plan.',

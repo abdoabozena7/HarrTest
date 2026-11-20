@@ -1,5 +1,6 @@
 {
   "schema": 2,
+  "mission_protocol": "preservation-v1",
   "id": "mission",
   "kind": "change",
   "request": "REPLACE_ME exact original user request",

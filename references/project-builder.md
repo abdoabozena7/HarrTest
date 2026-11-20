@@ -56,6 +56,15 @@ schema-3 coverage/reviewer process when available, preserve genuine legacy roots
 and prepare the actual child contracts before registering the build graph. The user
 should not fill JSON by hand; the executing coding agent does that work.
 
+For new build missions initialize the
+[completion ledger and preservation contract](feature-preservation-and-completion.md)
+and select `mission_protocol: preservation-v1` on the original root. A blank
+project records why the feature inventory is empty; extensions inventory the
+existing slice and its relevant consumers before work. Map TODO owners to
+the workflow's task IDs, including integrated acceptance. Builder claims
+share managed pre-edit admission with Workflow; the final milestone still
+requires the original root and all mandatory TODOs.
+
 ## 3. Milestone registration and first running slice
 
 Adapt `assets/templates/build-plan.json` with the same `tasks`, `root_goal` and
