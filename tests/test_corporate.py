@@ -743,7 +743,7 @@ class CorporateTests(unittest.TestCase):
         state = team.load_state(self.project, goal.name)
         return goal, state, baseline
 
-    def fill_reviewed_draft(self, goal, state):
+    def fill_reviewed_draft(self, goal, state, *, review=True):
         root_path = goal / 'root-contract.json'
         root = proof.load(root_path)
         for key in ('scope_statement', 'request_segments', 'requirements', 'integration'):
@@ -754,6 +754,8 @@ class CorporateTests(unittest.TestCase):
         for key in ('context', 'requirements', 'decisions', 'edge_cases', 'layers'):
             plan[key] = self.plan[key]
         proof.save(plan_path, plan)
+        if not review:
+            return
         review = {**corporate.coverage_input(goal), 'method': 'fresh-context-agent',
                   'planner': plan['author'], 'reviewer': 'controlled-coverage-reviewer',
                   'unresolved_findings': [], 'verdict': 'covered',
@@ -761,11 +763,42 @@ class CorporateTests(unittest.TestCase):
         proof.save(goal / 'coverage-review.json', review)
         bound = corporate.bind_coverage(goal)
         self.assertFalse(bound['root_sealed'])
-        evidence = f'.runtime-proof/teams/{goal.name}/controlled-plan-review.txt'
+        evidence = team.plan_review_evidence(state)
         (self.project / evidence).write_text(
             'Controlled fixture reviewed the actual calculator file, its preserved signature and sole file ownership.',
             encoding='utf-8')
         team_v2.review_plan(self.project, state, evidence, 'pass')
+
+    def test_check_draft_gives_pre_review_feedback_without_sealing(self):
+        goal, state, _ = self.reviewed_draft()
+        corporate.scaffold(goal, 'verify', ['baseline'], 'calculator-owner')
+        self.fill_reviewed_draft(goal, state, review=False)
+        root_path = goal / 'root-contract.json'
+        original = root_path.read_bytes()
+        cli = [sys.executable, '-B', str(ROOT / 'scripts/root_gate.py')]
+        cmd = [*cli, 'check-draft', '--goal', str(goal)]
+        ready = subprocess.run(cmd, capture_output=True, encoding='utf-8', check=True)
+        self.assertEqual(json.loads(ready.stdout), {'status': 'DRAFT_READY_FOR_REVIEW',
+                                                   'root_goal_achieved': False, 'root_sealed': False})
+        self.assertEqual(root_path.read_bytes(), original)
+        seal = subprocess.run([*cli, 'seal', '--goal', str(goal)], capture_output=True, encoding='utf-8')
+        self.assertEqual(seal.returncode, 2, seal.stdout)
+        self.assertIn('coverage review must state actual independence', seal.stderr)
+        self.assertFalse((goal / 'root-seal.json').exists())
+
+        for field, value, error in (
+            ('request_segments', [], 'Request coverage segments are required'),
+            ('requirements', [{**self.root['requirements'][0], 'source': 'CONTRACT.md'}],
+             'missing source provenance'),
+        ):
+            with self.subTest(field=field):
+                root = json.loads(original)
+                root[field] = value
+                proof.save(root_path, root)
+                rejected = subprocess.run(cmd, capture_output=True, encoding='utf-8')
+                self.assertEqual(rejected.returncode, 2, rejected.stdout)
+                self.assertIn(error, rejected.stderr)
+                self.assertFalse((goal / 'coverage-review.json').exists())
 
     def test_scaffold_uses_real_baseline_and_requires_semantic_and_team_review_before_dispatch(self):
         goal, state, baseline = self.reviewed_draft()

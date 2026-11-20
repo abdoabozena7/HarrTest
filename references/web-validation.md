@@ -38,6 +38,16 @@ separate HTTP-200 smoke after manual browser actions does not bind those actions
 to the checked command. Keep exploratory/manual evidence, but do not substitute
 that smoke receipt for the claimed end-to-end behavior check.
 
+If the contract requires a specific browser binary, viewport, or rendering
+backend, verify that profile on the real page before the long journey. Record
+the renderer reported by the active context; launch flags are not evidence
+that the requested backend was selected. If a browser CLI cannot select the
+profile, try an approved installed adapter with explicit launch options.
+Keep the executable, options and observed capability with the finite check.
+When only the adapter was wrong, rerun QA on the same source, not a product
+repair. Retain the failed receipt and do not treat a host-default run as
+equivalent to the requested target.
+
 For an existing Playwright-compatible page, the pinned
 `assets/probes/browser-timing.js` is a finite, read-only 3-second observation:
 

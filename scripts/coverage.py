@@ -18,8 +18,8 @@ def inventory(request):
     return result
 
 
-def validate(request, contract, goal):
-    """All non-whitespace characters must be classified and separately reviewed."""
+def validate_mapping(request, contract):
+    """Check that the draft classifies and maps all non-whitespace text."""
     segments = contract.get('request_segments')
     if not isinstance(segments, list) or not segments:
         raise ValueError('Request coverage segments are required for schema 3')
@@ -51,6 +51,12 @@ def validate(request, contract, goal):
     user_required = {r['id'] for r in contract['requirements'] if r['source'] == 'user_request'}
     if not user_required.issubset(mapped):
         raise ValueError('A user requirement has no request-segment mapping')
+
+
+def validate(request, contract, goal):
+    """All non-whitespace characters must be classified and separately reviewed."""
+    validate_mapping(request, contract)
+    segments = contract['request_segments']
     ref = contract.get('coverage_challenge', {})
     path = strict_io.scoped_path(goal, ref.get('file'))
     if not path.is_file() or path.stat().st_size > 2_000_000:

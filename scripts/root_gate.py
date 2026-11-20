@@ -20,9 +20,15 @@ def root_dir(project: Path, goal_id: str) -> Path:
 
 
 def validate(project: Path, goal: Path, contract: dict) -> None:
+    _validate(project, goal, contract, draft=False)
+
+
+def _validate(project: Path, goal: Path, contract: dict, *, draft: bool) -> None:
     if not isinstance(contract, dict) or contract.get("schema") not in {2, 3, 4}:
         raise proof.ProofError("Root contract must have schema 2, 3 or 4")
     schema = contract['schema']
+    if draft and schema != 4:
+        raise proof.ProofError("Draft preflight is for an unsealed schema-4 Corporate root")
     if schema == 4:
         if contract.get('protocol') != 'corporate-v1':
             raise proof.ProofError('Schema-4 roots require corporate-v1')
@@ -48,12 +54,13 @@ def validate(project: Path, goal: Path, contract: dict) -> None:
     if proof.file_hash(original_file) != contract.get("request_sha256"):
         raise proof.ProofError("Root user request was modified or replaced")
     proof.meaningful(contract.get("scope_statement"), "root scope", 20)
-    review = contract.get("coverage_review")
-    if not isinstance(review, dict) or review.get("method") not in {"human", "fresh-context-agent", "same-agent"}:
-        raise proof.ProofError("Root scope coverage review must state actual independence")
-    proof.meaningful(review.get("rationale"), "root scope review", 35)
-    if review.get("unmapped_segments") != []:
-        raise proof.ProofError("The original request has unmapped segments")
+    if not draft:
+        review = contract.get("coverage_review")
+        if not isinstance(review, dict) or review.get("method") not in {"human", "fresh-context-agent", "same-agent"}:
+            raise proof.ProofError("Root scope coverage review must state actual independence")
+        proof.meaningful(review.get("rationale"), "root scope review", 35)
+        if review.get("unmapped_segments") != []:
+            raise proof.ProofError("The original request has unmapped segments")
     requirements = contract.get("requirements")
     if not isinstance(requirements, list) or not requirements:
         raise proof.ProofError("The root requires nonempty original requirements")
@@ -113,10 +120,29 @@ def validate(project: Path, goal: Path, contract: dict) -> None:
 
     if schema >= 3:
         import coverage
-        coverage.validate(original, contract, goal)
+        if draft:
+            coverage.validate_mapping(original, contract)
+        else:
+            coverage.validate(original, contract, goal)
     if schema == 4:
         import corporate
         corporate.validate(project, goal, contract)
+
+
+def check_draft(goal: Path) -> dict:
+    import corporate
+    import team
+
+    project, goal = corporate.goal_project(goal)
+    if (goal / 'root-seal.json').exists():
+        raise proof.ProofError('Draft preflight is for an unsealed schema-4 Corporate root')
+    contract = corporate.document(corporate.path(goal, 'root-contract.json'))
+    _validate(project, goal, contract, draft=True)
+    state = team.load_state(project, contract['production_team'])
+    binding = team.binding(project, contract['production_team'], contract['request_sha256'])
+    _corporate_team_scope(project, contract, state, binding)
+    corporate.seal_binding(project, goal, contract)
+    return {'status': 'DRAFT_READY_FOR_REVIEW', 'root_goal_achieved': False, 'root_sealed': False}
 
 
 def mode_satisfies(required: str, actual: str) -> bool:
@@ -381,6 +407,8 @@ def main() -> int:
     init.add_argument("--request-file", type=Path, required=True)
     seal = commands.add_parser("seal")
     seal.add_argument("--goal", type=Path, required=True)
+    preflight = commands.add_parser("check-draft", help="Check Corporate draft structure without sealing")
+    preflight.add_argument("--goal", type=Path, required=True)
     verify = commands.add_parser("verify")
     verify.add_argument("--goal", type=Path, required=True)
     verify.add_argument("--write-report", action="store_true")
@@ -412,6 +440,9 @@ def main() -> int:
                               "status": "ROOT_GOAL_UNVERIFIED"}))
             return 0
         goal = args.goal.resolve()
+        if args.action == "check-draft":
+            print(json.dumps(check_draft(goal)))
+            return 0
         if args.action == "inventory":
             import coverage
             request = (goal / "original-request.txt").read_text(encoding="utf-8")

@@ -6,21 +6,90 @@ the existing project's architecture, contracts, and measured baseline. It
 assigns independent changes to native implementation owners and uses separate
 QA to verify the integrated result on current source.
 
-Check the GitHub release notes for the release channel and the
-[validation record](references/v5-validation.md) for measured results and
-limits. The initial V5 preview did not meet the stable release criteria.
+The current V5 release is a **Preview**, not a qualified stable release.
+See the [validation record](references/v5-validation.md) for measured results
+and limits.
 
-[Install](#install) · [Start a task](#start-a-task) ·
+[How it works](#how-it-works) · [Luna/low example](#beacon-courier) ·
+[Install](#install) · [Try it in two chats](references/two-chat-trial.md) ·
+[Start a task](#start-a-task) ·
 [Corporate workflow](references/corporate-workflow.md) ·
 [Changelog](CHANGELOG.md)
 
+## How it works
+
+![HarrTest workflow: record intent and baseline, dispatch scoped owners, integrate, run independent QA, and verify current evidence. Failed checks go back to the responsible owner.](visual/workflow.svg)
+
+For an existing system, agree on what must stay unchanged before anyone
+edits it. For a new product, agree on what distinguishes a finished result
+from a working placeholder. In both cases the independent reviewer checks
+the integrated result, not the implementer's description.
+
+![One owner per independently checkable deliverable, with focused review for risks inside a shared asset or invariant.](visual/ownership.svg)
+
+The test for another owner is a distinct deliverable, disjoint writes, a
+stable interface and its own check. It should improve the handoff or the
+evidence, not just divide a file. If another writer would fragment an asset or
+data invariant, keep ownership together and review the specific risk.
+For example, a migration and its consuming service can have distinct owners
+when their schema boundary is stable, while a reviewer rehearses rollback.
+
+For visual work, the [detail review](references/production-teams.md#require-review-of-specific-details)
+lists the required checks before implementation. Each one needs an observed
+result with current evidence. A good overall screenshot or a passing runtime
+check can't close an omitted detail.
+
+## Beacon Courier
+
+The same small 3D game request went to GitHub Copilot **GPT-6 Luna, low effort**
+in both arms. These are unedited gameplay captures about 2.4 seconds into
+the same keyboard action, in Edge at 1440 × 900 with SwiftShader.
+
+**Without HarrTest** — one implementation with a straight route, a block-style
+rover and clear speed and progress indicators.
+
+![Beacon Courier without HarrTest: the rover drives down a straight depot road toward the first gate, showing 0 out of 3 gates.](visual/comparison/beacon-courier-plain.png)
+
+**With the HarrTest 5 candidate** — individually numbered gates and warm route
+lamps, with separate foreground depot and distant coastal silhouettes. The
+chase view shows a smaller rover with more visible chassis and cabin detail.
+
+![Beacon Courier with HarrTest 5: numbered lit gate across the road, detailed rover in the foreground, and harbor and shore behind the depot.](visual/comparison/beacon-courier-harrtest.png)
+
+| Same independent browser check | Without HarrTest | With HarrTest 5 |
+| --- | --- | --- |
+| Three ordered gates and finish (target: 4–25 s) | 23.661 s | 7.053 s |
+| Braking, reset, and driving again | Observed | Observed |
+
+The V5 result used seven native implementation owners, at most two at
+a time. Wheel fit and animation stayed with the rover owner, rather than
+creating several writers for the same asset. The coordinator assembled those
+handoffs. The native Team replay verified ownership, overlap and independent
+QA on the integrated result.
+
+The V5 arm used operator-assisted planning and continued after its first
+timebox. Its first QA used the wrong rendering backend and did not pass.
+After reconnecting, a fresh independent QA worker verified two full runs on
+SwiftShader without editing the game. Both the failed and passing reviews
+are retained.
+This is a development example, not a cold or cost-matched comparison, a
+performance benchmark, or release qualification. See the [method and retained
+attempts](references/v5-validation.md#beacon-courier-visual-development).
+The [historical 4.1 comparison](references/v4.1-validation.md) is a separate
+experiment ([plain frame](visual/comparison/without-harrtest.png) ·
+[4.1 frame](visual/comparison/with-harrtest.png)).
+
 ## Install
 
-Download the single installable `skill.zip` for your chosen HarrTest 5 release
-from [GitHub Releases](https://github.com/abdoabozena7/HarrTest/releases).
+Download the single installable [`skill.zip` for HarrTest 5 Preview 2](https://github.com/abdoabozena7/HarrTest/releases/download/v5.0.0-rc.2/skill.zip).
 Extract it to get the `harrtest` folder, including its Python 3.10+ scripts
 and references. If you already use HarrTest, update your existing installation
 instead of adding a second copy.
+
+To hand this to an agent, point it to the [Preview 2 release](https://github.com/abdoabozena7/HarrTest/releases/tag/v5.0.0-rc.2)
+and ask it to install the `harrtest` skill for the current project, confirm it
+loaded that copy, and use it for the next task. Reload skill discovery or open
+a fresh chat if the host does not pick it up in the current session.
 
 To install from `main` with the Agent Skills CLI:
 
@@ -36,10 +105,10 @@ py -3 C:\path\to\harrtest\scripts\install.py --agent copilot --scope project --p
 py -3 C:\path\to\harrtest\scripts\install.py --agent copilot --scope project --project . --update
 ```
 
-Review the dry run before installing. Reload skill discovery and confirm
-that your host loaded `harrtest` version `5.0.0`. Keep active missions pinned
-to the version that sealed their contracts. Optional instructions and hooks
-are described in the [workflow guide](references/corporate-workflow.md).
+Review the dry run before installing. `VERSION` identifies the `5.0.0`
+workflow; use the release tag or its asset digest to identify the preview build.
+Keep active missions pinned to the build that sealed their contracts. Optional
+instructions and hooks are described in the [workflow guide](references/corporate-workflow.md).
 
 ## Start a task
 

@@ -21,7 +21,10 @@ MAX_NATIVE_WINDOW_BYTES = 32 * 1024 * 1024
 MAX_NATIVE_WINDOW_EVENTS = 100_000
 MAX_NATIVE_PENDING_CALLS = 4096
 MAX_NATIVE_SCAN_BYTES = 1024 * 1024 * 1024
+MAX_DETAIL_ARTIFACTS = 64
+MAX_DETAIL_ARTIFACT_BYTES = 64 * 1024 * 1024
 COPILOT_COVERAGE_REVIEW = 'coverage_review'
+COPILOT_QA_RECOVERY = 'qa-recovery'
 
 
 class HostEvidenceUnavailable(ValueError):
@@ -221,6 +224,13 @@ def validate_plan(project, plan):
     integration = plan.get('integration')
     t.require(isinstance(integration, dict), 'Declare integrated acceptance')
     t.concrete(integration.get('check'), 'Integrated acceptance check')
+    if 'detail_review' in integration:
+        details = integration['detail_review']
+        t.require(isinstance(details, dict) and 0 < len(details) <= MAX_DETAIL_ARTIFACTS,
+                  'Declare a bounded set of required detail review criteria')
+        for rid, criterion in details.items():
+            proof.identifier(rid, 'Detail review ID')
+            t.concrete(criterion, rid + ' observable detail criterion')
     glue = integration.get('outputs')
     t.require(isinstance(glue, list), 'Integration outputs must be an explicit list; [] is valid')
     if glue:
@@ -271,10 +281,14 @@ def independent_pairs(tasks):
             if a not in parents[b] and b not in parents[a]]
 
 
-def init(project, plan):
+def copilot_corporate_plan(plan):
+    return (plan.get('root_protocol') == 'corporate-v1' and plan.get('host', {}).get('kind') == 'copilot')
+
+
+def draft_state(project, plan, **revision):
     t = common()
     tasks, owned = validate_plan(project, plan)
-    if plan.get('root_protocol') == 'corporate-v1' and plan.get('host', {}).get('kind') == 'copilot':
+    if copilot_corporate_plan(plan):
         t.require(COPILOT_COVERAGE_REVIEW not in tasks, 'Reserved Corporate coverage reviewer name')
     validation_inputs = t.validation_snapshot(project, plan)
     root = Path(project).resolve()
@@ -299,14 +313,66 @@ def init(project, plan):
         for move in task.get('renames', []):
             t.require(baseline[move['to']] is None, 'Rename destination must be absent at baseline')
     state = {'plan': plan, 'plan_sha256': strict_io.digest(plan), 'baseline': baseline,
-             'created': proof.now(), 'validation_inputs': validation_inputs}
+             'created': proof.now(), 'validation_inputs': validation_inputs, **revision}
     state['state_sha256'] = strict_io.digest(state)
-    proof.save(t.team_path(project, plan['id'], must_exist=False), state, exclusive=True)
+    return state
+
+
+def initial_packets(project, state):
+    plan = state['plan']
     if plan.get('decomposition') == 'reviewed-v1':
         return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
                 'plan_review': plan_review_packet(project, state), 'ready': []}
     return {'team': plan['id'], 'schema': 2, 'plan_sha256': state['plan_sha256'],
-            'ready': [packet(project, state, row) for row in tasks.values() if not row['depends_on']]}
+            'ready': [packet(project, state, row) for row in plan['tasks'] if not row['depends_on']]}
+
+
+def init(project, plan):
+    state = draft_state(project, plan)
+    proof.save(common().team_path(project, plan['id'], must_exist=False), state, exclusive=True)
+    return initial_packets(project, state)
+
+
+def revise_plan(project, draft):
+    """Keep the original request and rejected revision; reopen pre-edit planning only."""
+    t = common()
+    plan = t.request_from_root(project, draft, revising=True)
+    team_id = plan['id']
+    enrolled = os.environ.get('HARRTEST_CORPORATE_GOAL')
+    t.require(not enrolled or enrolled == team_id, 'Keep the enrolled Corporate goal ID')
+    path = t.team_path(project, team_id)
+    with proof.latest_guard(path.parent):
+        state = load_state(project, team_id)
+        original = state['plan']
+        t.require(copilot_corporate_plan(original) and copilot_corporate_plan(plan)
+                  and all(plan.get(k) == original.get(k) for k in ('kind', 'request', 'host', 'model', 'reasoning_effort')),
+                  'A revision must keep the original Copilot Corporate request, kind and host pins')
+        goal = strict_io.scoped_path(project, f'{proof.STATE}/root-goals/{team_id}')
+        t.require(not t.team_path(project, team_id, 'corporate-dispatch.json', must_exist=False).exists()
+                  and not any((goal / name).exists() for name in ('root-seal.json', 'corporate-report.json')),
+                  'An admitted or sealed Corporate plan cannot be revised')
+        t.require(not any((goal / name).exists() for name in (
+            'root-contract.json', 'corporate-plan.json', 'coverage-review.json')),
+            'Retain the unsealed Corporate drafts separately before revising the Team')
+        t.require(t.receipt_path(project, state, 'plan_review').is_file(),
+                  'Record the rejected review before revising the Team')
+        rejected = current_receipt(project, state, 'plan_review')
+        t.require(rejected['verdict'] == 'fail' and rejected['state'] == state['state_sha256'],
+                  'Only the current rejected plan can be revised')
+        t.require(t.snapshot(project, state['baseline']) == state['baseline'],
+                  'Keep the original implementation baseline when revising the Team')
+        t.require(strict_io.digest(plan) != state['plan_sha256'], 'Correct the rejected plan before revising it')
+        updated = draft_state(project, plan, revision=state.get('revision', 1) + 1,
+                              previous_state_sha256=state['state_sha256'])
+        archive = t.team_path(project, team_id, f'revisions/{state["state_sha256"]}.json', must_exist=False)
+        history = {'state': state, 'review': rejected}
+        if archive.exists():
+            t.require(proof.load(archive) == history, 'Retained Team revision differs from the rejected plan')
+        else:
+            proof.save(archive, history, exclusive=True)
+        proof.save(path, updated)
+    return {**initial_packets(project, updated), 'revision': updated['revision'],
+            'rejected_review_sha256': rejected['sha256']}
 
 
 def load_state(project, team_id):
@@ -320,6 +386,28 @@ def load_state(project, team_id):
     t.require(set(owned) == set(state['baseline']), 'Production baseline scope changed')
     t.validation_message(project, state)
     return state
+
+
+def revision_origin(project, state):
+    t = common()
+    team_id = state['plan']['id']
+    start = t.instant(state['created'])
+    while state.get('revision', 1) > 1:
+        previous = state['previous_state_sha256']
+        t.require(t.re.fullmatch('[0-9a-f]{64}', previous), 'Invalid previous Team state identity')
+        history = proof.load(t.team_path(project, team_id, f'revisions/{previous}.json'))
+        old = history['state']
+        t.require(old['state_sha256'] == previous == strict_io.digest(
+            {key: value for key, value in old.items() if key != 'state_sha256'})
+            and old['plan']['id'] == team_id and old.get('revision', 1) == state['revision'] - 1,
+            'Retained Team revision differs from the original state')
+        review = current_receipt(project, old, 'plan_review')
+        original_start = t.instant(old['created'])
+        t.require(review == history['review'] and review['state'] == previous and review['verdict'] == 'fail'
+                  and original_start <= t.instant(review['at']) <= start,
+                  'Retained Team revision lacks its original rejection')
+        state, start = old, original_start
+    return start
 
 
 def binding(project, team_id, request_sha256):
@@ -349,19 +437,39 @@ def dispatch_packet(plan, task_name, message):
 
 
 def plan_review_packet(project, state):
+    packet = plan_review_brief(project, state)
+    if 'revision' in state:
+        command = common().worker_command(project, state['plan']['id'], 'review-brief')
+        packet['message'] = (f'Run {command} --revision {state["revision"]}\n'
+                             'Follow the returned review instructions. Keep product files read-only.')
+    return packet
+
+
+def plan_review_brief(project, state):
     t = common()
     plan = state['plan']
     path = t.team_path(project, plan['id']).as_posix()
-    evidence = f'{proof.STATE}/teams/{plan["id"]}/plan-review.txt'
+    evidence = t.plan_review_evidence(state)
     command = t.worker_command(project, plan['id'], 'review-plan')
     split_check = ''
-    if plan.get('root_protocol') == 'corporate-v1':
-        split_check = ('Compare the proposed owner map against the nearest viable split. For each changed boundary, '
-                       'state whether its owner could implement and check it against the existing interface while '
-                       'another owner works. An integration test needed at the end does not block either component. '
-                       'For a single owner, identify the shared write path, coupled invariant or unavailable interface '
-                       'that prevents a split. If neither scope needs the other to produce its first testable result, '
-                       'return fail and identify the separately testable responsibilities. Keep product files read-only. ')
+    if plan.get('root_protocol') == 'corporate-v1' or plan['kind'] == 'greenfield':
+        split_check = ('Compare the owner map against the nearest viable split within each major scope. '
+                       'Ask which part could deliver a distinct artifact with disjoint writes, a stable interface and '
+                       'its own check while another owner works. A final integration test does not block either part. '
+                       'Reject a missing implementation scope when splitting gives a significant requested part its '
+                       'own deliverable and improves ownership or independent validation. Explain what a handoff '
+                       'would add beyond a focused check within the existing scope. Separately flag criteria missing '
+                       'from otherwise coherent scopes; add a focused check or reviewer when another writer would '
+                       'only split a file, shared write path or coupled invariant. '
+                       'A reviewer is not an implementation owner. Keep product files read-only. ')
+    if plan['kind'] == 'greenfield':
+        split_check += ('In the same review, challenge the proposed finishing brief against the original request. '
+                        'For each major component, name a plausible unfinished result and the observed criterion '
+                        'that would reject it. Return fail for any unresolved gap. Record the intent judgments '
+                        'alongside the ownership findings; do not treat a file list as a finishing criterion. ')
+    if plan['integration'].get('detail_review'):
+        split_check += ('Check the sealed detail_review IDs against the brief. Reject an omitted consequential '
+                        'detail, missing view or state, or criterion that can pass without an actual observation. ')
     message = (f'Review the sealed decomposition independently before implementation. Read {path}.\n'
                f'Plan SHA-256 {state["plan_sha256"]}; baseline/state SHA-256 {state["state_sha256"]}.\n'
                'Inspect the actual project contracts, affected consumers and each scope_evidence path. '
@@ -369,11 +477,16 @@ def plan_review_packet(project, state):
                'outcomes and independent check against those sources. Find missing responsibilities '
                'or independent components grouped into one owner. A narrow responsibility may span '
                f'multiple files. Confirm any single-scope and dependency rationales. {split_check}'
+               'The coordinator owns integration and only its declared output paths. Check the planned '
+               'interfaces and handoffs into that scope; do not require a separate integration owner. '
                'Check the planned worker width against available native dispatch and known runtime limits. Use that '
-               'capability evidence at plan review. Actual owner overlap is verified after dispatch. '
+               'capability evidence at plan review. The ready list can exceed the evidenced width; run bounded waves. '
+               'Actual owner overlap is verified after dispatch. '
                'Serial independent work needs a documented host cap, rejected '
                'simultaneous dispatch or another observed constraint. Record each judgment with the '
                'source location and why it supports the scope. '
+               f'Keep the evidence at most {t.MAX_PACKET_CHARS} characters: use short, source-backed findings '
+               'instead of copying the plan, and combine a scope and its finishing counterexample where useful. '
                f'Write your observations to {evidence}. Use this literal project-relative evidence path. '
                'Record fail if a required scope, source or justification is missing. '
                'Run the following review command by itself after saving evidence. Replace VERDICT '
@@ -446,6 +559,9 @@ def review_plan(project, state, evidence, verdict):
               'Review the sealed baseline before any product edit')
     prefix = f'{proof.STATE}/teams/{plan["id"]}/'
     t.require(evidence.startswith(prefix), 'Keep plan review evidence in the private team directory')
+    if 'revision' in state:
+        t.require(evidence == t.plan_review_evidence(state),
+                  'Use the current revision-specific plan review evidence path')
     path = strict_io.scoped_path(project, evidence)
     t.require(path.is_file() and 0 < path.stat().st_size <= t.MAX_VALIDATION_FILE_BYTES,
               'Missing bounded plan review evidence')
@@ -592,7 +708,15 @@ def integrate(project, state):
     children = {r['id']: usable_handoff(project, state, r['id'], admission=admission) for r in plan['tasks']}
     receipt = record(project, state, 'integration', t.snapshot(project, state['baseline']),
                      inputs={tid: row['sha256'] for tid, row in children.items()})
-    evidence = f'{proof.STATE}/teams/{plan["id"]}/qa-evidence.txt'
+    return receipt, qa_packet(project, state, receipt)
+
+
+def qa_packet(project, state, receipt):
+    t = common()
+    plan = state['plan']
+    details = plan['integration'].get('detail_review')
+    suffix = 'json' if details else 'txt'
+    evidence = f'{proof.STATE}/teams/{plan["id"]}/qa-evidence.{suffix}'
     command = t.worker_command(project, plan['id'], 'check')
     review_command = t.worker_command(project, plan['id'], 'review')
     boundary = ', '.join(sorted(state['baseline']))
@@ -627,7 +751,26 @@ def integrate(project, state):
                'checks pass. Otherwise submit fail with the available evidence. Report and release '
                'any separate service or resource you actually started. '
                'A successful receipt proves the recorded process, not semantic correctness or native identity.')
-    return receipt, dispatch_packet(plan, 'qa', message)
+    if details:
+        message += (
+            '\n\nRequired detail review (in addition to the user journey):\n'
+            + '\n'.join(f'- {rid}: {criterion}' for rid, criterion in details.items())
+            + '\nThe finite check must capture actual observations in its fresh PROVE_IT_OUTPUT_DIR. '
+              'Use flat file names. Open and inspect the captured frames, motion samples or other artifacts '
+              'on the current product. Do not reuse older captures. Review each ID independently, including '
+              'any shorter-lived state or subtle defect the criterion names. Save the JSON observations '
+              'with check_sha256 from the check receipt, observations for all quality layers, and details '
+              'keyed by ID. Each row has verdict (pass, fail, or unverified), observation, and artifacts '
+              '(a list of file names captured by that check). Find the captures next to the retained '
+              'check-NAME.json in the check-NAME directory. A missing or unresolved row cannot pass.'
+        )
+    packet = dispatch_packet(plan, 'qa', message)
+    if plan.get('host', {}).get('kind') == 'copilot':
+        packet['dispatch_note'] += (
+            ' After a Copilot reconnect, if write_agent reports that the original QA actor is not found, '
+            f'dispatch one new read-only worker named {COPILOT_QA_RECOVERY} with this same current message. '
+            'Retain the original evidence. The replacement must run the current checks and review itself.')
+    return packet
 
 
 def runtime_check(project, state, argv):
@@ -637,6 +780,13 @@ def runtime_check(project, state, argv):
     t.require(isinstance(argv, list) and argv and all(isinstance(x, str) and x for x in argv),
               'Supply actual executable argv after --')
     private = t.team_path(project, state['plan']['id']).parent
+    name = f'check-{uuid4().hex}'
+    details = state['plan']['integration'].get('detail_review')
+    env = None
+    if details:
+        captures = t.team_path(project, state['plan']['id'], name, must_exist=False)
+        captures.mkdir()
+        env = {**os.environ, 'PROVE_IT_OUTPUT_DIR': str(captures)}
     started = proof.now()
     timeout = state['plan']['integration'].get('timeout_seconds', 120)
     spawn_error, timed_out, overflow = None, False, False
@@ -646,7 +796,7 @@ def runtime_check(project, state, argv):
             options = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt'
                        else {'start_new_session': True})
             process = subprocess.Popen(argv, cwd=project, stdin=subprocess.DEVNULL, stdout=stdout,
-                                       stderr=stderr, shell=False, **options)
+                                       stderr=stderr, shell=False, env=env, **options)
             clock = time.monotonic()
             while process.poll() is None:
                 timed_out = time.monotonic() - clock > timeout
@@ -667,20 +817,71 @@ def runtime_check(project, state, argv):
         out, err = stdout.read(proof.MAX_LOG_BYTES + 1), stderr.read(proof.MAX_LOG_BYTES + 1)
     overflow = overflow or max(len(out), len(err)) > proof.MAX_LOG_BYTES
     source_unchanged = t.snapshot(project, integrated['files']) == integrated['files']
-    filename = f'check-{uuid4().hex}.json'
+    filename = name + '.json'
     path = t.team_path(project, state['plan']['id'], filename, must_exist=False)
     proof.save(path, {'argv': argv, 'cwd': str(Path(project).resolve()), 'exit_code': code,
                      'started_at': started, 'finished_at': proof.now(), 'timed_out': timed_out,
                      'overflow': overflow, 'spawn_error': spawn_error, 'source_unchanged': source_unchanged,
                      'stdout': out[:proof.MAX_LOG_BYTES].decode('utf-8', errors='replace'),
                      'stderr': err[:proof.MAX_LOG_BYTES].decode('utf-8', errors='replace')}, exclusive=True)
-    receipt = record(project, state, 'check', {path.relative_to(project).as_posix(): proof.file_hash(path)},
-                     integration=integrated['sha256'],
-                     exit_code=code if not (timed_out or overflow or spawn_error) else None)
+    files = {path.relative_to(project).as_posix(): proof.file_hash(path)}
+    exit_code = code if not (timed_out or overflow or spawn_error) else None
+    extra = {}
+    if details and source_unchanged:
+        try:
+            extra['detail_artifacts'] = capture_manifest(project, captures)
+        except (ValueError, OSError):
+            record(project, state, 'check', files, integration=integrated['sha256'], exit_code=None)
+            raise
+    receipt = record(project, state, 'check', files, integration=integrated['sha256'],
+                     exit_code=None if details and not source_unchanged else exit_code, **extra)
     # Preserve failed observations before reporting a verifier/source problem.
     t.require(source_unchanged, 'QA command changed integrated source')
     t.validation_message(project, state)
     return receipt
+
+
+def capture_manifest(project, directory):
+    t = common()
+    files, total = {}, 0
+    relative = directory.relative_to(project).as_posix()
+    t.require(strict_io.scoped_path(project, relative).is_dir(), 'Missing private detail capture directory')
+    for path in directory.iterdir():
+        file = strict_io.scoped_path(project, f'{relative}/{path.name}')
+        t.require(file.is_file(), 'Detail captures must be flat regular files')
+        size = file.stat().st_size
+        total += size
+        t.require(0 < size and total <= MAX_DETAIL_ARTIFACT_BYTES and len(files) < MAX_DETAIL_ARTIFACTS,
+                  'Detail captures are empty or exceed the evidence limit')
+        files[path.name] = proof.file_hash(file)
+    return files
+
+
+def verify_detail_review(project, state, check, evidence):
+    t = common()
+    criteria = state['plan']['integration']['detail_review']
+    report = proof.load(evidence)
+    t.require(isinstance(report, dict) and report.get('check_sha256') == check['sha256'],
+              'Detail review must name the current successful QA check')
+    proof.meaningful(report.get('observations'), 'Independent QA observations')
+    rows = report.get('details')
+    t.require(isinstance(rows, dict), 'Detail review must report each sealed criterion')
+    missing, extra = criteria.keys() - rows.keys(), rows.keys() - criteria.keys()
+    t.require(not missing and not extra,
+              'Detail review IDs differ from the sealed plan: missing ' + ', '.join(sorted(missing))
+              + '; unexpected ' + ', '.join(sorted(extra)))
+    captures = strict_io.scoped_path(project, next(iter(check['files']))).with_suffix('')
+    artifacts = check.get('detail_artifacts', {})
+    t.require(artifacts and capture_manifest(project, captures) == artifacts,
+              'Current QA detail captures are absent or changed')
+    for rid, row in rows.items():
+        t.require(isinstance(row, dict) and row.get('verdict') == 'pass',
+                  rid + ': detail review is not passed')
+        proof.meaningful(row.get('observation'), rid + ' observed detail')
+        names = row.get('artifacts')
+        t.require(isinstance(names, list) and names and all(isinstance(name, str) and name in artifacts
+                                                            for name in names),
+                  rid + ': cite artifacts from the current QA check')
 
 
 def review(project, state, evidence, verdict):
@@ -709,6 +910,8 @@ def verify_structural(project, state, require_qa):
                   'Missing successful current integrated subprocess')
         t.require(qa.get('verdict') == 'pass' and qa.get('integration') == integrated['sha256']
                   and qa.get('check') == check['sha256'], 'QA is failed or stale')
+        if state['plan']['integration'].get('detail_review'):
+            verify_detail_review(project, state, check, strict_io.scoped_path(project, next(iter(qa['files']))))
     return children
 
 
@@ -830,6 +1033,18 @@ def copilot_followup_result(by_agent, tool, args, payload, started, when):
     del worker['resume']
 
 
+def copilot_missing_qa(reconnect, qa, tool, args, payload, started, when):
+    if not (reconnect and qa and tool == 'write_agent' and isinstance(args, dict)
+            and args.get('agent_id') == qa['id'] and isinstance(args.get('message'), str) and args['message']
+            and qa['end'] is not None and qa['active'] is None and qa.get('resume') is None
+            and qa['end'] <= reconnect[0] <= reconnect[1] <= started <= when
+            and payload.get('success') is False):
+        return False
+    fields = payload.get('toolTelemetry', {}).get('properties', {})
+    return (fields.get('agent_id') == qa['id'] and fields.get('error') == 'not_found'
+            and payload.get('error', {}).get('code') == 'failure')
+
+
 def is_copilot_coverage_review(project, review_team, request, args):
     """Recognize the exact historical packet, including superseded draft hashes."""
     import corporate
@@ -871,7 +1086,8 @@ def is_copilot_coverage_review(project, review_team, request, args):
     return prompt == corporate.coverage_review_message(goal, bindings, planner)
 
 
-def read_copilot_traces(project, parent, sessions, since, *, review_team=None, corporate_request=None):
+def read_copilot_traces(project, parent, sessions, since, *, review_team=None, review_evidence=None,
+                        corporate_request=None, original_since=None):
     """Read Copilot's persisted session-events v1, not model-authored summaries.
 
     Format: CLI1.0.104 live native probe and the installed official SDK's
@@ -885,7 +1101,7 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
     t.require(not path.is_symlink(), 'Copilot native session cannot be a symlink')
     if not path.is_file():
         raise HostEvidenceUnavailable('Missing selected Copilot native session')
-    window = NativeWindow(path, since, 'copilot')
+    window = NativeWindow(path, original_since or since, 'copilot')
     events = iter(window)
     header = next(events, None)
     if header is None or header.get('type') != 'session.start':
@@ -906,6 +1122,7 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
     auxiliary_calls = {}
     seen_ids = {header.get('id')}
     boundary_initialized = False
+    shutdown = reconnect = None
     def apply_model_transition(current, payload, record):
         t.require(isinstance(payload, dict), 'Invalid native model transition')
         for field, target, history in [('newModel', 'model', 'models'),
@@ -936,6 +1153,14 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                 call_id = payload['toolCallId']
                 t.require(call_id not in calls, 'Duplicate Copilot tool call')
                 calls[call_id] = (event, when)
+            elif kind == 'tool.execution_complete':
+                if not agent:
+                    calls.pop(payload.get('toolCallId'), None)
+                if original_since is not None and when >= original_since:
+                    t.require(all(Path(edit['path']).is_absolute() and Path(edit['path']).resolve()
+                                  .is_relative_to(project / proof.STATE)
+                                  for edit in payload.get('fileEdits', [])),
+                              'Native product write preceded the revised plan')
             continue
         if not boundary_initialized:
             # The header may be hours old. Pins compare the actual effective
@@ -943,7 +1168,13 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
             coordinator['models'] = {coordinator['model']}
             coordinator['efforts'] = {coordinator['effort']}
             boundary_initialized = True
-        if kind == 'session.model_change':
+        if kind == 'session.shutdown' and not agent:
+            shutdown, reconnect = when, None
+        elif kind == 'session.resume' and not agent:
+            reconnect = ((shutdown, when) if shutdown is not None and shutdown <= when
+                         and payload.get('alreadyInUse') is False and payload.get('sessionWasActive') is False
+                         else None)
+        elif kind == 'session.model_change':
             t.require(current is not None, 'Native model transition lacks its agent identity')
             if agent:
                 t.require(when >= current['start'] and (current['end'] is None or current['active'] is not None),
@@ -981,10 +1212,10 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
             if current and payload.get('model'):
                 current['models'].add(payload['model'])
             if payload.get('toolName') == 'task' and not agent:
-                dispatch[call_id] = payload
+                dispatch[call_id] = (payload, when)
         elif kind == 'subagent.started':
             call_id = payload.get('toolCallId')
-            task_dispatch = dispatch.pop(call_id, None)
+            task_dispatch, dispatched_at = dispatch.pop(call_id, (None, None))
             auxiliary_parent = None
             if task_dispatch is None and corporate_request is not None and call_id in calls:
                 request, started = calls[call_id]
@@ -1022,6 +1253,15 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
             current['interactions'] = set()
             current['turn_starts'].append(when)
             current['active'] = when
+            if label == COPILOT_QA_RECOVERY and auxiliary_parent is None:
+                original_qa = rows.get('qa', {})
+                missing = original_qa.get('unavailable')
+                t.require(missing is not None and missing[0] == reconnect
+                          and missing[1] <= dispatched_at <= when and original_qa.get('resume') is None
+                          and isinstance(args.get('prompt'), str),
+                          'Replacement QA needs an observed unavailable original worker after reconnect')
+                current['replacement'] = {'previous_actor': original_qa['id'], 'unavailable_at': missing[1]}
+                current['prompt'] = args['prompt']
             if auxiliary_parent is not None:
                 current['auxiliary_parent'] = auxiliary_parent
                 auxiliary_calls[call_id] = current
@@ -1077,7 +1317,19 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                           and isinstance(payload.get('success'), bool),
                           'Copilot nested task lifecycle did not complete within its parent dispatch')
                 auxiliary['dispatch_completed'] = when
-            if payload.get('success') is not True and 'auxiliary_parent' not in current:
+            call = request['data']
+            args = call.get('arguments', {})
+            if not agent and started >= since:
+                qa = rows.get('qa')
+                tool = call.get('toolName')
+                if copilot_missing_qa(reconnect, qa, tool, args, payload, started, when):
+                    qa['unavailable'] = (reconnect, when)
+                elif (qa and tool == 'write_agent' and isinstance(args, dict) and args.get('agent_id') == qa['id']
+                      and payload.get('success') is True):
+                    t.require(COPILOT_QA_RECOVERY not in rows, 'Original QA was resumed after replacement')
+                    qa.pop('unavailable', None)
+            if (payload.get('success') is not True and 'auxiliary_parent' not in current
+                    and not current.get('replacement')):
                 continue
             edits = payload.get('fileEdits', [])
             t.require(isinstance(edits, list), 'Invalid Copilot committed file edits')
@@ -1088,19 +1340,17 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
                 t.require(target.is_absolute() and target.resolve().is_relative_to(project),
                           'Copilot file edit escaped project')
                 current['writes'].append((when, t.product_key(target.resolve().relative_to(project).as_posix())))
-            if 'auxiliary_parent' in current:
+            if 'auxiliary_parent' in current or payload.get('success') is not True:
                 # Retain reported edits even for a failed tool. Only a direct
                 # worker may produce a role's native receipt markers.
                 continue
-            call = request['data']
-            args = call.get('arguments', {})
             if not agent and started >= since:
                 copilot_followup_result(by_agent, call.get('toolName'), args, payload, started, when)
             command = args.get('command') if isinstance(args, dict) else None
             if (started >= since and call.get('toolName') in {'powershell', 'bash'} and isinstance(command, str)
                     and payload.get('shellExecution', {}).get('exitCode') == 0):
                 if review_team is not None and current is rows.get('plan_review'):
-                    matches = t.plan_review_command(command, project, review_team)
+                    matches = t.plan_review_command(command, project, review_team, evidence=review_evidence)
                 else:
                     matches = t.team_command(command)
                 if not matches:
@@ -1122,11 +1372,14 @@ def read_copilot_traces(project, parent, sessions, since, *, review_team=None, c
 
 
 def copilot_adapter(project, state, parent, sessions, require_qa):
+    t = common()
     plan = state['plan']
     review_team = plan['id'] if plan.get('decomposition') == 'reviewed-v1' else None
     corporate_request = plan['request'] if plan.get('root_protocol') == 'corporate-v1' else None
-    rows = read_copilot_traces(project, parent, sessions, common().instant(state['created']),
-                               review_team=review_team, corporate_request=corporate_request)
+    rows = read_copilot_traces(project, parent, sessions, t.instant(state['created']),
+                               review_team=review_team, review_evidence=t.plan_review_evidence(state),
+                               corporate_request=corporate_request,
+                               original_since=revision_origin(project, state) if 'revision' in state else None)
     return verify_native_rows(project, state, parent, rows, require_qa, 'copilot-session-events-v1')
 
 
@@ -1228,6 +1481,7 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
             overlap.append([a, b])
     if plan.get('max_parallel_workers', 1) > 1 and independent_pairs(tasks):
         t.require(overlap, 'Declared available parallel workers were not used on independent scopes')
+    recovery = None
     if require_qa:
         integrated, check, qa = (current_receipt(project, state, x) for x in ('integration', 'check', 'qa'))
         when = t.receipt_event(coordinator, integrated, 'integration')
@@ -1238,6 +1492,17 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         t.require(changed_glue <= glue_writes, 'Integration changes lack native write evidence')
         t.require('qa' in rows, 'Missing native QA worker')
         reviewer = rows['qa']
+        t.require(not any(not rel.startswith(proof.STATE + '/') for _, rel in reviewer['writes']),
+                  'QA edited product source')
+        if COPILOT_QA_RECOVERY in rows:
+            t.require(adapter == 'copilot-session-events-v1', 'Unsupported native QA replacement')
+            reviewer = rows[COPILOT_QA_RECOVERY]
+            expected = qa_packet(project, state, integrated)['message']
+            t.require(reviewer['start'] >= when and (reviewer['prompt'] == expected
+                      or reviewer['prompt'].startswith(expected + '\n\n')),
+                      'Replacement QA must receive the current integrated QA packet')
+            recovery = {'actor': reviewer['id'], 'previous_actor': reviewer['replacement']['previous_actor'],
+                        'unavailable_at': reviewer['replacement']['unavailable_at'].isoformat()}
         t.require(not reviewer.get('failed'), 'Native QA worker failed')
         t.require(reviewer['id'] not in {parent, *(v['id'] for v in builds.values())}, 'QA is not independent')
         if admission:
@@ -1257,6 +1522,8 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         assurance['plan_review'] = plan_review
     if admission:
         assurance['corporate_dispatch'] = admission
+    if recovery:
+        assurance['qa_recovery'] = recovery
     return assurance
 
 

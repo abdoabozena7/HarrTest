@@ -1,11 +1,21 @@
 # Changelog
 
-## 5.0.0
+## 5.0.0-rc.2 - preview
 
+- Require per-detail independent QA with fresh, hashed captures when a
+  schema-2 plan declares `integration.detail_review`. Missing or unverified
+  rows cannot pass. Older plans keep their evidence format.
+- Preserve rejected Corporate plans under the same enrolled goal and require
+  a fresh review of any revision. Check the draft without sealing it.
+- Retain exact requests and native follow-up provenance. Allow a read-only
+  QA replacement only after a recorded unavailable actor on reconnect.
+- Add the [two-chat trial](references/two-chat-trial.md) and actual gameplay
+  captures from the adaptive Luna/low development comparison.
 - Check the entire diff against the authorized file scope before running
   expensive independent QA. Identify changed sealed validation inputs by path.
 - Replay affected early exits and no-work paths when an optimization changes
   execution order. Preserve actual baseline bytes for comparison.
+- This preview is available for evaluation, not qualified as stable.
 
 ## 5.0.0-rc.1 — preview
 

@@ -47,13 +47,16 @@ outputs, state changes and boundary behavior rather than a successful demo.
 
 ## Independent intent challenge
 
-Give a separate native `intent_review` worker the original request, brief and
-supplied constraints before production. Reuse the current model and effort.
+Give a separate native reviewer the original request, brief and supplied
+constraints before production. For a schema-2 reviewed greenfield Team,
+the independent `plan_review` can record the intent challenge and scope
+verdict together. Otherwise use a separate `intent_review`. Reuse the current
+model and effort.
 Ask it to challenge missing meaning, generic quality claims, inconsistent
 interfaces and criteria that could pass while the requested result remains
 unfinished. It records specific observations in
-`.runtime-proof/quality-review.md` with accept/revise and reasons. This review
-does not implement product files or replace implementation workers.
+its private review record with accept/revise and reasons. This review does
+not implement product files or replace implementation workers.
 
 Require a counterexample challenge for every row: describe a plausible crude
 implementation that satisfies the words of the brief, then identify the exact
@@ -64,9 +67,11 @@ Retain the row-level challenge and resolution, not just an overall ACCEPT.
 
 Resolve its material findings, repeating that same review when needed. Do not
 ask the user to decide reversible design choices they already delegated. Once
-accepted, list both brief and review alongside supplied targets in the Team
-plan's `validation_context`. Their hashes and absolute paths then reach every
-producer, integrator and tester through the existing packet mechanism.
+accepted, bind the brief and supplied targets in the Team plan's
+`validation_context`. For a combined review the Team's approval receipt
+binds the review to the sealed brief; a prior separate review can also be
+included in `validation_context`. The immutable inputs reach producers,
+integration and QA through the existing packet mechanism.
 Retain revised briefs and rejected reviews as separate revisions. Once sealed,
 keep the accepted inputs unchanged during production and repair; a changed
 acceptance contract needs a newly declared attempt with the old evidence kept.
@@ -79,6 +84,10 @@ component output when it can run independently. Otherwise name the pending
 checks explicitly and close them at the first integrated checkpoint. Split a
 complex component into bounded subassemblies when that creates independently
 checkable deliverables; keep one owner per output and agreed interfaces.
+If another writer would fragment a coherent asset or invariant, leave it with
+its owner. A focused reviewer can inspect a different risk (for example
+visible wheel fit and motion, or rollback after a failed migration) without
+introducing a second writer or overloading the general QA pass.
 
 For a consequential visible component that can run in isolation, its owner
 renders a private preview and actually opens the captured image before handoff.
@@ -98,18 +107,21 @@ do not establish refinement of the requested primary artifact.
 
 ## Focused review of the actual draft
 
-Before visual acceptance, use a separate native `finish_review` worker with the
-current model/effort. Give it the accepted brief, actual draft captures and
-delivery scale. It opens the images before reading implementation descriptions;
-filenames and a producer's description are not visual evidence. Keep this task
-focused on workmanship while independent QA handles runtime and behavior.
-It may inspect already captured frames concurrently with other work, without
-launching a second browser during another worker's measurements.
+Before visual acceptance, run a focused workmanship pass separate from the
+runtime judgment. For a small scope the independent QA worker can do both
+passes. Assign a separate native `finish_review` worker when a complex asset
+or subtle risk merits that focus; reuse the current model/effort. Give the
+reviewer the accepted brief, actual draft captures and delivery scale. Open
+images before reading implementation descriptions; filenames and a producer's
+description are not visual evidence. A reviewer can inspect existing frames
+without launching a second browser during another worker's measurements.
 
-For every major component, it records recognition/function separately from
-finishing in `.runtime-proof/finishing-review.md`: the actual visible distinction
-from the minimum draft, evidence of the chosen finish, concrete defects and
-accept/revise. Inspect spatial and structural relationships, intentional form
+For every major component, record recognition/function separately from
+finishing: the actual visible distinction from the minimum draft, evidence of
+the chosen finish, concrete defects and accept/revise. Use the
+[Team detail review](production-teams.md#require-review-of-specific-details)
+when the plan declares those criteria, or `.runtime-proof/finishing-review.md`
+for a prose review. Inspect spatial and structural relationships, intentional form
 and surface cues, scale, joins/intersections, clipping, hierarchy and whether
 the primary result reads as an assembled placeholder. Do not infer finishing
 from the number of named parts or from an adjacent finished component.

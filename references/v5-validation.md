@@ -231,6 +231,145 @@ The fourth development pin also passed the full compatibility suite:
 542 tests ran with four skips and no failures. This establishes controller
 compatibility, not qualification of the Copilot output or of the release.
 
+### Guarded C# development after plan rejection
+
+The consumed studio-cue case exposed a pre-seal stall: a reviewer rejected
+one owner for two independently callable components, but the coordinator
+could not replace the rejected plan under the enrolled goal. The same-goal
+revision now retains the original request, baseline and rejected review,
+and requires a fresh native approval. R7 registered the corrected plan but
+changed wording in the copied dispatch, so the exact-message gate denied it.
+The short revision-bound dispatch let a new native reviewer retrieve the
+complete brief and approve the split. R6 and R7 remained unchanged at 5/10
+frozen executable checks. The first continuation also stopped before
+implementation; those outcomes are retained separately.
+
+The next continuation used the read-only draft preflight to catch incomplete
+request mappings and source bindings before review. The eventual independent
+coverage verdict was `covered`, with no unresolved findings, but that phase
+timed out before sealing. A separately bounded Luna/low continuation of the
+same reviewed draft sealed and admitted both native owners. They changed only
+`CueOrder.cs` and `CueCoverage.cs`, overlapped, and passed native Team QA.
+The frozen evaluator passed **10/10** checks on the unchanged evaluated bytes.
+
+The Corporate root still returned `ROOT_GOAL_UNVERIFIED`. The sealed child
+source-scope check raised a `NameError`, the report check embedded an incorrect
+baseline hash, and the original CLI/build receipts had not been refreshed on
+current source. No Corporate report was accepted. None of those failures
+were waived on the strength of the executable or Team result. The terminal
+continuation is in `output/v5-corporate/cue-build/`; its independent root replay
+has SHA-256 `69e4db578fb23f0462c601d9c14ece7052145dd6135d4f7071d0b2efa5e033dc`.
+
+The local candidate compatibility suite ran 551 tests, with four skips and
+no failures. This assisted development sequence is not a new held matrix.
+The original stable condition remains: all 96 declared slots independently
+reviewed on the exact candidate, zero V5 false accepts, and more complete-quality
+passes than either control.
+
+### Beacon Courier visual development
+
+The same small 3D driving task was given to GitHub Copilot GPT-6 Luna at
+**low** reasoning effort, with and without HarrTest. The task makes the
+quality of independent deliverables visible: the rover, road, environment,
+gate markings, drive state and HUD must work together on the real screen.
+The benchmark operator changed the harness, not the game source.
+
+Both arms received the same local Three.js and original product prompt.
+R2 and later share the expanded finishing brief. HarrTest was disabled
+in the plain arm; other normal skill discovery was not disabled. The staged
+HarrTest arm received an operator-supplied Team draft, and R3 onward are
+adaptive treatment replays, not new matched control runs.
+
+| Retained attempt | Plain Copilot | HarrTest 5 candidate |
+| --- | --- | --- |
+| R1, cold | App present; SDK idle timeout; no gate reached in 25 s | Timed out in intent review, no app |
+| R2, shared brief | App delivered; all three gates and restart observed | Timed out after intent review and Team registration, no app |
+| R3 | Not rerun | Reviewer rejected an unobservable blue-hour criterion |
+| R4 | Not rerun | Reviewer rejected grouping gate visuals with scenery |
+| R5 | Not rerun | Reviewer rejected grouping scenery with the route and asked for the HUD scope rationale |
+| R6 | Not rerun | Reviewer rejected unsupported six-wide dispatch and unclear integration ownership |
+| R7 | Not rerun | Reviewer accepted two-wide capacity and coordinator ownership, then rejected missing separate coastal scope |
+| R8 | Not rerun | Plan approved; six of seven owner handoffs completed before the deadline, no public entrypoint |
+| R8 continuation | Not rerun | Same native session finished seven handoffs and assembly. Native QA used hardware WebGL and recorded FAIL; separate software-WebGL observation passed its measured journey. |
+| R8 QA follow-up | Not rerun | Same parent reconnected but the host could not resume the original QA worker. No new QA verdict or product change. |
+| R8 QA recovery | Not rerun | One fresh native QA worker verified SwiftShader and completed both runs. Full Team replay passed on unchanged game source. |
+
+R3–R7 ended SDK turns, not app deliveries. R7 also attempted to submit a review
+over the existing 8,000-character limit before successfully recording its
+rejection. The next pin states that limit in the packet and reports actual
+and maximum lengths on rejection; the receipt and admission requirements did
+not change. A separate owner needs a concrete reason beyond what a focused check
+can establish. The coast revision distinguishes near built structures from
+independently authored water and shoreline; the wheel fit remains a focused
+quality check, not another write scope.
+
+R8 records seven separately checkable scopes, with up to two active
+implementation owners. The accepted plan left wheel geometry and animation
+with the rover owner and grouped HUD markup and CSS under one owner. Native
+rover/route, depot/coast, and gates/drive work overlapped. The first R8 phase
+timed out after **2,430.250 s** including shutdown handling. No coordinator
+assembly had been delivered. The same parent session resumed and delivered
+the HUD and current assembly in a separate **2,391.948 s** generation. An
+initial continuation setup failed before launching Copilot because the cold
+fixture expected a fresh scratch directory; the next setup used private
+continuation scratch without removing the retained previews. The original
+R8 working tree and pre-resume native journal were retained unchanged.
+An independent production-only replay passed on the continued source, with
+distinct native handoffs from seven Luna/low owners and evidence of overlap.
+That replay did not require a passing QA receipt and is not a full Team pass.
+
+The independent observer served the unchanged generated bytes over loopback
+in both arms: Edge 157.0.4341.60, 1440 × 900, DPR 1 and ANGLE SwiftShader.
+It observed gate counts `0 → 1 → 2 → 3` and finish in **23.661 s** in R2 plain
+and **7.053 s** in the R8 continuation, both within the requested 4–25 s.
+Braking reduced the visible speed from **7 to 5 m/s** and **8.2 to 3.7 m/s**,
+respectively. Both reset mid-run and drove again after resetting a finished run.
+No browser errors or blocked requests were captured by this observer. It did not
+measure a second complete finish, wheel motion continuity or comparable FPS.
+Different in-game pacing makes the completion times a task check, not a
+rendering-performance result.
+
+The native QA worker observed two completed runs on **hardware** WebGL and
+correctly withheld acceptance because it could not verify the required software
+renderer. The independent browser run does not replace that native QA receipt.
+The first read-only follow-up supplied the approved software launcher, but
+the host returned `Agent not found` for the previously completed QA actor
+after reconnect. That attempt still failed. The recovery replay used a new
+verifier pin and, after observing the native unavailability again, assigned
+the full current QA packet to one new Luna/low actor. The replacement verified
+SwiftShader on the active game canvas and observed finishes at **7.022 s**
+and **7.077 s** after the two starts. It checked mid-run reset, braking and
+out-of-order, reverse and out-of-lane gate boundaries. Its two failed wrapper
+runs and the scoped browser-default `/favicon.ico` 404 are retained. The
+original failed QA receipt and narrative remain in the history. The final
+native Team replay passed on byte-identical product source. This does not
+reclassify the earlier attempts or qualify Corporate.
+
+The [web validation guide](web-validation.md) checks the renderer on the
+real page before running the long journey. The recovery records are under
+`output/v5-corporate/luna-low-visual-pair-r8-qa-recovery/harrtest/`. The
+independent Team replay has SHA-256
+`225237eb816838673088c14154ad2ab88b313badf5a0d0164088ac4c70695e89`.
+
+The treatment frame shows clearer gate numbering, a distinct coast behind the
+near yard and more visible body and cabin detail, at the cost of a smaller,
+darker rover in the straight chase view. Fixed stills do not establish wheel
+animation quality. The R2 plain generation took **2,360.958 s** and reported
+**2.1344885 Copilot AI credits**. Generation time and assistance were not matched.
+
+The observations and unchanged PNGs are retained privately under
+`output/v5-corporate/luna-low-visual-pair-r2/plain/browser/` and
+`output/v5-corporate/luna-low-visual-pair-r8-continuation-r2/harrtest/browser/`.
+
+| Retained frame | `index.html` SHA-256 | Gameplay PNG SHA-256 |
+| --- | --- | --- |
+| [Without HarrTest](../visual/comparison/beacon-courier-plain.png) | `fa55a83221b9ce10dede90bcec01f1a269f887d81d69220970f3f4bb7b1ec9c4` | `256f074384dd3debce31bd4259c2d5f0e9d2fabe514afbcaa21916b8fe774b8d` |
+| [With HarrTest 5](../visual/comparison/beacon-courier-harrtest.png) | `7bc084279e9b322908c211206deda5526a3a56a0c04b697e8cb8786ec5424bd7` | `0183a414512b9d55e30d5a4c997aa45ac68c74d8028190a2232e35c875c75bb8` |
+
+All attempts, including the rejected reviews, stay in the local archive.
+This exercise does not count toward the held Corporate matrix or establish
+an expected gain on other tasks.
+
 ### Workflow development evidence
 
 The same frozen protocol retained a credit-validation attempt with seven passing

@@ -160,6 +160,29 @@ class CopilotGuardTests(unittest.TestCase):
         proof.save(goal / 'root-seal.json', {'example': 'Sealed but not admitted'})
         self.denied(self.event('task', {**args, 'prompt': current['message']}))
 
+    def test_rejected_plan_can_be_replaced_without_relaxing_admission(self):
+        data, goal, state = self.registered_team()
+        prior = fixture.team_v2.plan_review_packet(self.project, state)
+        evidence = fixture.team.plan_review_evidence(state)
+        (self.project / evidence).write_text('Two proven component responsibilities need distinct checks.',
+                                             encoding='utf-8')
+        fixture.team_v2.review_plan(self.project, state, evidence, 'fail')
+        revised = {**state['plan'], 'contract': state['plan']['contract'] + ' Check the public oracle directly.'}
+        packet = fixture.team_v2.revise_plan(self.project, revised)['plan_review']
+        args = {'name': 'plan_review', 'prompt': packet['message'], 'agent_type': 'general-purpose'}
+        self.denied(self.event('task', {**args, 'prompt': prior['message']}))
+        self.assertEqual(self.decide(self.event('task', args)), {})
+        self.denied(self.event())
+        self.denied(self.event('task', {**args, 'name': 'component'}))
+        current = fixture.team.load_state(self.project, self.goal)
+        fixture.corporate.scaffold(goal, 'verify', ['baseline'], 'calculator-owner')
+        data.fill_reviewed_draft(goal, current)
+        root = subprocess.run([sys.executable, '-B', str(fixture.ROOT / 'scripts/root_gate.py'),
+                               'seal', '--goal', str(goal)], capture_output=True, encoding='utf-8')
+        self.assertEqual(root.returncode, 0, root.stdout + root.stderr)
+        fixture.team.ready_packets(self.project, current)
+        self.assertEqual(self.decide(self.event()), {})
+
     def test_current_real_team_admission_and_stale_records(self):
         data, goal, state = self.registered_team()
         fixture.corporate.scaffold(goal, 'verify', ['baseline'], 'calculator-owner')

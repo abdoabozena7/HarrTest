@@ -10,7 +10,10 @@ for validation-only assembly. Optional task deletions/renames bind removed paths
 and before/after names. Current manifests retain absence evidence.
 
 Set `max_parallel_workers` to the planned width supported by the host's native
-dispatch and known limits. Serial independent scopes need `execution_rationale`
+dispatch and known limits. When only a smaller width is evidenced, run the
+ready owners in waves; the number of owners need not equal simultaneous slots.
+The coordinator consumes the handoffs and owns only the integration outputs.
+Serial independent scopes need `execution_rationale`
 with a documented host cap, rejected simultaneous dispatch or another observed
 constraint. Native overlap is checked after dispatch. A narrow one-owner change
 can integrate with no coordinator-owned output.
@@ -28,6 +31,61 @@ See [Corporate workflow](corporate-workflow.md) for the root quality contract.
 
 Team receipts establish scopes, lifecycle and recorded process results. Review
 the meaning of the six-layer QA evidence against the task's actual requirements.
+
+### Require review of specific details
+
+For visual work, and for important nonvisual details that a generic PASS
+could hide, declare stable IDs and observable criteria in the schema-2 plan:
+
+```json
+{
+  "detail_review": {
+    "wheel_fit": "Inspect the near wheel and hub in idle and steered gameplay; neither hub may float or clip through its mount.",
+    "wheel_motion": "Compare consecutive gameplay frames or a short clip: the wheel rolls while the vehicle moves and stops rolling at rest."
+  }
+}
+```
+
+Put this object inside `integration`, alongside `check` and `outputs`.
+Map all consequential details from the [finishing brief](quality-intent.md)
+before registration. A single ID should not let one good feature hide another
+unchecked detail. The plan reviewer challenges what's missing before production.
+For a service, the same structure could require a captured state comparison
+after a failed migration, separately from the successful migration.
+
+The independent QA worker uses the returned `check` command to run the real
+journey. For a plan with detail review, the command supplies a fresh
+`PROVE_IT_OUTPUT_DIR`; write the observations there as flat files. The check
+receipt lists their digests as `detail_artifacts`. Open the actual captures in
+the sibling directory named after the retained `check-*.json` file without
+its `.json` suffix. Then use `review` with the returned `qa-evidence.json` path:
+
+```json
+{
+  "check_sha256": "<current check receipt sha256>",
+  "observations": "<concrete runtime and quality layer findings>",
+  "details": {
+    "wheel_fit": {
+      "verdict": "pass",
+      "observation": "<what is visible in each inspected state>",
+      "artifacts": ["idle.png", "steered.png"]
+    },
+    "wheel_motion": {
+      "verdict": "pass",
+      "observation": "<what the rolling and stopped samples show>",
+      "artifacts": ["wheel-motion.webm"]
+    }
+  }
+}
+```
+
+Use `fail` or `unverified` for a detail not demonstrated; submit the overall
+review as `fail` and retain the evidence. A passing review requires exactly
+the sealed IDs, a concrete PASS per detail and at least one captured artifact
+from the current check per row. Reintegrate and recapture after repairs.
+The verifier checks coverage, evidence identity and native QA attribution.
+It cannot tell whether an image really shows the claimed detail; QA must
+inspect it. Plans without `detail_review` keep their existing receipt format.
 
 ### Minimal existing-change sequence
 
@@ -57,11 +115,23 @@ QA runs the relevant old and new checks and records all six quality layer verdic
 The template defaults to `decomposition: reviewed-v1`. Define each implementation
 responsibility, existing interface, independent check and `scope_evidence`.
 Evidence paths must refer to existing owned files or unchanged validation
-inputs. One responsibility can span several files when `scope_rationale`
-explains which contract ties them together. Give truly separate responsibilities
-their own owners. For each `depends_on` entry, record what needed result makes
+inputs. Multiple files may belong to one coherent artifact: explain the
+shared contract in its responsibility or brief. Use the plan's `scope_rationale`
+when the entire change has one implementation owner. Give truly separate
+responsibilities their own owners. For each `depends_on` entry, record what needed result makes
 the dependency necessary in `dependency_rationale`. Use independent owners in
 parallel when worker capacity allows.
+
+For a new product, set `kind: greenfield`, seal the proposed finishing brief
+in `validation_context`, and use those immutable inputs for `scope_evidence`.
+The independent `plan_review` records both the intent counterexamples and
+the decomposition verdict before dispatch. Start before owned paths exist.
+Challenge the smallest meaningful split inside each major scope: an
+independently inspectable vehicle asset, course, and interaction state can
+have distinct owners. Explain what the separate handoff adds over a focused
+check. A wheel that shares geometry and transforms with the vehicle can stay
+with that owner; its fit or motion can go to a detail reviewer. Apply the same
+distinction to migration, API and recovery work.
 
 For substantial work, set `root_protocol` to `corporate-v1` in the Team plan.
 After the plan review passes, seal the schema-4 Corporate root with the same ID
@@ -83,13 +153,15 @@ python <skill>/scripts/team.py --project . init --plan .runtime-proof/team-plan.
 For `reviewed-v1`, dispatch the returned `plan_review` packet to a native
 `plan_review` worker separate from implementation and QA. It needs command
 execution and private evidence writes. In Copilot, use an available
-`general-purpose` agent if the built-in `task` worker restricts writes. The
-reviewer inspects the source and records its verdict on owner boundaries with
-the packet's exact `review-plan` command and evidence path. Save the evidence,
-then run the review command separately. Wait for the reviewer to finish. A failed review
-stays with the sealed plan. Use a new team ID and a fresh native `plan_review`
-actor for the corrected plan before editing product files. After a passing
-review, retrieve the packets:
+`general-purpose` agent if the built-in `task` worker restricts writes.
+The reviewer records concise source-backed findings in the packet's evidence
+path, within the printed character limit. Then run its exact `review-plan`
+command separately and wait for the reviewer to finish. A failed review stays
+with its registered plan. Before editing product files, use a fresh native
+`plan_review` actor for the corrected plan. For an enrolled Copilot Corporate
+goal, use `revise-plan` as described in the [Corporate guide](corporate-workflow.md#root-and-plan).
+Other paths use a new Team ID. After a passing review (and Corporate sealing
+when applicable), retrieve the packets:
 
 ```text
 python <skill>/scripts/team.py --project . packets --team mission
@@ -170,8 +242,14 @@ message as steering during a resumed interaction. The verifier binds that
 delivery to the original parent send and the receiving turn, and still
 requires the resumed interaction to finish.
 In Codex, use `followup_task` for
-the original worker. If the host cannot resume the actor, keep native acceptance
-unverified and record the limitation.
+the original worker. If Copilot reconnects and native `write_agent` reports
+that the completed QA actor was not found, keep the old review and dispatch
+one new read-only actor named `qa-recovery` with the full current integration
+QA packet. That actor must run the current finite check and write its own
+review. The verifier binds the replacement to the observed reconnect,
+unavailable original actor and current integration. This does not replace an
+implementation owner or turn an old failed check into a pass. For other
+unsupported or unobserved recovery paths, keep acceptance unverified.
 
 When `HARRTEST_PARENT_SESSION_ID` is available, `verify --team mission` can select
 that session directly. Invoke Python commands with `-B` to avoid writing import

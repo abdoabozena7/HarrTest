@@ -13,6 +13,14 @@ architecture records and tests. Resolve meaning from controlling contracts first
 ask only about unanswered material choices. Cite exact source versions/excerpts.
 Archive needed evidence privately before changes, retaining its original authority.
 
+Before drafting proof contracts, make a short inventory of the affected public
+operations and preservation obligations. For each, record the observable
+assertion and the input or state that could disprove it. Include a separate
+unchanged operation if it has different evaluation rules. When the contract
+preserves input, ordering, or object identity, inspect that invariant directly;
+a projected CLI response may hide it. Combine checks that share a meaningful
+oracle, but do not assume one happy path covers the inventory.
+
 Register proof children with `proof.py` contracts. Define preserved-behavior and
 requested-change checks with independent oracles, and run baseline checks now.
 Keep their original `runs/.../receipt.json` references. Known baseline failures
@@ -35,6 +43,13 @@ Helper outputs are inputs, not acceptance verdicts. Baseline executions precede
 plan creation and sealing. The seal requires current source still match baseline;
 a post-change snapshot must never be relabeled baseline.
 
+Run the new verifier commands on the baseline before sealing. A check for
+the requested change may fail there for the expected behavioral reason.
+A crash in the checker or a mismatch with the captured baseline is a verifier
+defect, not a useful negative result. Read file digests from the recorded
+baseline rather than transcribing them. Preserve the baseline receipts and
+rerun the preservation commands on the integrated source for current receipts.
+
 ## Root and plan
 
 Register Team schema 2 with `decomposition: "reviewed-v1"` and
@@ -50,11 +65,30 @@ The registered Team state retains the saved request, including trailing whitespa
 When the host enrolls a goal by setting `HARRTEST_CORPORATE_GOAL`, its matching
 Team uses that binding even if the command omits the flag. Reuse a host-supplied
 request snapshot; do not reconstruct it from agent prose or change its whitespace.
+Use project-relative paths with forward slashes even on Windows, at most eight
+immutable validation files, and owner IDs such as `data_model`.
 `root_gate.py init` preserves the input bytes. Repeating it with the same
 saved request is safe; it neither replaces the snapshot nor clears existing drafts.
-The input plan file remains available as the draft. When the integration proof
-contract is sealed and the actual baseline checks have run, create the Corporate
-drafts from those records.
+Dispatch the exact returned `plan_review` packet and wait for the reviewer to
+finish before scaffolding. If Copilot rejects the registered plan, correct its
+draft and keep the same goal ID:
+
+```text
+python <skill>/scripts/team.py --project . revise-plan --plan .runtime-proof/team-plan-r2.json
+```
+
+This keeps the exact request, unchanged baseline and previous review. It returns
+a short, exact dispatch message for a new `plan_review` worker. That worker
+runs the listed `review-brief` command to get the complete criteria and verdict
+command for that revision. `review-brief` also returns the exact dispatch packet
+if the coordinator needs to retrieve it again. Native replay still checks for
+pre-edit writes in rejected revisions. The revision cannot
+replace a passed or admitted plan. If unsealed Corporate drafts already exist,
+archive them first rather than binding old coverage to new ownership. Keep the
+original request and reusable baseline receipts in place.
+
+After Team review passes and the sealed integration proof contract has actual
+baseline check receipts, create the Corporate drafts from those records.
 
 ```text
 python <skill>/scripts/corporate.py scaffold --goal .runtime-proof/root-goals/mission --proof-task verify --baseline-check preserved-behavior --author coordinating-planner
@@ -69,14 +103,27 @@ mapping if the independently reviewed request requires additional requirements.
 The [schema4 template](../assets/templates/root-contract-v4.json) also supports
 manual authoring. Each attempt keeps its own original request and artifacts.
 
-After completing the draft, use `corporate.py coverage-packet --goal` for the
-independent reviewer. The packet binds the current request, span and acceptance
-hashes. Dispatch its `task_name` and `message` exactly. Have the reviewer inspect
-the actual request, scope and span mapping and write
+Before calling a reviewer, run the read-only draft preflight:
+
+```text
+python <skill>/scripts/root_gate.py check-draft --goal .runtime-proof/root-goals/mission
+```
+
+It checks request mappings, citations, baseline, ownership and proof selectors.
+It does not seal the root or substitute for semantic review. If a reviewed
+gap requires a new proof contract, retain the sealed child and its receipts.
+Use `proof.py init --detached` for the new child, then update the unsealed draft
+to bind its actual checks and matching baseline.
+
+Use `corporate.py coverage-packet --goal` for the independent reviewer.
+The packet binds the current request, span and acceptance
+hashes. Put the observable checks in those bound requirements or integration
+scope, not only in the planner's notes. Dispatch its `task_name` and `message`
+exactly. Have the reviewer inspect the actual request, scope and span mapping and write
 `coverage-review.json` in the goal directory. The artifact includes those
 hashes, `method`, `planner`, `reviewer`, `unresolved_findings`, `verdict` and
 concrete `observations`. Then run `corporate.py bind-coverage --goal` to link
-that artifact. Run the returned Team plan review packet before sealing too.
+that artifact. The root seal needs both this coverage and the current Team plan review.
 
 The root and Team bindings have the following shape.
 

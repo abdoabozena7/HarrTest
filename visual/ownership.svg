@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="276" viewBox="0 0 900 276" role="img" aria-labelledby="title description">
+  <title id="title">Split work by deliverable, not agent count</title>
+  <desc id="description">One production owner per separately checkable deliverable. A focused reviewer can inspect quality within a coherent deliverable without becoming a second writer. The game and service examples use the same rule.</desc>
+  <rect x=".5" y=".5" width="899" height="275" rx="14" fill="#fbf8ef" stroke="#ded0ae"/>
+  <g fill="#242019" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+    <text x="32" y="46" font-size="29" font-weight="700">Split work by deliverable, not agent count</text>
+    <path d="M32 63h836m0 112H32" fill="none" stroke="#d7c6a0"/>
+    <path d="M129 82v174m388-174v174" fill="none" stroke="#ded0ae"/>
+    <g font-size="16" font-weight="650">
+      <text x="151" y="96" fill="#684710">Independent implementation</text>
+      <text x="539" y="96" fill="#285346">Focused review, no edits</text>
+    </g>
+    <g font-size="18" font-weight="700">
+      <text x="32" y="144">3D game</text>
+      <text x="32" y="223">Service</text>
+      <text x="151" y="138">Vehicle asset / course / driving state</text>
+      <text x="539" y="138">Wheel fit and motion</text>
+      <text x="151" y="217">Migration / consuming service</text>
+      <text x="539" y="217">Data integrity on rollback</text>
+    </g>
+    <g font-size="15" fill="#66563b">
+      <text x="151" y="159">Each has its own output, interface and check.</text>
+      <text x="539" y="159">The vehicle owner still owns all geometry.</text>
+      <text x="151" y="238">Separate where the schema contract permits.</text>
+      <text x="539" y="238">Rehearse failure on disposable data.</text>
+    </g>
+  </g>
+</svg>

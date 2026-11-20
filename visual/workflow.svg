@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="258" viewBox="0 0 900 258" role="img" aria-labelledby="title description">
+  <title id="title">How HarrTest verifies a change</title>
+  <desc id="description">A request and its baseline are scoped, independent owners work in parallel, changes are integrated, and a separate reviewer checks the current result. A failed check sends the finding back to its owner.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M1 1l8 4-8 4z" fill="#80602c"/>
+    </marker>
+  </defs>
+  <rect x=".5" y=".5" width="899" height="257" rx="14" fill="#fbf8ef" stroke="#ded0ae"/>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="#242019">
+    <text x="32" y="46" font-size="29" font-weight="700">How HarrTest verifies a change</text>
+    <path d="M32 63h836" stroke="#d7c6a0"/>
+
+    <g fill="#f3e5c4" stroke="#be9d5d">
+      <rect x="32" y="108" width="143" height="54" rx="8"/>
+      <rect x="233" y="79" width="144" height="42" rx="7"/>
+      <rect x="233" y="150" width="144" height="42" rx="7"/>
+      <rect x="437" y="108" width="122" height="54" rx="8"/>
+    </g>
+    <rect x="611" y="108" width="115" height="54" rx="8" fill="#e1efe8" stroke="#6b947f"/>
+    <rect x="770" y="108" width="98" height="54" rx="8" fill="#193e34"/>
+
+    <g fill="none" stroke="#80602c" stroke-width="2" marker-end="url(#arrow)">
+      <path d="M176 135h26v-35h27"/>
+      <path d="M202 135v36h27"/>
+      <path d="M378 100h27v35h28"/>
+      <path d="M378 171h27v-36"/>
+      <path d="M560 135h47"/>
+      <path d="M727 135h39"/>
+      <path d="M669 163v62H305v-29" stroke-dasharray="5 5"/>
+    </g>
+
+    <g font-size="17" font-weight="650" text-anchor="middle">
+      <text x="103" y="131">Seal the scope</text>
+      <text x="305" y="106">Owner A</text>
+      <text x="305" y="177">Owner B</text>
+      <text x="498" y="131">Integrate</text>
+      <text x="668" y="131">Separate QA</text>
+      <text x="819" y="131" fill="#fcf8ed">Verify</text>
+    </g>
+    <g font-size="13" text-anchor="middle">
+      <text x="103" y="150" fill="#624d2c">Intent + baseline</text>
+      <text x="498" y="150" fill="#624d2c">Current outputs</text>
+      <text x="668" y="150" fill="#325648">Real user path</text>
+      <text x="819" y="150" fill="#cae8dc">Latest proof</text>
+      <rect x="390" y="211" width="211" height="25" rx="4" fill="#fbf8ef"/>
+      <text x="495" y="230" fill="#624d2c">Send a failed check to its owner</text>
+    </g>
+  </g>
+</svg>

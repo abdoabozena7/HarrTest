@@ -26,6 +26,7 @@ PATCH_PATH = re.compile(r'^\*\*\* (?:Add|Update|Delete|Move to) (?:File: )?([^\r
 EXEC_PATCH = re.compile(r'\A\s*(?:const\s+([A-Za-z_$][\w$]*)\s*=\s*|text\s*\(\s*)'
                         r'await\s+tools\.apply_patch\s*\(\s*')
 RECEIPT = 'HARRTEST_TEAM_RECEIPT '
+MAX_PACKET_CHARS = 8_000
 MAX_ROLLOUT_BYTES = 32 * 1024 * 1024
 MAX_VALIDATION_FILES = 8
 MAX_VALIDATION_FILE_BYTES = 64 * 1024
@@ -56,7 +57,8 @@ def team_path(project, team_id, suffix='state.json', *, must_exist=True):
 
 def concrete(value, label):
     proof.meaningful(value, label)
-    require(len(value) <= 8000, f'{label} is too long for a focused packet')
+    require(len(value) <= MAX_PACKET_CHARS,
+            f'{label} is too long for a focused packet ({len(value)}/{MAX_PACKET_CHARS} characters)')
 
 
 def file_list(project, values, label):
@@ -282,7 +284,19 @@ def packet(project, state, task):
 
 
 def receipt_path(project, state, tid):
+    if tid == 'plan_review':
+        tid += plan_review_suffix(state)
     return team_path(project, state['plan']['id'], f'receipts/{tid}.json', must_exist=False)
+
+
+def plan_review_suffix(state):
+    revision = state.get('revision', 1)
+    require(type(revision) is int and revision >= 1, 'Invalid Team review revision')
+    return f'-r{revision}' if revision > 1 else ''
+
+
+def plan_review_evidence(state):
+    return f'{proof.STATE}/teams/{state["plan"]["id"]}/plan-review{plan_review_suffix(state)}.txt'
 
 
 def current_receipt(project, state, tid):
@@ -559,6 +573,9 @@ def review(project, state, evidence, verdict):
         with destination.open('xb') as saved:
             saved.write(path.read_bytes())
     require(proof.file_hash(destination) == digest, 'Retained QA evidence changed')
+    if verdict == 'pass' and state['plan'].get('schema') == 2 and state['plan']['integration'].get('detail_review'):
+        import team_v2
+        team_v2.verify_detail_review(project, state, check, destination)
     return record(project, state, 'qa', {retained: digest}, evidence_source=evidence,
                   integration=integrated['sha256'], check=check.get('sha256'), verdict=verdict)
 
@@ -764,7 +781,7 @@ def team_command(command):
     return actual
 
 
-def plan_review_command(command, project, team_id, *, cwd=None, engine=None):
+def plan_review_command(command, project, team_id, *, cwd=None, engine=None, evidence=None):
     """Match the pinned review invocation and its observed literal evidence-write prefix."""
     if not isinstance(command, str):
         return False
@@ -781,7 +798,7 @@ def plan_review_command(command, project, team_id, *, cwd=None, engine=None):
     lexer.whitespace_split, lexer.commenters, lexer.escape = True, '', ''
     try:
         words = list(lexer)
-        evidence = f'{proof.STATE}/teams/{team_id}/plan-review.txt'
+        evidence = evidence or f'{proof.STATE}/teams/{team_id}/plan-review.txt'
         if prefix:
             if (len(words) < 7 or [word.lower() for word in words[:4]] != ['|', 'set-content', '-encoding', 'utf8']
                     or words[4].replace('\\', '/') != evidence or words[5] != ';'):
@@ -1216,7 +1233,7 @@ def verify_registered(project, team_id, *, require_qa=True, parent=None, session
         time.sleep(min(0.2, remaining))
 
 
-def request_from_root(project, plan):
+def request_from_root(project, plan, *, revising=False):
     """Bind an unregistered Corporate plan to its existing original request."""
     from root_gate import ROOT_DIR
 
@@ -1225,8 +1242,9 @@ def request_from_root(project, plan):
             '--request-from-root requires a reviewed Corporate Team schema 2 plan')
     team_id = plan.get('id')
     proof.identifier(team_id, 'Corporate Team and root goal ID')
-    require(not team_path(project, team_id, must_exist=False).exists(),
-            'The Team plan is already registered. Continue with its existing state.')
+    if not revising:
+        require(not team_path(project, team_id, must_exist=False).exists(),
+                'The Team plan is already registered. Continue with its existing state.')
     root = strict_io.scoped_path(project, f'{proof.STATE}/{ROOT_DIR}/{team_id}')
     seal = strict_io.scoped_path(root, 'root-seal.json', must_exist=False)
     require(not seal.exists(), 'The Corporate root is already sealed. Keep its bound Team state.')
@@ -1248,6 +1266,11 @@ def main(argv=None):
     initialize.add_argument('--plan', required=True)
     initialize.add_argument('--request-from-root', action='store_true',
                             help='Copy the saved original request into a new reviewed Corporate Team plan')
+    commands.add_parser('revise-plan', help='Replace a rejected pre-seal Copilot Corporate plan').add_argument(
+        '--plan', required=True)
+    brief = commands.add_parser('review-brief', help='Read the current revised Team review instructions')
+    brief.add_argument('--team', required=True)
+    brief.add_argument('--revision', type=int, required=True)
     for action in ('packets', 'handoff', 'integrate', 'check', 'review', 'repair', 'verify', 'review-plan'):
         command = commands.add_parser(action)
         command.add_argument('--team', required=True)
@@ -1270,7 +1293,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     project = args.project.resolve()
     try:
-        if args.command == 'init':
+        if args.command == 'revise-plan':
+            import team_v2
+            result = team_v2.revise_plan(project, proof.load(strict_io.scoped_path(project, args.plan)))
+        elif args.command == 'init':
             plan = proof.load(strict_io.scoped_path(project, args.plan))
             enrolled_goal = os.environ.get('HARRTEST_CORPORATE_GOAL')
             enrolled = bool(enrolled_goal and isinstance(plan, dict) and plan.get('id') == enrolled_goal)
@@ -1292,6 +1318,12 @@ def main(argv=None):
             tasks = {row['id']: row for row in state['plan']['tasks']}
             if args.command == 'packets':
                 result = {'ready': ready_packets(project, state)}
+            elif args.command == 'review-brief':
+                import team_v2
+                require('revision' in state and args.revision == state['revision'],
+                        'Review the current Team plan revision')
+                result = {'message': team_v2.plan_review_brief(project, state)['message'],
+                          'dispatch': team_v2.plan_review_packet(project, state)}
             elif args.command == 'handoff':
                 result = handoff(project, state, tasks[args.task])
             elif args.command == 'integrate':
@@ -1306,6 +1338,9 @@ def main(argv=None):
                 import team_v2
                 result = team_v2.review_plan(project, state, args.evidence, args.verdict)
                 result = {**result, 'passed': args.verdict == 'pass'}
+                if args.verdict == 'fail' and team_v2.copilot_corporate_plan(state['plan']):
+                    result['next'] = ('Wait for the reviewer to finish. Use revise-plan --plan PATH for a corrected '
+                                      'plan with the same goal ID, then dispatch its new plan_review packet.')
             else:
                 result = review(project, state, args.evidence, args.verdict)
                 if args.verdict == 'fail':

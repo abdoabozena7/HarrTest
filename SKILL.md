@@ -12,16 +12,36 @@ the coordinator within its integration scope. For substantial work, complete
 the [Corporate pre-dispatch seal](references/corporate-workflow.md) first.
 When the plan, seal, or native worker capability is missing, keep that work
 unverified and continue with authorized discovery and setup.
-For a bounded change with one settled responsibility, use the minimal Team
-schema-2 path: one owner, integration and independent QA. Do not add a Corporate
-root, extra reviewers, or extra project files unless the task needs them.
 When the host explicitly supplies `HARRTEST_CORPORATE_GOAL`, use that goal ID
 for the reviewed Team and Corporate root. Reuse its original request snapshot
 if the host already supplied one; otherwise save the exact request before
 registering the Team. Omit `request` in the Team draft and run
-`team.py init --request-from-root`. Dispatch
-the exact Team plan review and `corporate.py coverage-packet` messages as separate
-tasks. Complete the root seal before dispatching implementation or editing.
+`team.py init --request-from-root`. First dispatch the exact Team `plan_review`
+packet as a separate task. If the reviewer rejects the plan, wait for the worker
+to finish and use `team.py revise-plan --plan PATH` with a corrected draft and
+the same goal ID. Repeat the review before scaffolding the Corporate draft.
+Before drafting the proof, inventory affected public operations and
+observable preservation obligations from the existing contracts. Include them
+in the [coverage review](references/corporate-workflow.md#before-editing) even
+when the changed happy path does not exercise them. Run `root_gate.py check-draft`
+on the unsealed draft before asking for independent coverage. Send the exact
+`corporate.py coverage-packet` to a separate reviewer. Complete the root seal
+before dispatching implementation or editing. Without enrollment, a bounded
+change with one settled responsibility can use the minimal Team schema-2 path:
+one owner, integration and independent QA. Do not add extra gates without cause.
+
+For a new product, use a `kind: greenfield` Team with reviewed decomposition
+instead of the existing-code Corporate baseline. Seal the intended behavior,
+interfaces and [finishing criteria](references/quality-intent.md) before product
+edits. Bind the proposed brief in `validation_context` and have the independent
+`plan_review` challenge both the finishing criteria and owner boundaries in
+one pass. Resolve actual findings before dispatch, not in product QA.
+If the output is visual, seal the consequential details as IDs in the Team's
+`integration.detail_review`. Require evidence for each ID from the independent
+QA check, in addition to the integrated user journey. Review the real output
+at delivery scale; an omitted detail, stale capture or unverified state is not
+a pass. Use the same mechanism for consequential nonvisual detail when a
+generic acceptance result could hide a missing check.
 
 ## Start from the project
 
@@ -84,8 +104,17 @@ by their assigned product changes and actual handoffs.
 Use native workers for independently deliverable implementation scopes. Dispatch
 ready independent tasks together; dependent tasks wait for current handoffs.
 A narrow change has one implementation owner and an independent tester.
-Do not invent parallel work or extra files to satisfy a worker count. Split a
-complex scope further only when its deliverables can be independently checked.
+At each major component, test the nearest viable split again: can the proposed
+part ship its own artifact through a stable interface, change disjoint files,
+and be checked on its own? If yes, give it an implementation owner. If it shares
+a write path or invariant, keep ownership together; use a focused reviewer
+when the part has a materially different quality risk. Do not invent extra
+files or count a reviewer as an implementation owner.
+For example, a vehicle asset can be owned separately from a course and its
+driving state. Wheels tied to the vehicle model can stay with that owner while a
+reviewer checks their actual geometry, alignment and motion. In a service, a
+replayable migration and a consumer can have separate owners; a data invariant
+that spans both still needs an independent integration check.
 Reuse the active model and effort unless the user selected otherwise.
 Pass those values explicitly to every native worker call when the host exposes
 them, including built-in testing/review agents: a built-in agent can have a
@@ -121,7 +150,9 @@ Use only the description for a friendlier label. The returned testing name is
 `qa`. Choose a worker allowed to run checks and save private proof artifacts.
 Keep its product scope read-only. If a built-in reviewer forbids all writes,
 use another permitted worker type with the same `qa` name. Verify the current
-native Team after the testing worker completes.
+native Team after the testing worker completes. If the original Copilot QA
+actor is unavailable after reconnecting, follow the limited recovery sequence
+in the [Team guide](references/production-teams.md#repair-and-review-again).
 
 ## Assess all quality layers
 

@@ -69,6 +69,8 @@ def product_target(project, cwd, value):
 
 def admission_is_current(project, goal):
     """Compare bounded records issued by Team packets against their current files."""
+    import team
+
     team_dir = f'{proof.STATE}/teams/{goal}'
     goal_dir = f'{proof.STATE}/root-goals/{goal}'
 
@@ -90,7 +92,8 @@ def admission_is_current(project, goal):
             or plan['id'] != goal or plan['schema'] != 2 or plan.get('host', {}).get('kind') != 'copilot'
             or plan.get('decomposition') != 'reviewed-v1' or plan.get('root_protocol') != corporate.PROTOCOL):
         return False
-    review, review_digest = bound_record(f'{team_dir}/receipts/plan_review.json')
+    review_path = team.receipt_path(project, state, 'plan_review').relative_to(project).as_posix()
+    review, review_digest = bound_record(review_path)
     if (review['id'] != 'plan_review' or review['verdict'] != 'pass' or review['state'] != state_digest
             or review['plan'] != state['plan_sha256'] or len(review['files']) != 1):
         return False

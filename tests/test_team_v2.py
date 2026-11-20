@@ -82,7 +82,7 @@ class ExistingCodeTeam(unittest.TestCase):
         return owner, integrated, check, review, packet
 
     def review_plan(self, verdict='pass'):
-        evidence = '.runtime-proof/teams/fix/plan-review.txt'
+        evidence = team.plan_review_evidence(self.state)
         self.write(evidence, 'calc.py defines add and has one scope; the preserved public integer function is checked.')
         return team_v2.review_plan(self.project, self.state, evidence, verdict)
 
@@ -140,6 +140,24 @@ class ExistingCodeTeam(unittest.TestCase):
         self.plan['tasks'][1]['dependency_rationale'] = {
             'arithmetic': 'The consumer requires the corrected function result before its binding can be tested.'}
         self.assertEqual(self.start()['plan_review']['task_name'], 'plan_review')
+
+    def test_greenfield_review_challenges_component_splits_before_dispatch(self):
+        reviewed_plan(self.plan)
+        self.plan['kind'] = 'greenfield'
+        self.plan['tasks'][0]['outputs'] = ['new_component.py']
+        self.plan['tasks'][0]['scope_evidence'] = ['intent.txt']
+        self.plan['validation_context'] = ['intent.txt']
+        self.write('intent.txt', 'The new component exposes a bounded interface and a standalone check.')
+        packet = self.start()['plan_review']
+        self.assertIn('nearest viable split within each major scope', packet['message'])
+        self.assertIn('disjoint writes, a stable interface', packet['message'])
+        self.assertIn('what a handoff would add beyond a focused check', packet['message'])
+        self.assertIn('A reviewer is not an implementation owner.', packet['message'])
+        self.assertIn('The coordinator owns integration', packet['message'])
+        self.assertIn('the evidenced width; run bounded waves', packet['message'])
+        self.assertIn('plausible unfinished result', packet['message'])
+        self.assertIn('Return fail for any unresolved gap', packet['message'])
+        self.assertEqual(team.ready_packets(self.project, self.state), [])
 
     def test_reviewed_plan_uses_cli_receipt_to_unlock_owner_packets(self):
         reviewed_plan(self.plan)
@@ -257,6 +275,22 @@ class ExistingCodeTeam(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'before any product edit'):
             team_v2.review_plan(self.project, state, '.runtime-proof/teams/late/plan-review.txt', 'pass')
 
+    def test_plan_review_discloses_size_limit_before_declining_receipt(self):
+        reviewed_plan(self.plan)
+        packet = self.start()['plan_review']
+        self.assertIn('at most 8000 characters', packet['message'])
+        evidence = '.runtime-proof/teams/fix/plan-review.txt'
+        observations = 'Source and interface support the scope. ' * 210
+        self.write(evidence, observations[:8001])
+        with self.assertRaisesRegex(ValueError, r'8001/8000 characters'):
+            team_v2.review_plan(self.project, self.state, evidence, 'pass')
+        self.assertEqual(team.ready_packets(self.project, self.state), [])
+
+        self.write(evidence, observations[:8000])
+        approval = team_v2.review_plan(self.project, self.state, evidence, 'pass')
+        self.assertEqual(approval['verdict'], 'pass')
+        self.assertTrue(team.ready_packets(self.project, self.state))
+
     def test_source_change_invalidates_qa_even_with_unchanged_narrative(self):
         self.complete()
         self.write('calc.py', 'def add(a,b): return a-b\n')
@@ -358,6 +392,76 @@ class ExistingCodeTeam(unittest.TestCase):
         self.write('.runtime-proof/teams/fix/qa.txt', 'Another review may not overwrite the original immutable observed evidence.')
         self.assertEqual((self.project / retained).read_bytes(), before)
         self.assertEqual(team.current_receipt(self.project, self.state, 'qa')['sha256'], review['sha256'])
+
+    def test_detail_review_requires_each_current_observation_before_qa_pass(self):
+        self.plan['integration']['detail_review'] = {
+            'signed-result': 'Observe that a representative signed sum retains its sign.',
+            'zero-boundary': 'Check that zero preserves the other operand exactly.',
+        }
+        self.start()
+        self.implement()
+        _, packet = team.integrate(self.project, self.state)
+        self.assertIn('zero-boundary: Check that zero', packet['message'])
+        self.assertIn('qa-evidence.json', packet['message'])
+        script = (
+            'from calc import add\n'
+            'import json, os\nfrom pathlib import Path\n'
+            'observed = {"signed": add(-7, 5), "zero": add(0, 7)}\n'
+            'assert observed == {"signed": -2, "zero": 7}\n'
+            '(Path(os.environ["PROVE_IT_OUTPUT_DIR"]) / "results.json").write_text(json.dumps(observed))'
+        )
+        command = [sys.executable, '-B', '-c', script]
+        check = team.runtime_check(self.project, self.state, command)
+        self.assertEqual(check['exit_code'], 0)
+        evidence = '.runtime-proof/teams/fix/qa-evidence.json'
+        detail = {'verdict': 'pass', 'observation': 'Measured the signed sum as negative two.',
+                  'artifacts': ['results.json']}
+        report = {'check_sha256': check['sha256'], 'observations': 'Observed both public arithmetic boundaries.',
+                  'details': {'signed-result': detail}}
+
+        def review():
+            self.write(evidence, json.dumps(report))
+            return team.review(self.project, self.state, evidence, 'pass')
+
+        with self.assertRaisesRegex(ValueError, 'missing zero-boundary'):
+            review()
+        report['details']['zero-boundary'] = {**detail, 'verdict': 'unverified'}
+        with self.assertRaisesRegex(ValueError, 'zero-boundary: detail review is not passed'):
+            review()
+        report['details']['zero-boundary'] = {**detail, 'observation': 'Zero retained the other operand.',
+                                              'artifacts': ['unrecorded.json']}
+        with self.assertRaisesRegex(ValueError, 'cite artifacts from the current QA check'):
+            review()
+        report['details']['zero-boundary']['artifacts'] = ['results.json']
+        self.assertEqual(review()['verdict'], 'pass')
+        team_v2.verify_structural(self.project, self.state, True)
+
+        capture = self.project / next(iter(check['files'])).removesuffix('.json') / 'results.json'
+        capture.write_text('{"signed": 2}', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'captures are absent or changed'):
+            team_v2.verify_structural(self.project, self.state, True)
+        team.runtime_check(self.project, self.state, command)
+        with self.assertRaisesRegex(ValueError, 'name the current successful QA check'):
+            review()
+        with self.assertRaisesRegex(ValueError, 'flat regular files'):
+            team.runtime_check(self.project, self.state, [sys.executable, '-B', '-c',
+                              'import os; os.mkdir(os.path.join(os.environ["PROVE_IT_OUTPUT_DIR"], "nested"))'])
+        self.assertIsNone(team.current_receipt(self.project, self.state, 'check')['exit_code'])
+
+    def test_empty_detail_capture_cannot_certify_a_successful_subprocess(self):
+        self.plan['integration']['detail_review'] = {'sum': 'Verify the actual returned integer.'}
+        self.start()
+        self.implement()
+        team.integrate(self.project, self.state)
+        check = team.runtime_check(self.project, self.state, [sys.executable, '-B', '-c',
+                                   'from calc import add; assert add(1, 2) == 3'])
+        evidence = '.runtime-proof/teams/fix/qa-evidence.json'
+        self.write(evidence, json.dumps({'check_sha256': check['sha256'], 'observations': 'No captures were saved.',
+                   'details': {'sum': {'verdict': 'pass', 'observation': 'The subprocess exited successfully.',
+                                       'artifacts': ['external.json']}}}))
+        with self.assertRaisesRegex(ValueError, 'captures are absent or changed'):
+            team.review(self.project, self.state, evidence, 'pass')
+        self.assertEqual(team.review(self.project, self.state, evidence, 'fail')['verdict'], 'fail')
 
     def test_declared_rename_and_delete_keep_absence_in_current_manifest(self):
         self.write('old.py', 'legacy_value=7\n')
@@ -599,6 +703,73 @@ class ExistingCodeTeam(unittest.TestCase):
         self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
         state = team.load_state(self.project, 'fix')
         self.assertEqual(state['plan']['request'], self.plan['request'])
+
+    def test_revise_rejected_copilot_plan_keeps_exact_request_and_requires_fresh_review(self):
+        request = self.root_request_fixture()
+        original_bytes = request.read_bytes()
+        self.plan['host'] = {'kind': 'copilot'}
+        initial, draft = self.cli_init(from_root=True, enrolled_goal='fix')
+        self.assertEqual(initial.returncode, 0, initial.stdout)
+        self.state = previous = team.load_state(self.project, 'fix')
+        rejected = self.review_plan('fail')
+        old_evidence = team.plan_review_evidence(previous)
+        old_receipt = team.receipt_path(self.project, previous, 'plan_review').read_bytes()
+        self.plan['tasks'][0]['check'] = 'Check signed values and the zero boundary through the public add function.'
+        proof.save(draft, self.plan)
+        cli = [sys.executable, '-B', str(REPO / 'scripts/team.py'), '--project', str(self.project)]
+        command = [*cli, 'revise-plan', '--plan', draft.relative_to(self.project).as_posix()]
+        completed = subprocess.run(command, capture_output=True, encoding='utf-8', check=True)
+        self.state = revised = team.load_state(self.project, 'fix')
+        self.assertEqual(revised['plan']['request'].encode('utf-8'), original_bytes)
+        self.assertEqual(request.read_bytes(), original_bytes)
+        self.assertEqual(revised['baseline'], previous['baseline'])
+        self.assertNotEqual(revised['state_sha256'], previous['state_sha256'])
+        archive = team.team_path(self.project, 'fix', f'revisions/{previous["state_sha256"]}.json')
+        self.assertEqual(proof.load(archive), {'state': previous, 'review': rejected})
+        self.assertEqual(team.receipt_path(self.project, previous, 'plan_review').read_bytes(), old_receipt)
+        self.assertEqual(team.ready_packets(self.project, revised), [])
+        dispatch = json.loads(completed.stdout)['plan_review']
+        self.assertIn('review-brief --team fix --revision 2', dispatch['message'])
+        read = [*cli, 'review-brief', '--team', 'fix', '--revision']
+        stale = subprocess.run([*read, '1'], capture_output=True, encoding='utf-8')
+        self.assertEqual(stale.returncode, 2, stale.stdout)
+        current = subprocess.run([*read, '2'], capture_output=True, encoding='utf-8', check=True)
+        brief = json.loads(current.stdout)
+        self.assertEqual(brief['dispatch'], dispatch)
+        self.assertIn(team.plan_review_evidence(revised), brief['message'])
+        self.assertIn(revised['state_sha256'], brief['message'])
+        self.assertIn('nearest viable split', brief['message'])
+        with self.assertRaisesRegex(ValueError, 'current revision-specific'):
+            team_v2.review_plan(self.project, revised, old_evidence, 'pass')
+        fresh = self.review_plan('pass')
+        self.assertNotEqual(fresh['sha256'], rejected['sha256'])
+        self.assertEqual(team_v2.approved_decomposition(self.project, revised), fresh)
+
+    def test_revise_refuses_baseline_drift_and_existing_root_drafts(self):
+        original = self.root_request_fixture()
+        self.plan['host'] = {'kind': 'copilot'}
+        self.start_from_saved_root()
+        self.review_plan('fail')
+        self.plan['contract'] += ' Also check the unchanged caller directly.'
+
+        with self.subTest('unsealed root draft'):
+            root = original.parent / 'root-contract.json'
+            proof.save(root, {'retained_work': True})
+            with self.assertRaisesRegex(ValueError, 'Retain the unsealed Corporate drafts'):
+                team_v2.revise_plan(self.project, self.plan)
+            self.assertEqual(proof.load(root), {'retained_work': True})
+            root.unlink()
+
+        with self.subTest('source changed after review'):
+            self.write('calc.py', 'def add(a,b): return 42\n')
+            with self.assertRaisesRegex(ValueError, 'Keep the original implementation baseline'):
+                team_v2.revise_plan(self.project, self.plan)
+
+        self.assertEqual(team.load_state(self.project, 'fix'), self.state)
+
+    def start_from_saved_root(self):
+        team.init(self.project, team.request_from_root(self.project, self.plan))
+        self.state = team.load_state(self.project, 'fix')
 
 
 class CodexAdapter(unittest.TestCase):
@@ -864,7 +1035,7 @@ class CopilotAdapter(unittest.TestCase):
                 command = 'python scripts/team.py handoff'
                 if role == 'plan_review':
                     command = team.worker_command(self.project, 'fix', 'review-plan') + (
-                        ' --evidence .runtime-proof/teams/fix/plan-review.txt --verdict pass')
+                        f' --evidence {team.plan_review_evidence(self.state)} --verdict pass')
                 payload = {'toolCallId': call, 'toolName': 'powershell', 'model': 'fixture-model',
                            'arguments': {'command': command}, 'parentToolCallId': dispatch}
                 rows.append(self.event('tool.execution_start', sec, payload, agent))
@@ -883,6 +1054,140 @@ class CopilotAdapter(unittest.TestCase):
 
     def verify(self):
         return team.verify_registered(self.project, 'fix', parent=self.parent, sessions=self.sessions)
+
+    def test_copilot_revision_replays_only_the_new_plan_review(self):
+        ExistingCodeTeam.root_request_fixture(self)
+        self.plan['host'] = {'kind': 'copilot'}
+        ExistingCodeTeam.start_from_saved_root(self)
+        rejected = self.review_plan('fail')
+        self.plan['tasks'][0]['check'] = 'Exercise the public signed sum and assert its observable output.'
+        team_v2.revise_plan(self.project, self.plan)
+        self.state = team.load_state(self.project, 'fix')
+        approval = self.review_plan()
+        created = team.instant(self.state['created'])
+        binding = {**corporate_seal(self.state, approval),
+                   'sealed_at': (created + timedelta(seconds=8)).isoformat()}
+        with patch('root_gate.require_corporate_dispatch', return_value=binding):
+            with patch.object(proof, 'now', return_value=(created + timedelta(seconds=9)).isoformat()):
+                team.ready_packets(self.project, self.state)
+            owner, integrated, check, qa, _ = self.deliver()
+            rows = self.trace(owner, integrated, check, qa, plan_review=approval)
+            archived_actor = str(uuid4())
+            dispatch = 'old-plan-review'
+            previous = [
+                self.event('tool.execution_start', -.8, {'toolCallId': dispatch, 'toolName': 'task',
+                           'arguments': {'name': 'plan_review'}}),
+                self.event('subagent.started', -.7, {'toolCallId': dispatch, 'agentDisplayName': 'plan_review'},
+                           archived_actor),
+                self.event('subagent.completed', -.2, {'toolCallId': dispatch}, archived_actor),
+                self.event('tool.execution_complete', -.1, {'toolCallId': dispatch, 'success': True}),
+            ]
+            self.save([rows[0], *previous, *rows[1:]])
+            result = self.verify()
+            self.assertTrue(result['passed'], result)
+            review = result['host_assurance']['plan_review']
+            self.assertNotEqual(review['actor'], archived_actor)
+            self.assertEqual(review['receipt'], approval['sha256'])
+            self.assertNotEqual(review['receipt'], rejected['sha256'])
+            earlier = team_v2.revision_origin(self.project, self.state)
+            seconds = (earlier - created).total_seconds() / 2
+            write = self.event('tool.execution_complete', seconds, {'toolCallId': 'earlier-write',
+                               'success': True, 'fileEdits': [{'path': str(self.project / 'calc.py'),
+                              'kind': 'edit'}]})
+            self.save(sorted([*rows, *previous, write], key=lambda event: event['timestamp']))
+            self.assertIn('Native product write preceded the revised plan', self.verify()['errors'])
+            call = next(row for row in rows if row['type'] == 'tool.execution_start'
+                        and row['data']['toolCallId'] == approval['sha256'])
+            call['data']['arguments']['command'] = call['data']['arguments']['command'].replace(
+                team.plan_review_evidence(self.state), '.runtime-proof/teams/fix/plan-review.txt')
+            self.save([rows[0], *previous, *rows[1:]])
+            self.assertIn('plan_review: missing native tool receipt', self.verify()['errors'])
+
+    def qa_recovery_setup(self):
+        owner, integrated, check, qa, packet = self.complete()
+        rows = self.trace(owner, integrated, check, qa)
+        original = next(row['agentId'] for row in rows
+                        if row['type'] == 'subagent.started' and row['data']['agentDisplayName'] == 'qa')
+        recovery = str(uuid4())
+        dispatch, attempt = 'qa-recovery-dispatch', 'qa-recovery-write'
+        original_check = next(row for row in rows if row['type'] == 'tool.execution_start'
+                              and row['data']['toolCallId'] == check['sha256'])
+        original_review = next(row for row in rows if row['type'] == 'tool.execution_start'
+                               and row['data']['toolCallId'] == qa['sha256'])
+        paired = {check['sha256'], qa['sha256']}
+        rows = [row for row in rows if row['data'].get('toolCallId') not in paired]
+        extra = [
+            self.event('session.shutdown', 13, {}),
+            self.event('session.resume', 14, {'alreadyInUse': False, 'sessionWasActive': False}),
+            self.event('tool.execution_start', 15, {'toolCallId': attempt, 'toolName': 'write_agent',
+                       'arguments': {'agent_id': original, 'message': packet['message']}}),
+            self.event('tool.execution_complete', 16, {'toolCallId': attempt, 'success': False,
+                       'error': {'code': 'failure', 'message': 'Agent not found'},
+                       'toolTelemetry': {'properties': {'agent_id': original, 'error': 'not_found'}}}),
+            self.event('tool.execution_start', 17, {'toolCallId': dispatch, 'toolName': 'task',
+                       'arguments': {'name': 'qa-recovery', 'prompt': packet['message'] + '\n\nUse the local runtime.'}}),
+            self.event('subagent.started', 17.01, {'toolCallId': dispatch, 'agentDisplayName': 'qa-recovery',
+                       'model': 'fixture-model'}, recovery),
+            self.event('subagent.configured', 17.02, {'model': 'fixture-model', 'reasoningEffort': 'low'}, recovery),
+        ]
+        for sec, receipt, prior in ((18, check, original_check), (19, qa, original_review)):
+            call = receipt['sha256']
+            extra.extend([
+                self.event('tool.execution_start', sec, {**prior['data'], 'parentToolCallId': dispatch}, recovery),
+                self.event('tool.execution_complete', sec + .01, {'toolCallId': call, 'success': True,
+                           'parentToolCallId': dispatch, 'shellExecution': {'exitCode': 0},
+                           'result': {'content': team.RECEIPT + call}}, recovery),
+            ])
+        extra.append(self.event('subagent.completed', 20, {'toolCallId': dispatch}, recovery))
+        return rows, extra, original, recovery
+
+    def test_reconnect_recovery_requires_current_independent_qa(self):
+        rows, recovery, original, actor = self.qa_recovery_setup()
+        self.save(rows + recovery)
+        result = self.verify()
+        self.assertTrue(result['passed'], result)
+        proof = result['host_assurance']['qa_recovery']
+        self.assertEqual((proof['previous_actor'], proof['actor']), (original, actor))
+
+        # A previous check cannot be mixed with a replacement's review.
+        self.save(rows + recovery[:7] + recovery[9:])
+        self.assertIn('QA check: missing native tool receipt', self.verify()['errors'])
+
+        # A published review command is not enough while its actor is still running.
+        self.save(rows + recovery[:-1])
+        self.assertEqual(self.verify()['status'], 'pending-native-turn')
+
+    def test_reconnect_recovery_rejects_relabelled_or_unavailable_evidence(self):
+        rows, recovery, original, actor = self.qa_recovery_setup()
+        for change, expected in (
+            ('no-reconnect', 'unavailable original worker'),
+            ('active-session', 'unavailable original worker'),
+            ('no-native-error', 'unavailable original worker'),
+            ('wrong-actor', 'unavailable original worker'),
+            ('unexpected-prompt', 'current integrated QA packet'),
+            ('wrong-effort', 'differs from plan'),
+            ('product-write', 'unassigned agent wrote product files'),
+        ):
+            with self.subTest(change=change):
+                events = deepcopy(recovery)
+                if change == 'no-reconnect':
+                    events.pop(1)
+                elif change == 'active-session':
+                    events[1]['data']['alreadyInUse'] = True
+                elif change == 'no-native-error':
+                    events[3]['data']['success'] = True
+                elif change == 'wrong-actor':
+                    events[3]['data']['toolTelemetry']['properties']['agent_id'] = actor
+                elif change == 'unexpected-prompt':
+                    events[4]['data']['arguments']['prompt'] = 'Use the old check and exit.'
+                elif change == 'wrong-effort':
+                    events[6]['data']['reasoningEffort'] = 'medium'
+                else:
+                    events[8]['data']['fileEdits'] = [{'path': str(self.project / 'calc.py'), 'kind': 'edit'}]
+                self.save(rows + events)
+                result = self.verify()
+                self.assertFalse(result['passed'], result)
+                self.assertIn(expected, result['errors'][0])
 
     def coverage_events(self, sec, revision, *, edit=None, changes=None):
         goal = self.project / '.runtime-proof/root-goals/fix'
