@@ -124,9 +124,17 @@ $harrtest
 [your original request]
 ```
 
-Use the [Corporate workflow](references/corporate-workflow.md) for substantial
-existing-code changes and [production teams](references/production-teams.md)
-for scoped native handoffs. The agent creates and maintains the preservation
+Use the [Execution Threshold Contract](references/execution-threshold.md)
+(`execution-threshold-v1`, `team.py threshold`) to scale ceremony to explicit
+user intent and task risk: ordinary tasks (fetching data, scripts, single-page UI,
+small localized fixes) run **directly** in the current agent with zero subagents,
+zero unrequested git branches/worktrees, and no `.runtime-proof/` state. Use the
+[daily review loop](references/production-teams.md#review-daily-existing-code-changes)
+(`team.py quickstart`) when shared-contract or high-risk changes cross the
+threshold, and the [Corporate workflow](references/corporate-workflow.md) for
+enrolled or high-impact root verification. It retains independent QA
+findings through repair and requires a fresh recheck before acceptance.
+The agent creates and maintains the preservation
 contract and ledger; users do not need to author state files. Resume by the same
 goal ID and inspect current source before relying on old evidence.
 Independently check functionality, preservation,

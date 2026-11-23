@@ -1,4 +1,4 @@
 interface:
   display_name: "HarrTest"
-  short_description: "Preserve contracts and verify code quality with evidence."
-  default_prompt: "Use HarrTest to understand the existing project, plan scoped changes, preserve contracts, and independently verify current-source quality evidence."
+  short_description: "Scale from direct execution on ordinary tasks to verified subagent QA on high-risk changes."
+  default_prompt: "Use HarrTest proportionally: execute ordinary tasks directly without subagent or branch ceremony, and apply scoped implementation owners plus independent QA when task risk or user intent crosses the threshold."

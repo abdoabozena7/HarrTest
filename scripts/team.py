@@ -355,10 +355,10 @@ def record(project, state, tid, files, **extra):
     return data
 
 
-def handoff(project, state, task):
+def handoff(project, state, task, *, note=None):
     if state['plan'].get('schema') == 2:
         import team_v2
-        return team_v2.handoff(project, state, task)
+        return team_v2.handoff(project, state, task, note=note)
     validation_message(project, state)
     inputs = {dep: usable_handoff(project, state, dep)['sha256'] for dep in task['depends_on']}
     files = snapshot(project, task['outputs'])
@@ -415,22 +415,27 @@ def ready_packets(project, state):
     return ready
 
 
-def repair(project, state, tid, evidence, observation):
+def repair(project, state, tid, evidence, observation, *, refresh_note=None):
     """Bind a failed integrated observation to an existing implementation owner."""
     if state['plan'].get('schema') == 2 and 'mission_protocol' in state['plan']:
         import team_v2
-        return team_v2.repair(project, state, tid, evidence, observation)
+        return team_v2.repair(project, state, tid, evidence, observation, refresh_note=refresh_note)
     request, task = _record_repair(project, state, tid, evidence, observation)
     return {'team': state['plan']['id'], 'action': 'repair', 'mission_complete': False,
             'repair': request['sha256'], 'owner': tid, 'packet': packet(project, state, task)}
 
 
 def _record_repair(project, state, tid, evidence, observation):
-    if state['plan'].get('schema') == 2 and state['plan'].get('root_protocol') == 'corporate-v1':
+    quality = False
+    if state['plan'].get('schema') == 2:
         import team_v2
-        team_v2.corporate_admission(project, state)
+        quality = team_v2.review_loop(state)
+        if state['plan'].get('root_protocol') == 'corporate-v1':
+            team_v2.corporate_admission(project, state)
     validation_message(project, state)
     tasks = {row['id']: row for row in state['plan']['tasks']}
+    if quality and state['plan']['integration']['outputs']:
+        tasks['integration'] = {'id': 'integration', 'outputs': state['plan']['integration']['outputs']}
     require(tid in tasks, 'Repair must return to a declared implementation owner')
     concrete(observation, 'Concrete failure observation')
     integrated = current_receipt(project, state, 'integration')
@@ -444,6 +449,7 @@ def _record_repair(project, state, tid, evidence, observation):
             'Missing bounded repair evidence')
     # QA may overwrite its live narrative on replay. Preserve an immutable copy.
     digest = proof.file_hash(path)
+    extra = team_v2.quality_repair_fields(project, state, qa, tid, digest) if quality else {}
     retained = f'{prefix}repair-evidence/{digest}.txt'
     destination = strict_io.scoped_path(project, retained, must_exist=False)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -454,14 +460,14 @@ def _record_repair(project, state, tid, evidence, observation):
     owner = current_receipt(project, state, tid)
     request = record(project, state, 'repair-' + tid, {retained: digest},
                      observation=observation, qa=qa['sha256'], integration=integrated['sha256'],
-                     handoff=owner['sha256'], owner=tid)
+                     handoff=owner['sha256'], owner=tid, **extra)
     return request, tasks[tid]
 
 
-def integrate(project, state):
+def integrate(project, state, *, note=None):
     if state['plan'].get('schema') == 2:
         import team_v2
-        return team_v2.integrate(project, state)
+        return team_v2.integrate(project, state, note=note)
     validation_message(project, state)
     plan = state['plan']
     children = {task['id']: current_receipt(project, state, task['id']) for task in plan['tasks']}
@@ -814,8 +820,17 @@ def team_command(command):
     if segment:
         segments.append(segment)
     actual = False
+    bindings = {}
     for words in segments:
-        executable = words[0].replace('\\', '/').rsplit('/', 1)[-1].lower()
+        if len(words) >= 3 and words[0].startswith('$') and not words[0].lower().startswith('$env:') and words[1] == '=':
+            bindings[words[0].lower()] = words[-1].rstrip(')')
+            continue
+        if words[:1] == ['&']:
+            words = words[1:]
+        if not words:
+            continue
+        head = bindings.get(words[0].lower(), words[0])
+        executable = head.replace('\\', '/').rsplit('/', 1)[-1].lower()
         if executable in ('echo', 'printf', 'write-output', 'write-host') and any(RECEIPT.strip() in w for w in words[1:]):
             return False
         if not re.fullmatch(r'(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?', executable):
@@ -823,7 +838,12 @@ def team_command(command):
         args = words[1:]
         while args and re.fullmatch(r'-(?:B|u|3(?:\.\d+)?)', args[0]):
             args = args[1:]
-        actual |= bool(args and args[0].replace('\\', '/').rsplit('/', 1)[-1] == 'team.py')
+        if not args:
+            continue
+        script_tok = bindings.get(args[0].lower(), args[0])
+        if script_tok.lower() == '(join-path' and len(args) >= 3 and args[2].endswith(')'):
+            script_tok = args[2][:-1]
+        actual |= (script_tok.replace('\\', '/').rsplit('/', 1)[-1] == 'team.py')
     return actual
 
 
@@ -1312,23 +1332,40 @@ def main(argv=None):
     initialize.add_argument('--plan', required=True)
     initialize.add_argument('--request-from-root', action='store_true',
                             help='Copy the saved original request into a new reviewed Corporate Team plan')
+    quick = commands.add_parser('quickstart',
+                                help='Bootstrap sealed proof, baseline run, preservation mission, and schema-2 Team')
+    quick.add_argument('--spec', required=True)
+    quick.add_argument('--request-file')
+    import execution_gate
+    thresh = commands.add_parser('threshold',
+                                 help='Evaluate execution-threshold-v1 contract (direct vs subagents/Team/Corporate)')
+    execution_gate.add_cli_arguments(thresh, input_flag='--spec')
     commands.add_parser('revise-plan', help='Replace a rejected pre-seal Copilot Corporate plan').add_argument(
         '--plan', required=True)
     brief = commands.add_parser('review-brief', help='Read the current revised Team review instructions')
     brief.add_argument('--team', required=True)
     brief.add_argument('--revision', type=int, required=True)
-    for action in ('packets', 'handoff', 'integrate', 'check', 'review', 'repair', 'verify', 'review-plan'):
+    for action in ('packets', 'handoff', 'integrate', 'check', 'review', 'review-input', 'qa-submit',
+                   'repair', 'verify', 'review-plan'):
         command = commands.add_parser(action)
         command.add_argument('--team', required=True)
         if action == 'handoff':
             command.add_argument('--task', required=True)
+            command.add_argument('--note')
+        if action == 'integrate':
+            command.add_argument('--note')
         if action in {'review', 'review-plan'}:
             command.add_argument('--evidence', required=True)
             command.add_argument('--verdict', choices=('pass', 'fail'), required=True)
+        if action == 'qa-submit':
+            command.add_argument('--summary', required=True)
+            command.add_argument('--verdict', choices=('pass', 'fail'), required=True)
+            command.add_argument('argv', nargs=argparse.REMAINDER)
         if action == 'repair':
             command.add_argument('--task', required=True)
             command.add_argument('--evidence', required=True)
             command.add_argument('--observation', required=True)
+            command.add_argument('--refresh-note')
         if action == 'check':
             command.add_argument('argv', nargs=argparse.REMAINDER)
         if action == 'verify':
@@ -1337,9 +1374,24 @@ def main(argv=None):
             command.add_argument('--production-only', action='store_true')
             command.add_argument('--wait-seconds', type=float, default=5)
     args = parser.parse_args(argv)
+    for attr in ('spec', 'plan', 'summary', 'request_file'):
+        val = getattr(args, attr, None)
+        if isinstance(val, str):
+            setattr(args, attr, val.replace('\\', '/'))
+    if args.command in {'review', 'repair'} and isinstance(getattr(args, 'evidence', None), str):
+        args.evidence = args.evidence.replace('\\', '/')
     project = args.project.resolve()
     try:
-        if args.command == 'revise-plan':
+        if args.command == 'threshold':
+            if args.input is not None:
+                raw_input = str(args.input).replace('\\', '/')
+                args.input = args.input if args.input.is_absolute() else strict_io.scoped_path(project, raw_input)
+            result = execution_gate.evaluate(execution_gate.payload_from_cli(args))
+        elif args.command == 'quickstart':
+            import team_v2
+            spec = proof.load(strict_io.scoped_path(project, args.spec))
+            result = team_v2.quickstart(project, spec, request_file=args.request_file)
+        elif args.command == 'revise-plan':
             import team_v2
             result = team_v2.revise_plan(project, proof.load(strict_io.scoped_path(project, args.plan)))
         elif args.command == 'init':
@@ -1377,15 +1429,38 @@ def main(argv=None):
                 result = {'message': team_v2.plan_review_brief(project, state)['message'],
                           'dispatch': team_v2.plan_review_packet(project, state)}
             elif args.command == 'handoff':
-                result = handoff(project, state, tasks[args.task])
+                result = handoff(project, state, tasks[args.task], note=args.note)
             elif args.command == 'integrate':
-                result, qa = integrate(project, state)
+                result, qa = integrate(project, state, note=args.note)
                 result = {**result, 'qa': qa}
             elif args.command == 'check':
                 result = runtime_check(project, state, args.argv[1:] if args.argv[:1] == ['--'] else args.argv)
                 result['passed'] = result['exit_code'] == 0
+            elif args.command == 'review-input':
+                import team_v2
+                result = team_v2.quality_review_input(project, state)
+            elif args.command == 'qa-submit':
+                import team_v2
+                check_rec, qa_rec = team_v2.qa_submit(
+                    project, state, args.summary, args.verdict,
+                    args.argv[1:] if args.argv[:1] == ['--'] else args.argv)
+                if check_rec and 'sha256' in check_rec:
+                    print(RECEIPT + check_rec['sha256'])
+                result = {**qa_rec, 'check_receipt': check_rec}
+                if args.verdict == 'fail':
+                    ev = f'{proof.STATE}/teams/{args.team}/qa-evidence.json'
+                    owners = sorted({r['owner'] for r in result.get('quality_findings', {}).values() if r.get('owner')})
+                    owner_hint = owners[0] if owners else '<OWNER>'
+                    cmd_prefix = worker_command(project, args.team, 'repair')
+                    result.update(
+                        passed=False, action='review-findings', mission_complete=False,
+                        next=(f'Run: {cmd_prefix} --task {owner_hint} --evidence {ev} '
+                              '--observation "<scoped fix plan>" --refresh-note "<source diagnosis>", '
+                              'then send the returned packet to the original owner via write_agent, '
+                              'reintegrate, and resume QA via write_agent to resolve every retained finding ID.'))
             elif args.command == 'repair':
-                result = repair(project, state, args.task, args.evidence, args.observation)
+                result = repair(project, state, args.task, args.evidence, args.observation,
+                                refresh_note=args.refresh_note)
             elif args.command == 'review-plan':
                 import team_v2
                 result = team_v2.review_plan(project, state, args.evidence, args.verdict)
@@ -1401,6 +1476,12 @@ def main(argv=None):
                                       'dispatch the full returned packet to that owner, then reintegrate and rerun QA.'}
                     if 'mission_sha256' in state:
                         result['next'] += ' If no packet is authorized, follow the repair reinspection and redispatch instructions.'
+                    if 'quality_findings' in result:
+                        result.update(action='review-findings',
+                                      next='Review the scoped fix and retest for each confirmed defect. Use '
+                                           'repair --task OWNER --evidence FILE --observation PLAN and give the '
+                                           'bound plan to its original owner. For evidence-only blockers do not '
+                                           'edit code. Rerun QA independently and resolve every retained ID.')
             if 'sha256' in result:
                 print(RECEIPT + result['sha256'])
         print(json.dumps(result, ensure_ascii=False, indent=2))

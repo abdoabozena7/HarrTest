@@ -61,7 +61,9 @@ jobs:
               assert 'harrtest/tests/test_corporate_benchmark.py' not in names
               assert not any(name.startswith('harrtest/assets/corporate/') for name in names)
               for required in ('scripts/mission.py', 'assets/templates/mission.json',
-                               'references/feature-preservation-and-completion.md', 'tests/test_mission.py'):
+                               'references/feature-preservation-and-completion.md', 'tests/test_mission.py',
+                               'scripts/execution_gate.py', 'assets/templates/execution-threshold.json',
+                               'references/execution-threshold.md', 'tests/test_execution_gate.py'):
                   assert 'harrtest/' + required in names, required
           PY
       - name: Upload complete skill ZIP

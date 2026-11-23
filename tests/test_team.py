@@ -560,6 +560,13 @@ class ProductionTeam(unittest.TestCase):
         self.assertFalse(team.team_command("@'\nHARRTEST_TEAM_RECEIPT copied\n'@; python scripts/team.py packets"))
         self.assertFalse(team.team_command('@"\n$(python scripts/team.py review)\n"@'))
         self.assertFalse(team.team_command("@'\nunclosed; python scripts/team.py review"))
+        self.assertTrue(team.team_command('& "C:/venv/Scripts/python.exe" -B "scripts/team.py" handoff --team report'))
+        self.assertTrue(team.team_command(
+            "$project = (Get-Location).Path; $py = 'C:/venv/Scripts/python.exe'; "
+            "& $py -B (Join-Path $project '.github/skills/harrtest/scripts/team.py') --project $project qa-submit --team mission"
+        ))
+        self.assertFalse(team.team_command('$out = "Write-Output"; & $out "HARRTEST_TEAM_RECEIPT forged"'))
+        self.assertFalse(team.team_command('& echo "HARRTEST_TEAM_RECEIPT forged"'))
 
     def test_literal_evidence_here_string_accepts_standalone_crlf_closer(self):
         command = "@'\r\nCoordinator's evidence.\r\n'@\r\npython -B scripts/team.py review --team report"

@@ -32,6 +32,77 @@ See [Corporate workflow](corporate-workflow.md) for the root quality contract.
 Team receipts establish scopes, lifecycle and recorded process results. Review
 the meaning of the six-layer QA evidence against the task's actual requirements.
 
+### Review daily existing-code changes
+
+For a new managed `kind: change` Team, set `"quality_review": "review-loop-v1"`
+in `integration` before edits. The existing-code template includes it. Keep
+one owner and one independent QA pass for a low-risk, coherent change; do not
+add a worker per layer. A material security, compatibility, data, or performance
+risk can require the [Corporate root](corporate-workflow.md) even with one
+owner. Use a focused independent reviewer where a risk needs distinct expertise.
+Remove this field for `kind: greenfield`. Previously registered plans without
+it keep their legacy review format and meaning.
+
+1. **Review the diff and run the checks independently.** Follow the actual
+   public entrypoint, test the new outcome and nearby old behavior, inspect
+   the full diff and original tests, and examine trust boundaries, cost and
+   failure paths as relevant. Prefer the project's existing checks and budgets.
+   For an affected hot path, compare repeated pre/post samples on the same
+   workload, runtime and units against a predeclared bound. A timeout, missing
+   measurement, or scanner with incomplete scope is not affirmative evidence.
+2. **Record the structured review.** After the Team check and mission proof
+   runs, use `team.py ... qa-submit --team ID --summary .runtime-proof/teams/ID/qa-summary.json --verdict pass|fail -- ACTUAL_ARGV`
+   (which executes all sealed `proof.py` checks, runs `ACTUAL_ARGV`, and
+   auto-binds current hashes into `qa-evidence.json`), or manually run
+   `team.py ... review-input --team ID` from the QA packet.
+   It includes the mission form, current integration/check hashes, and
+   `prior_findings`. The finite check binds the full sealed mission source
+   scope, not just owned outputs. Preserve those bindings. Fill every `quality_layers` row:
+   a `verdict` (`PASS`, `FAIL`, `UNVERIFIED`, `NOT_APPLICABLE`), concrete
+   `observations`, `paths` from the sealed mission, and `checks` with actual
+   proof selectors (`task/check`) or `@integration` for the successful current
+   Team check. PASS requires evidence. Functionality, preservation, and
+   architecture cannot be excluded. For other exclusions explain from the
+   cited code why the change has no such impact, not why a check failed to run.
+3. **Record blockers and review the fix before editing.** On a failed round
+   fill `findings` with stable IDs, each with an `owner` (a sealed owner for a
+   confirmed code defect, `null` for an evidence or diagnosis blocker), the
+   affected `layers`, and `observations` that describe what was checked, expected
+   and observed. Every failed or unverified layer needs a finding. For example:
+
+   ```json
+   {
+     "legacy_option": {
+       "owner": "component",
+       "layers": ["preservation"],
+       "observations": "The pre-edit --upper invocation displayed ADA; the candidate displays ada."
+     }
+   }
+   ```
+
+   Submit `review --verdict fail`. Keep nonblocking notes in the layer
+   observations. The coordinator checks each proposed fix and its recheck
+   against the sealed scope, then runs `repair --task OWNER --evidence FILE
+   --observation PLAN` with that failed QA evidence. Group one owner's findings
+   into one repair plan. Register concurrent owners' repairs before their
+   product edits make the failed integration stale. Return the plan to the
+   original owner; for sealed `integration` output the coordinator is that
+   owner. For missing evidence, obtain a better independent check, **not** a
+   dummy code change. Compare a suspected defect with baseline before tagging
+   a confirmed code defect. Keep still-observed failures under the same ID.
+4. **Reintegrate and re-review.** Run fresh affected proof checks and the finite
+   Team check; it must actually exercise each retained finding. Rerun
+   `review-input` after the checks. On a passing round `findings` is empty and
+   `resolutions` names every prior ID with `check: "@integration"` and concrete
+   `observations` from the new run. A confirmed code defect also needs a bound
+   original-owner repair and changed outputs. A fresh run with unchanged bytes
+   can resolve an evidence-only blocker. Then run full Team verification (and
+   root verification when enrolled).
+
+The verifier checks evidence identity, required rows, repair bindings, and
+freshness. It cannot judge if an oracle actually catches the bug or if a
+justification is true; independent reviewers must examine the diff and results.
+
 ### Require review of specific details
 
 For visual work, and for important nonvisual details that a generic PASS

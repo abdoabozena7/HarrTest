@@ -1,279 +1,123 @@
 ---
 name: harrtest
-description: Change software with evidence-based planning, scoped implementation workers and independent quality checks. Understand existing architecture and contracts, preserve behavior, and verify correctness, security, performance and resilience as relevant to the change. Use for implementation, debugging, refactoring and complex coding tasks. Does not apply to conversation-only requests or work that excludes execution.
+description: Deliver verified software changes scaled to user intent and task risk: execute ordinary tasks (data fetching, scripts, single-page UI, localized fixes) directly with zero subagent or branch ceremony, and escalate to scoped native implementation owners and independent QA only when requested or when task risk crosses the execution threshold. Does not apply to conversation-only requests.
 ---
 
 # HarrTest 5
 
-For an implementation request, start as coordinator. Record the baseline and
-initialize the [preservation contract and completion ledger](references/feature-preservation-and-completion.md),
-including for small fixes or new projects. New Team and root plans use
-`mission_protocol: preservation-v1`. Check pre-edit admission before the first
-product edit; dispatch the actual [Team packets](references/production-teams.md)
-to native owners and keep the coordinator within its integration scope. For substantial work, complete
-the [Corporate pre-dispatch seal](references/corporate-workflow.md) first.
-When the plan, seal, or native worker capability is missing, keep that work
-unverified and continue with authorized discovery and setup.
-When the host explicitly supplies `HARRTEST_CORPORATE_GOAL`, use that goal ID
-for the reviewed Team and Corporate root. Reuse its original request snapshot
-if the host already supplied one; otherwise save the exact request before
-registering the Team. Omit `request` in the Team draft and run
-`team.py init --request-from-root`. First dispatch the exact Team `plan_review`
-packet as a separate task. If the reviewer rejects the plan, wait for the worker
-to finish and use `team.py revise-plan --plan PATH` with a corrected draft and
-the same goal ID. Repeat the review before scaffolding the Corporate draft.
-Before drafting the proof, inventory affected public operations and
-observable preservation obligations from the existing contracts. Include them
-in the [coverage review](references/corporate-workflow.md#before-editing) even
-when the changed happy path does not exercise them. Run `root_gate.py check-draft`
-on the unsealed draft before asking for independent coverage. Send the exact
-`corporate.py coverage-packet` to a separate reviewer. Complete the root seal
-before dispatching implementation or editing. Without Corporate enrollment, a
-bounded change with one settled responsibility can use the managed Team path
-with one owner, integration and independent QA, without a Corporate root.
+> **Role Check:** If your prompt begins with `You own implementation scope` or `You are independent QA`, you are ALREADY an admitted child worker—**do not** run `quickstart`, `integrate`, or spawn subagents; execute your packet directly.
 
-For a new product, use a `kind: greenfield` Team with reviewed decomposition
-instead of the existing-code Corporate baseline. Seal the intended behavior,
-interfaces and [finishing criteria](references/quality-intent.md) before product
-edits. Bind the proposed brief in `validation_context` and have the independent
-`plan_review` challenge both the finishing criteria and owner boundaries in
-one pass. Resolve actual findings before dispatch, not in product QA.
-If the output is visual, seal the consequential details as IDs in the Team's
-`integration.detail_review`. Require evidence for each ID from the independent
-QA check, in addition to the integrated user journey. Review the real output
-at delivery scale; an omitted detail, stale capture or unverified state is not
-a pass. Use the same mechanism for consequential nonvisual detail when a
-generic acceptance result could hide a missing check.
+## 0. Execution Threshold Contract (`execution-threshold-v1` — Evaluate First)
 
-## Start from the project
+Stay **normal and direct on ordinary daily tasks**. Before creating `.runtime-proof/`, running `quickstart`, spawning **any** `task` subagent, splitting files across owners, or touching git branches/worktrees, evaluate both dimensions ([full contract](references/execution-threshold.md)):
 
-Read VERSION and pin the local package for the task. Check upstream only when
-the user requests it. Use the current host, approved tools and authentication;
-this skill does not grant permission or replace organization policy.
+1. **Did the user ask for it? (`user_intent`)**
+   - **Branches & worktrees (`false` by default):** **Never** create or switch git branches or worktrees unless the user explicitly requested a branch or worktree.
+   - **Direct / simple intent:** If the user asks for something straightforward or says no subagents/ceremony, stay in **`direct`** (`0` subagents, `0` `.runtime-proof` files).
+   - **Explicit managed intent:** Escalate on user intent **only** when `HARRTEST_CORPORATE_GOAL` is set or the user explicitly requests subagents, independent QA, Team decomposition, or Corporate root verification.
 
-Preserve the exact request. On reconnect load the same goal's mission status,
-reinspect affected source and dependencies, refresh stale context, and resume
-unfinished authorized TODOs. Discover behavior in actual entrypoints, callers,
-tests, configuration and failure paths. Preserve existing behavior including
-undocumented options, except for precisely authorized changes. Distinguish
-observations and contracts from implementation details and assumptions.
-Reuse the project's design and conventions; unrelated redesign is out of scope.
+2. **Does the task itself cross the subagent threshold? (`task_signals`)**
 
-Before editing retain a source-qualified baseline: reproduce relevant behavior,
-run existing checks, record known failures and measure affected resource limits.
-Preserve user changes. A baseline failure is not a new regression, but cannot
-silently waive a relevant security or correctness requirement.
-Bind the project's explicit read-only contracts, adapters and verification
-inputs in Team `validation_context`. Keep them byte-identical; record notes and
-diagnostic checks privately when their locations are not authorized deliverables.
+   | Tier | When It Applies | Subagents | Branches / Worktrees | `.runtime-proof` Ceremony |
+   | --- | --- | --- | --- | --- |
+   | **`read-only`** | Fetching/inspecting/summarizing data without repo edits, code questions, debugging diagnosis, or explicit read-only / single-step plan mode | **0** | **No** | **None** |
+   | **`direct`** *(Default for ordinary work)* | Data-fetching/transformation scripts, API/DB queries, single-page or single-component UI, copy/style/config/docs updates, small 1–3 file greenfield prototypes, or localized 1–3 file bugfixes/features without high-risk shared-contract blast radius | **0** *(main agent executes & checks inline)* | **No** *(unless user asked)* | **None** *(no `quickstart`, `mission.py`, or `team.py`)* |
+   | **`managed-single`** | Cross-cutting change, shared public CLI/API/library contract with a high-risk domain (`security_boundary`, `destructive_migration`, `concurrency_or_recovery`, `strict_performance_or_streaming`, `visual_craft_system`) or 4+ write files, 2+ intersecting high-risk domains, 4+ file / detail-reviewed greenfield app, or user-requested QA | **1 `impl` + 1 `qa`** *(never split into extra writers)* | **No** *(unless user asked)* | `team.py quickstart` |
+   | **`team-parallel`** | User requested team split, **or** 2+ genuinely independent deliverables that **all** satisfy: `disjoint_write_scopes`, `stable_interface`, `independent_checks`, and `estimated_write_files >= 2` | **2+ disjoint owners + 1 `qa`** | **No** *(unless user asked)* | `team.py quickstart` (`tasks: [...]`) or `greenfield` `team.py init` |
+   | **`corporate`** | `HARRTEST_CORPORATE_GOAL` set or explicit Corporate / `schema: 4` root request | **`plan_review` + `coverage_review` + owner(s) + `qa`** | **No** *(unless user asked)* | `corporate-v1` root + `team.py` |
 
-Map every requirement to affected contracts/components, risks, owners and
-observable acceptance checks. Cite repository paths and exact source identity,
-user decisions, real observations or version-matched official sources for
-consequential choices. Ask only about unresolved material decisions. If a
-destructive conflict survives reasonable compatible alternatives, get and
-record the user's specific decision before changing that behavior. Preserve it
-without approval and continue independent work; only dependent TODOs are blocked.
+- **Optional 1-command threshold check** (for borderline tasks, no temp file needed):
+  ```text
+  python -B "<skill_base_dir>/scripts/team.py" --project "." threshold --kind <kind> --write-files <N>
+  ```
+- **Hard anti-bloat rule:** Never split a single page, single data pipeline, or shared invariant across multiple subagents, and never spawn subagents per file or per quality layer.
 
-Use measured test duration, dependency impact and observed workload in planning.
-Label estimates and assumptions; revise them after the first measured result.
-Never fabricate precision or treat an agent's confidence as evidence.
+## Direct Execution Workflow (`read-only` & `direct` — Ordinary Daily Tasks)
 
-## Choose scopes and execute
+When the threshold resolves to **`read-only`** or **`direct`**:
+1. **Inspect concisely (1–3 tool calls):** Read only the directly relevant files, endpoints, schemas, or callers. If the user asked for a read-only plan or single-step plan revision, return only that concise plan or revised step and stop.
+2. **Execute directly in the current agent:** Fetch the data or edit/create the target file(s) directly—preserve surrounding behavior, conventions, and error handling without creating `.runtime-proof/` state or spawning workers.
+3. **Verify proportionally:** Run the smallest real check covering the result (script/query execution, targeted test, typecheck, or build) and report clearly.
 
-For substantial changes follow [the Corporate workflow](references/corporate-workflow.md).
-Use a schema-4 root with `protocol: corporate-v1` and a schema-2 Team plan.
-Set `root_protocol: corporate-v1` on the reviewed Team plan. Collect the actual
-baseline, build the root draft from it, and seal the independently reviewed plan
-and checks before requesting implementation packets.
-Keep the original verification meaning of existing schema-2/3 roots and schema-1
-teams; do not migrate active contracts silently.
+## Managed Workflow (`managed-single` & `team-parallel` — Above Threshold Only)
 
-Before the first edit, map each requested behavior to an existing responsibility,
-the owning files, a stable input/output contract and a check it can pass alone.
-One coherent responsibility can use one native implementation owner and a distinct
-testing/review worker through Team schema2. Record why the scope cannot usefully
-split. Keep its scope, baseline, checks and six layer verdicts in the QA evidence.
-Two separately testable responsibility changes require separate implementation
-owners and the corporate-v1 root, even when they fit one feature or share an API.
-Compare the nearest viable split against real interfaces. A shared end-to-end test
-does not make components dependent if they can each pass a check against that interface.
-Small changes still require independent testing on the integrated source.
+When user intent or task risk crosses into **`managed-single`** or **`team-parallel`**, start as coordinator. **Do not** waste tool calls reading `VERSION` or reference markdown files unless a specialized mode at the bottom applies (`HARRTEST_CORPORATE_GOAL`, `greenfield` new product, browser UI, or simulation). `team.py quickstart` pins `VERSION` automatically.
 
-Split along existing component/interface boundaries. Agree on the interface first
-so matching implementation scopes can run in parallel. A real dependency waits
-for its prerequisite handoff when a stable shared contract cannot resolve it.
-Give each worker the original goal, necessary context, read/write scope, lifecycle
-invariants, baseline, risks and independent checks. Count implementation owners
-by their assigned product changes and actual handoffs.
+### 1. Focused Inspection (2–4 tool calls)
+- Read only the affected entrypoints, callers, config/options, and adjacent existing tests.
+- Map every requested behavior, error/no-op boundary, security risk (symlinks/hardlinks/aliasing, relative paths/`chdir`, metadata leakage), and performance/streaming invariant.
 
-Use native workers for independently deliverable implementation scopes. Dispatch
-ready independent tasks together; dependent tasks wait for current handoffs.
-A narrow change has one implementation owner and an independent tester.
-At each major component, test the nearest viable split again: can the proposed
-part ship its own artifact through a stable interface, change disjoint files,
-and be checked on its own? If yes, give it an implementation owner. If it shares
-a write path or invariant, keep ownership together; use a focused reviewer
-when the part has a materially different quality risk. Do not invent extra
-files or count a reviewer as an implementation owner.
-For example, a vehicle asset can be owned separately from a course and its
-driving state. Wheels tied to the vehicle model can stay with that owner while a
-reviewer checks their actual geometry, alignment and motion. In a service, a
-replayable migration and a consumer can have separate owners; a data invariant
-that spans both still needs an independent integration check.
-Reuse the active model and effort unless the user selected otherwise.
-Pass those values explicitly to every native worker call when the host exposes
-them, including built-in testing/review agents: a built-in agent can have a
-different default model from the main session. Check actual configured/invoked
-worker metadata, not only a dispatch request or first-dispatched-model label.
-If the host cannot honor a required pin, retain the result with that limitation;
-do not report it as a same-model comparison.
+### 2. One-Command Pre-Edit Admission (`team.py quickstart`)
+Before **any** product edit, write `.runtime-proof/quickstart.json` and run:
+```text
+python -B "<skill_base_dir>/scripts/team.py" --project "." quickstart --spec .runtime-proof/quickstart.json
+```
+Minimal `.runtime-proof/quickstart.json` (use forward slashes):
+```json
+{
+  "id": "mission",
+  "request": "<exact verbatim user request>",
+  "contract": "<shared architecture, interface, error-atomicity, security, and performance/streaming invariants>",
+  "outputs": ["src/pkg/mod.py", "tests/test_feature.py", "docs/usage.rst"],
+  "read_sources": ["tests/test_existing.py"],
+  "validation_context": [],
+  "baseline_check": {
+    "command": ["{python}", "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "tests/test_existing.py"],
+    "stdout_contains": "passed",
+    "timeout_seconds": 120
+  },
+  "acceptance_check": {
+    "command": ["{python}", "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "tests/test_feature.py", "tests/test_existing.py"],
+    "stdout_contains": "passed",
+    "timeout_seconds": 120
+  },
+  "preserved_behavior": {
+    "path": "src/pkg/mod.py",
+    "location": "public CLI/API entrypoint",
+    "behavior": "Unchanged behavior, exit codes, and output format when new opt-in is not used."
+  }
+}
+```
+- **List every file the implementer will edit or create in `outputs`** (product code, new/updated test files, and docs). `quickstart` auto-detects planned new files as absent at baseline, computes SHA-256s for existing files, seals `proof.py`, executes `baseline_check` on untouched source, initializes the `preservation-v1` ledger, registers the `schema: 2` `review-loop-v1` Team, and returns the ready native worker packet(s).
+- Keep **one owner (`"impl"`, default)** for cohesive features sharing an invariant. Pass `"tasks": [{"id": "core", "outputs": [...]}, {"id": "cli", "outputs": [...]}]` only when genuinely disjoint deliverables have a stable interface and independent checks.
+- Put read-only contract files that must stay byte-identical in `validation_context`.
 
-Keep one writer per file at a time, including configuration. Route fixes to the
-existing owner, refresh dependent handoffs and reintegrate. Support real deletions
-and renames; integration can be validation-only. Inspect native status and receipts
-before repeating waits. Completed workers need a next action, not indefinite waits.
-Keep each repair within the reviewed responsibility, even when the same file
-contains unrelated behavior. If observed baseline behavior and its documented
-contract disagree, record both and resolve the impact on the request before
-changing that behavior.
+### 3. Scoped Native Implementation (`task` -> `handoff --note`)
+- Dispatch each ready packet using the native `task` tool:
+  - `name`: exact packet `task_name` (e.g. `"impl"`)
+  - `prompt`: exact packet `message` (do not summarize or replace it!)
+  - `agent_type`: `"general-purpose"`
+  - `mode`: `"background"` (retain `agent_id`). **Wait discipline:** When no other ready worker packet exists, **end your turn immediately** after launching `task(mode="background")` to await the completion notification—do **not** run extra searches or poll `read_agent` while waiting; once notified, call `read_agent(agent_id, wait=True)` once.
+- **Coordinator rule:** Never edit worker-owned product files directly.
+- **Worker rule:** Use native editor tools (`apply_patch` / `edit` / `create` — never shell redirection) so native `fileEdits` provenance is recorded; run both new and existing tests; fix any warnings-as-errors or test-helper signature bugs; finish with `team.py ... handoff --team mission --task <owner> --note "<summary>"`.
 
-The coordinator resolves interfaces and integrates returned work. Independent QA
-exercises actual behavior on current source and does not edit the product.
-Independent review checks the diff, evidence relevance and project constraints.
-It also checks whether the plan grouped separable work and whether independent
-owners actually overlapped when the host had the capacity.
-These roles are distinct from the implementer. Record actual worker identities
-and capability limits; do not label unsupported host provenance verified.
-[Team contracts and host evidence](references/production-teams.md)
-For narrow work use that guide's minimal schema2 sequence and actual returned
-worker/QA packets. A handcrafted prompt can lose the handoff and verification
-contract. Review instructions must allow FAIL and UNVERIFIED findings, as well
-as PASS and justified NOT_APPLICABLE; do not bias reviewers toward acceptance.
-Select the actual host before sealing the team plan. In Copilot, give the native
-`task` tool the exact `task_name` as `name` and the returned `message` as `prompt`.
-Use only the description for a friendlier label. The returned testing name is
-`qa`. Choose a worker allowed to run checks and save private proof artifacts.
-Keep its product scope read-only. If a built-in reviewer forbids all writes,
-use another permitted worker type with the same `qa` name. Verify the current
-native Team after the testing worker completes. If the original Copilot QA
-actor is unavailable after reconnecting, follow the limited recovery sequence
-in the [Team guide](references/production-teams.md#repair-and-review-again).
+### 4. Integrate & Run Independent 6-Angle Adversarial QA (`integrate` -> `task(qa)` -> `qa-submit`)
+- Run:
+  ```text
+  python -B "<skill_base_dir>/scripts/team.py" --project "." integrate --team mission
+  ```
+- Dispatch the returned `qa` packet via `task` (`name: "qa"`, `prompt`: exact `qa.message`, `agent_type: "general-purpose"`, `mode: "background"`), **end your turn immediately** to await notification, then call `read_agent(qa_agent_id, wait=True)` once.
+- Independent `qa` keeps product files strictly read-only, inspects `git diff HEAD`, writes & runs an independent adversarial probe in `.runtime-proof/qa_probe.py` covering all **6 layers** (`functionality`, `preservation`, `architecture`, `security`, `performance`, `resilience` + upstream test-suite validity), writes `.runtime-proof/teams/mission/qa-summary.json`, and runs `team.py qa-submit --team mission --summary ... --verdict pass|fail -- <ACTUAL_ARGV>`.
 
-## Assess all quality layers
+### 5. Owner Repair Loop & Final Verification (`repair` -> `verify`)
+- If `qa` returns `fail`, do **not** stop or edit code as coordinator. Run the printed repair command:
+  ```text
+  python -B "<skill_base_dir>/scripts/team.py" --project "." repair --team mission --task <owner> --evidence .runtime-proof/teams/mission/qa-evidence.json --observation "<scoped fix plan>" --refresh-note "<source diagnosis>"
+  ```
+- Send the returned `packet.message` to the original owner's `agent_id` with `write_agent` + `read_agent(wait=True)`, re-run `integrate`, and send the fresh `qa` packet to the original `qa` `agent_id` with `write_agent` + `read_agent(wait=True)` so `qa` re-runs fresh checks and resolves every prior finding ID. (For evidence-only blockers with `owner: null`, resume `qa` without dummy product edits.)
+- Finally run:
+  ```text
+  python -B "<skill_base_dir>/scripts/team.py" --project "." verify --team mission
+  ```
+  Claim verified completion **only** when `verify` returns `"passed": true` and all required checks pass on current source.
 
-Assess each layer for every change. Choose checks from actual impact and project
-policy, rather than programming language alone:
+## Quality & Preservation Invariants
+- **Preservation:** Replay unchanged paths, empty inputs, and rejected/error operations; partial failures must leave existing files/state byte-identical and clean up temporary files.
+- **Security:** Enforce destination symlink/hardlink/alias rejection, relative-path anchoring against initial invocation directory, and strict schema non-leakage.
+- **Performance:** Zero extra traversal or I/O when an opt-in is unused; for streaming features, flush incrementally per item without O(N) serialized buffering.
+- **Anti-Theater Tests:** Derive expected results from the contract, not the implementation; verify newly added upstream tests actually pass under project warning/runner settings without broken mocks or signatures.
 
-| Layer | Reasoning and evidence |
-| --- | --- |
-| Functionality | Requirement-derived outputs, boundaries and negative cases with independent expected results. |
-| Preservation | Existing callers, contracts, old inputs/outputs and relevant before/after regression checks. |
-| Architecture | Project conventions, responsibility boundaries, dependency direction, diff review, types and static checks. |
-| Security | Changed trust boundaries, input handling, authorization, secrets and dependency risks; misuse tests and analysis. |
-| Performance | Relevant latency, throughput, allocation or resources; repeated same-workload measurement with noise and limits. |
-| Resilience | Relevant persistence, migration, retries, cancellation, recovery, concurrency and resource lifetime. |
-
-Use project security requirements first. Apply risk-based design review and
-security testing, drawing on [Microsoft SDL](https://www.microsoft.com/en-us/securityengineering/sdl/practices)
-where supporting guidance is needed. A scanner cannot prove absence of vulnerabilities.
-Missing required tooling is an unverified check, not a clean result.
-
-Check interactions between layers. A restriction, filter, validation, cleanup or
-data transformation must both handle its intended target and preserve legitimate
-nearby cases. Derive rejected/changed and allowed/unchanged boundary examples from
-the contract, including plausible near matches. Removing every sensitive value
-does not establish correctness if useful nonsensitive structure or authorized
-behavior was lost. Review broad heuristics against the preserved contract rather
-than treating a stricter-looking result as automatically safer.
-For multi-step behavior, establish the intermediate invariants as well as the
-final result. A valid final value or successful final response does not show
-that intermediate operations, partial failures or state transitions were legal.
-For each affected input boundary, derive checks from the whole relevant contract,
-including optional controls and failure triggers. Exercise the valid alternate
-values and malformed shapes or types the contract rejects. For a rejected
-operation that can cause side effects, assert the before/after state at the
-rejection boundary as well as the public response.
-When changing operation order, compare old and new paths that do no work
-(empty input, early exit, unsuccessful parse or zero iterations). Preserve
-their established outcomes without growing the public input domain.
-For an affected representation or conversion, check valid boundary values that
-still have representable outputs. Cite the accepted input domain and actual
-runtime limits. If a runtime cannot honor the contract at that boundary, retain
-the failing observation and resolve the contract impact before claiming completion.
-
-Every required layer must PASS. NOT_APPLICABLE requires impact reasoning, cited
-evidence and separate review. Missing checks remain UNVERIFIED. A failed major
-criterion cannot be offset by an aggregate score. Do not weaken thresholds,
-delete useful tests, change an oracle to match an answer or substitute a mock for
-the actual integration to pass acceptance.
-
-Use project performance budgets. If absent, establish workload, method and
-justified tolerance before optimizing and bind them to the plan. Preserve output
-correctness, contracts and resource safety. Separate startup, warm-up and steady
-state. Inconclusive measurements require better measurement, not a product change
-made on an unsupported hypothesis.
-
-## Evidence before acceptance
-
-Retain requirement -> decision/source -> action -> observation -> assertion ->
-artifact -> review. Bind evidence to current content, including uncommitted files,
-tests, configuration and dependency locks. Commit identity alone is insufficient.
-Keep commands, tool/environment versions, actual exit results and failed attempts.
-Limit sensitive capture at the source; record redaction and rebind changed evidence.
-Keep private evidence in `.runtime-proof/`, not public project artifacts.
-
-For narrow Team work, run the finite integrated check and verify its current
-native QA receipt before spending time on optional diagnostics. For a sealed
-root, run checks through `proof.py` and verify with `root_gate.py verify`.
-Corporate acceptance binds the plan at sealing and requires
-current-source checks and independent review for all six layers. A path/hash
-establishes identity, not whether a citation supports a claim: the reviewer must
-record that judgment. Local records are cooperative evidence, not a hostile-writer
-security boundary. [Limits](references/security-and-limitations.md)
-
-Reproduce, explain, repair with the owner, rerun and inspect. Preserve existing
-tests and add meaningful tests for changed behavior; test counts are not quality.
-Use [acceptance and test quality](references/acceptance-and-test-quality.md) for
-independent oracles and safe negative controls.
-For a newly found issue, replay the same observation against the pinned baseline
-and the current source. Record its impact on the agreed requirements before
-routing repair. Keep inherited out-of-scope findings visible and keep affected
-requirements open until their failures are resolved.
-For an inherited defect outside the change, cite the unchanged source, compare
-its trigger and observable result before and after, and explain why it cannot
-affect any changed requirement or trust boundary before accepting the scoped work.
-If the change interacts with the defect or project policy disallows it, keep the
-affected layer open.
-
-Load domain instructions only when actual behavior needs them:
-[visible output](references/quality-intent.md), [browser behavior](references/web-validation.md),
-[CLI/agent execution](references/cli-agent-validation.md), or
-[simulation](references/simulation-validation.md). Visual/motion evidence applies
-only to criteria that need it. For new products establish contracts and intended
-quality first; preserve any affected existing behavior explicitly.
-
-For cumulative work use [Builder](references/project-builder.md); for legacy Gold
-comparisons use [the Gold runbook](references/v4-gold.md). Retrieve source-qualified
-[memory](references/project-context-memory.md) without replacing the request or
-carrying stale facts into a new revision.
-
-## Continue until the agreed result is verified
-
-Keep ordinary diagnosis and repair in the active mission. A handoff, failed review
-or attempt timebox is not completion. Respect authorization, actual resource
-limits, cancellation and host limits. Report missing capabilities honestly while
-continuing useful authorized work.
-Use current independent QA to verify ledger items, and reconcile every original
-requirement at the final gate. Reopen stale or failed evidence; IMPLEMENTED is
-not VERIFIED. If any mandatory work or existing root gate remains open, report
-the affected requirements as incomplete alongside results already established.
-
-For harness improvement keep product edits and task-specific repair coaching out
-of the experiment. Improve the general mechanism, pin a new version and retain
-all results. A case used to guide improvement becomes development data; use fresh
-acceptance cases. Predeclare comparisons and record cost for every worker.
-
-Report implemented behavior, contributions, current-source layer verdicts,
-before/after measurements and unresolved findings. Claim verified only within the
-checked scope. Corporate is a version name; evidence establishes its assurance.
+## Specialized Modes (Load Reference Only When Needed)
+- **Enrolled Corporate Root (`HARRTEST_CORPORATE_GOAL` set or explicit schema-4 Corporate request):** Read [corporate-workflow.md](references/corporate-workflow.md). Save/reuse original request, use `decomposition: "reviewed-v1"` and `root_protocol: "corporate-v1"`, run `plan_review` and `coverage_review`, and `root_gate.py seal` before `team.py packets`, then `root_gate.py verify` at completion.
+- **New Product from Scratch (`greenfield`):** Read [quality-intent.md](references/quality-intent.md) and [production-teams.md](references/production-teams.md). Use `kind: "greenfield"`, `decomposition: "reviewed-v1"`, and `integration.detail_review` for visual/consequential details.
+- **Browser / Simulation / Multi-Stage Builder / Memory:** Read [web-validation.md](references/web-validation.md), [simulation-validation.md](references/simulation-validation.md), [project-builder.md](references/project-builder.md), or [project-context-memory.md](references/project-context-memory.md).

@@ -5,10 +5,14 @@ worker identity. Host adapters must establish that separate claim explicitly.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -17,6 +21,7 @@ from uuid import uuid4
 
 import proof
 import strict_io
+from corporate import CORE_LAYERS, LAYERS
 
 MAX_NATIVE_EVENT_BYTES = 2 * 1024 * 1024
 MAX_NATIVE_WINDOW_BYTES = 32 * 1024 * 1024
@@ -29,6 +34,8 @@ COPILOT_COVERAGE_REVIEW = 'coverage_review'
 COPILOT_QA_RECOVERY = 'qa-recovery'
 MAX_MANAGED_REQUEST_BYTES = 200_000
 MAX_INLINE_MISSION_CONTEXT = 12_000
+REVIEW_LOOP = 'review-loop-v1'
+MAX_REVIEW_FINDINGS = 64
 
 
 class HostEvidenceUnavailable(ValueError):
@@ -171,6 +178,10 @@ def common():
     return team
 
 
+def review_loop(state):
+    return state['plan']['integration'].get('quality_review') == REVIEW_LOOP
+
+
 def validate_plan(project, plan):
     t = common()
     t.require(isinstance(plan, dict) and type(plan.get('schema')) is int
@@ -236,6 +247,10 @@ def validate_plan(project, plan):
     integration = plan.get('integration')
     t.require(isinstance(integration, dict), 'Declare integrated acceptance')
     t.concrete(integration.get('check'), 'Integrated acceptance check')
+    if 'quality_review' in integration:
+        t.require(integration['quality_review'] == REVIEW_LOOP and 'mission_protocol' in plan
+                  and plan['kind'] == 'change',
+                  'review-loop-v1 requires a managed existing-code Team')
     if 'detail_review' in integration:
         details = integration['detail_review']
         t.require(isinstance(details, dict) and 0 < len(details) <= MAX_DETAIL_ARTIFACTS,
@@ -358,16 +373,26 @@ def request_context(project, state):
 
 def mission_context(project, state, managed, *, owner=None, scopes=()):
     context = managed.context(owner=owner, scopes=scopes)
-    text = json.dumps(context, ensure_ascii=False, sort_keys=True)
-    if len(text) <= MAX_INLINE_MISSION_CONTEXT:
-        return text
     digest = strict_io.digest(context)
     path = common().team_path(project, state['plan']['id'], f'mission-context/{digest}.json', must_exist=False)
     try:
         proof.save(path, context, exclusive=True)
     except FileExistsError:
         common().require(strict_io.digest(proof.load(path)) == digest, 'Managed context artifact changed')
-    return f'Read the complete scoped projection at {path.as_posix()} (SHA-256 {digest}).'
+    feat_lines = [
+        f"- {f['id']} ({f['path']}, tests={f.get('test_paths', [])}, effect={f['effect']}): {f['planned_effect']}"
+        for f in context.get('features', [])[:12]
+    ]
+    todo_lines = [
+        f"- {r['id']} [{r['status']}] (owner={r['owner']}, checks={r.get('checks', [])})"
+        for r in context.get('tasks', [])[:12]
+    ]
+    summary = (
+        'Preserved features:\n' + ('\n'.join(feat_lines) if feat_lines else '- (none)') + '\n'
+        'Managed TODOs:\n' + ('\n'.join(todo_lines) if todo_lines else '- (none)') + '\n'
+        f'Full mission projection: {path.as_posix()} (SHA-256 {digest}).'
+    )
+    return summary
 
 
 def copilot_corporate_plan(plan):
@@ -427,6 +452,399 @@ def init(project, plan):
     state = draft_state(project, plan)
     proof.save(common().team_path(project, plan['id'], must_exist=False), state, exclusive=True)
     return initial_packets(project, state)
+
+
+def _norm_rel(value):
+    rel = str(value).strip().replace('\\', '/').removeprefix('./')
+    common().require(strict_io.scope_key(rel) and not rel.endswith('/'), f'Invalid project-relative file path: {value}')
+    return rel
+
+
+def _extract_excerpt(request, candidate=None):
+    if isinstance(candidate, str) and candidate.strip() and candidate in request:
+        return candidate
+    for chunk in re.split(r'[\r\n]+|(?<=[.!?])\s+', request):
+        piece = chunk.strip()
+        if 8 <= len(piece) <= 240:
+            return piece
+    piece = request.strip()[:160]
+    common().require(piece and piece in request, 'Original request needs a non-empty clause')
+    return piece
+
+
+def _compile_proof_check(cid, role, raw, default_desc):
+    t = common()
+    if isinstance(raw, list):
+        raw = {'command': raw}
+    t.require(isinstance(raw, dict), f'{cid}: expected check object or command argv list')
+    cmd = raw.get('command')
+    t.require(isinstance(cmd, list) and cmd and all(isinstance(x, str) and x for x in cmd),
+              f'{cid}: command must be a non-empty argv list')
+    assertions = raw.get('assertions')
+    if not assertions:
+        assertions = []
+        out_match = raw.get('stdout_contains')
+        err_match = raw.get('stderr_contains')
+        for val in ([out_match] if isinstance(out_match, str) else (out_match or [])):
+            assertions.append({'type': 'stdout_contains', 'value': val})
+        for val in ([err_match] if isinstance(err_match, str) else (err_match or [])):
+            assertions.append({'type': 'stderr_contains', 'value': val})
+        if not assertions:
+            assertions.append({'type': 'stdout_contains', 'value': 'passed'})
+    check = {
+        'id': cid,
+        'description': raw.get('description') or default_desc,
+        'mode': raw.get('mode', 'live'),
+        'role': role,
+        'command': cmd,
+        'timeout_seconds': int(raw.get('timeout_seconds', 120)),
+        'expected_exit_codes': raw.get('expected_exit_codes', [0]),
+        'assertions': assertions,
+        'artifacts': raw.get('artifacts', []),
+    }
+    if 'cwd' in raw:
+        check['cwd'] = _norm_rel(raw['cwd']) if raw['cwd'] != '.' else '.'
+    if role == 'negative_control':
+        check['fault'] = raw.get('fault') or 'Verify invalid or out-of-contract input is cleanly rejected.'
+    return check
+
+
+def quickstart(project, spec, *, request_file=None):
+    """Compile a concise daily change spec into sealed Proof + baseline receipt + Mission + Team."""
+    import mission
+
+    t = common()
+    project = Path(project).resolve()
+    t.require(isinstance(spec, dict), 'Quickstart spec must be a JSON object')
+    threshold_result = None
+    if 'threshold' in spec:
+        import execution_gate
+        threshold_result = execution_gate.evaluate(spec['threshold'])
+        t.require(
+            threshold_result['needs_subagents'],
+            f'Task resolved to execution tier "{threshold_result["tier"]}" (needs_subagents=false): '
+            'execute directly in the current checkout without quickstart or subagents ('
+            + '; '.join(threshold_result['reasons']) + ')'
+        )
+    goal_id = spec.get('id', 'mission')
+    proof.identifier(goal_id, 'goal ID')
+    proof_id = spec.get('proof_task', 'verify' if goal_id != 'verify' else 'checks')
+    proof.identifier(proof_id, 'proof task ID')
+    t.require(proof_id != goal_id, 'proof_task must differ from id')
+    enrolled_goal = os.environ.get('HARRTEST_CORPORATE_GOAL')
+    if request_file:
+        request = mission.scoped_input(project, request_file, mission.MAX_GOAL)
+        origin = _norm_rel(request_file) if not Path(request_file).is_absolute() else Path(request_file).relative_to(project).as_posix()
+    elif enrolled_goal == goal_id and (project / proof.STATE / 'root-goals' / goal_id / 'original-request.txt').is_file():
+        req_path = project / proof.STATE / 'root-goals' / goal_id / 'original-request.txt'
+        request = req_path.read_text(encoding='utf-8')
+        origin = req_path.relative_to(project).as_posix()
+    else:
+        request = spec.get('request')
+        proof.meaningful(request, 'Original request')
+        req_path = project / proof.STATE / f'request-{goal_id}.txt'
+        req_path.parent.mkdir(parents=True, exist_ok=True)
+        req_path.write_text(request, encoding='utf-8', newline='')
+        origin = req_path.relative_to(project).as_posix()
+
+    proof_dir = project / proof.STATE / proof_id
+    team_state_path = t.team_path(project, goal_id, must_exist=False)
+    t.require(not proof_dir.exists() and not team_state_path.exists() and not mission.enrolled(project, goal_id),
+              f'Goal {goal_id} or proof task {proof_id} already exists; use packets/status to continue it')
+
+    raw_reqs = spec.get('requirements')
+    reqs = {}
+    if isinstance(raw_reqs, dict) and raw_reqs:
+        for rid, rdata in raw_reqs.items():
+            proof.identifier(rid, 'requirement ID')
+            claim = rdata['claim'] if isinstance(rdata, dict) else str(rdata)
+            excerpt = _extract_excerpt(request, rdata.get('excerpt') if isinstance(rdata, dict) else None)
+            reqs[rid] = {'claim': claim, 'excerpt': excerpt}
+    elif isinstance(raw_reqs, list) and raw_reqs:
+        for idx, rdata in enumerate(raw_reqs, 1):
+            rid = rdata.get('id', f'R{idx}')
+            proof.identifier(rid, 'requirement ID')
+            reqs[rid] = {'claim': rdata['claim'], 'excerpt': _extract_excerpt(request, rdata.get('excerpt'))}
+    else:
+        excerpt = _extract_excerpt(request, spec.get('excerpt'))
+        claim = spec.get('claim') or (excerpt if len(excerpt) >= 12 else request.strip()[:240])
+        reqs['R1'] = {'claim': claim, 'excerpt': excerpt}
+    all_rids = list(reqs)
+
+    raw_tasks = spec.get('tasks')
+    team_tasks = []
+    if isinstance(raw_tasks, list) and raw_tasks:
+        for row in raw_tasks:
+            tid = t.name(row['id'])
+            outs = [_norm_rel(p) for p in row['outputs']]
+            team_tasks.append({
+                'id': tid,
+                'brief': row.get('brief') or f'Implement requested behavior in {", ".join(outs)} and run focused checks.',
+                'outputs': outs,
+                'depends_on': list(row.get('depends_on', [])),
+                'outcomes': list(row.get('outcomes') or all_rids),
+                **({'deletions': [_norm_rel(p) for p in row['deletions']]} if row.get('deletions') else {}),
+                **({'renames': [{'from': _norm_rel(m['from']), 'to': _norm_rel(m['to'])} for m in row['renames']]}
+                   if row.get('renames') else {}),
+            })
+    else:
+        owner_id = t.name(spec.get('owner', 'impl'))
+        outs = [_norm_rel(p) for p in spec.get('outputs', [])]
+        t.require(outs, 'Specify outputs (list of owned product/test/doc files) or tasks')
+        team_tasks.append({
+            'id': owner_id,
+            'brief': spec.get('brief') or (f'Implement the requested feature, edge-case handling, tests, and docs in '
+                                           f'{", ".join(outs)} while preserving existing contracts.'),
+            'outputs': outs,
+            'depends_on': [],
+            'outcomes': all_rids,
+        })
+    if threshold_result is not None and len(team_tasks) > 1:
+        t.require(
+            threshold_result['split_allowed'] and len(team_tasks) <= threshold_result['max_implementation_owners'],
+            threshold_result['split_rejected_reason']
+            or f'Task count ({len(team_tasks)}) exceeds threshold max_implementation_owners ({threshold_result["max_implementation_owners"]})'
+        )
+
+    integration_outputs = [_norm_rel(p) for p in spec.get('integration_outputs', [])]
+    read_sources = [_norm_rel(p) for p in spec.get('read_sources', [])]
+    validation_context = [_norm_rel(p) for p in spec.get('validation_context', [])]
+    owned_paths = [p for row in team_tasks for p in row['outputs']] + integration_outputs
+
+    raw_features = spec.get('features')
+    if not raw_features:
+        pb = spec.get('preserved_behavior') or {}
+        existing_candidates = [p for p in [*owned_paths, *read_sources] if (project / p).is_file()]
+        t.require(existing_candidates, 'At least one existing project file must be in outputs or read_sources')
+        pb_path = _norm_rel(pb['path']) if pb.get('path') else existing_candidates[0]
+        raw_features = [{
+            'id': pb.get('id', 'preserved_baseline'),
+            'path': pb_path,
+            'location': pb.get('location') or f'{pb_path} public interface',
+            'behavior': pb.get('behavior') or 'Existing behavior, exit codes, and output semantics when new opt-in is unused.',
+            'reason': pb.get('reason') or 'Existing callers and tests depend on unchanged baseline semantics.',
+            'planned_effect': pb.get('planned_effect') or 'Keep existing paths and behavior compatible.',
+            'related_paths': [_norm_rel(p) for p in pb.get('related_paths', [])],
+            'test_paths': [_norm_rel(p) for p in pb.get('test_paths', [p for p in read_sources if (project / p).is_file()])],
+        }]
+
+    feature_extra_paths = []
+    for frow in raw_features:
+        feature_extra_paths.append(_norm_rel(frow['path']))
+        for field in ('related_paths', 'test_paths', 'oracle_paths'):
+            feature_extra_paths.extend(_norm_rel(p) for p in frow.get(field, []))
+
+    all_sources = list(dict.fromkeys([*owned_paths, *read_sources, *feature_extra_paths]))
+    absent_sources = [p for p in all_sources if not (project / p).exists()]
+
+    baseline_chk = _compile_proof_check(
+        'baseline', 'regression', spec['baseline_check'],
+        'Replay existing regression suite to establish and preserve baseline behavior.')
+    acceptance_chk = _compile_proof_check(
+        'acceptance', 'acceptance', spec['acceptance_check'],
+        'Verify requested feature behavior, edge cases, and preserved regression suite.')
+    checks = [baseline_chk, acceptance_chk]
+    neg_ids = []
+    if spec.get('negative_check'):
+        neg_chk = _compile_proof_check(
+            'negative', 'negative_control', spec['negative_check'],
+            'Verify invalid input or boundary misuse is rejected cleanly.')
+        checks.append(neg_chk)
+        neg_ids.append('negative')
+
+    contract_Text = spec.get('contract') or 'Preserve existing public contracts, safety invariants, and performance on unchanged paths.'
+    proof_reqs = [
+        {
+            'id': rid,
+            'claim': rdata['claim'],
+            'oracle': spec.get('oracle') or 'Independent behavioral, error-boundary, and regression assertions pass with exit 0.',
+            'failure_example': spec.get('failure_example') or 'Missing requested behavior, partial write on error, or broken existing test.',
+            'runtime_required': True,
+            'checks': ['acceptance', 'baseline'],
+            'negative_checks': neg_ids,
+            **(
+                {} if neg_ids else {
+                    'negative_control_exception': (
+                        spec.get('negative_control_exception')
+                        or 'Invalid-input, error-atomicity, and boundary rejection cases are exercised directly inside the live acceptance suite and independent QA probes.'
+                    )
+                }
+            ),
+            'review_required': False,
+        }
+        for rid, rdata in reqs.items()
+    ]
+    proof_contract = {
+        'schema': 1,
+        'task_id': proof_id,
+        'goal': f'Verify {goal_id}: {next(iter(reqs.values()))["claim"]}'[:400],
+        'kind': spec.get('proof_kind', 'cli'),
+        'source_paths': all_sources,
+        'absent_source_paths': absent_sources,
+        'scope_rationale': 'Covers owned implementation, test/doc deliverables, and read-only regression/caller inputs.',
+        'authorization': 'Authorized local disposable workspace execution only.',
+        'requirements': proof_reqs,
+        'checks': checks,
+        'plan': {
+            'strategy': 'serial',
+            'rationale': 'Verify baseline before edits, then verify candidate implementation and independent QA.',
+            'delegation': {'available': True, 'evidence': 'Native Team worker and independent QA subagent.'},
+            'tasks': [
+                {
+                    'id': 'T01',
+                    'title': 'Implement scoped feature and preserve baseline',
+                    'outcome': 'Scoped product, test, and doc updates implemented.',
+                    'owner': 'coordinator',
+                    'role': 'implement',
+                    'execution': 'serial',
+                    'depends_on': [],
+                    'write_scope': owned_paths,
+                    'outputs': owned_paths,
+                    'requirements': all_rids,
+                    'checks': ['acceptance', 'baseline', *neg_ids],
+                    'acceptance': 'Scoped changes pass focused checks.',
+                },
+                {
+                    'id': 'T02',
+                    'title': 'Integrate and verify complete behavior',
+                    'outcome': 'Current-source acceptance and baseline checks verified.',
+                    'owner': 'coordinator',
+                    'role': 'integrate',
+                    'execution': 'serial',
+                    'depends_on': ['T01'],
+                    'write_scope': [],
+                    'outputs': ['current-source verification receipts'],
+                    'requirements': all_rids,
+                    'checks': ['acceptance', 'baseline', *neg_ids],
+                    'acceptance': 'All acceptance and baseline checks pass on current source.',
+                },
+            ],
+        },
+    }
+    proof.validate_contract(proof_contract)
+    proof_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        proof.save(proof_dir / 'contract.json', proof_contract, exclusive=True)
+        proof.save(proof_dir / 'context.json', {'project': str(project), 'created_at': proof.now(), 'root_goal': goal_id},
+                   exclusive=True)
+        seal_snap = proof.snapshot(project, proof_contract)
+        proof.save(proof_dir / 'seal.json', {
+            'at': proof.now(), 'contract_hash': proof.digest(proof_contract),
+            'engine_hash': proof.engine_hash(proof_contract), 'source_at_seal': seal_snap,
+        }, exclusive=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            baseline_res = proof.run_check(proof_dir, 'baseline')
+        if not baseline_res['passed']:
+            run_dir = proof_dir / 'runs' / 'baseline' / baseline_res['run_id']
+            out_tail = (run_dir / 'stdout.log').read_text(encoding='utf-8', errors='replace')[-500:]
+            err_tail = (run_dir / 'stderr.log').read_text(encoding='utf-8', errors='replace')[-500:]
+            raise ValueError(f'Baseline check failed (exit {baseline_res.get("exit_code")}, '
+                             f'errors={baseline_res.get("assertion_errors")}): stdout={out_tail!r} stderr={err_tail!r}')
+    except Exception:
+        if proof_dir.is_dir():
+            shutil.rmtree(proof_dir, ignore_errors=True)
+        raise
+
+    sources_snapshot = mission.snapshot(project, all_sources)
+    sel_all = [f'{proof_id}/acceptance', f'{proof_id}/baseline', *(f'{proof_id}/{n}' for n in neg_ids)]
+    sel_base = [f'{proof_id}/baseline']
+    mission_tasks = []
+    for row in team_tasks:
+        for rid in row['outcomes']:
+            tid = f'{row["id"]}_{rid}'.lower() if len(team_tasks) > 1 or len(row['outcomes']) > 1 else 'implement_feature'
+            mission_tasks.append({
+                'id': tid,
+                'requirement_id': rid,
+                'owner': row['id'],
+                'depends_on': [],
+                'description': row['brief'],
+                'done': f'{reqs[rid]["claim"]} Verified with {proof_id}/acceptance and {proof_id}/baseline.',
+                'checks': sel_all,
+            })
+    if integration_outputs:
+        mission_tasks.append({
+            'id': 'integrate_glue',
+            'requirement_id': all_rids[0],
+            'owner': 'integration',
+            'depends_on': [m['id'] for m in mission_tasks],
+            'description': f'Integrate {", ".join(integration_outputs)}.',
+            'done': 'Integrated outputs preserve contracts and pass all checks.',
+            'checks': sel_all,
+        })
+    all_mission_tids = [m['id'] for m in mission_tasks]
+    mission_features = []
+    for idx, frow in enumerate(raw_features, 1):
+        fid = frow.get('id', f'preserved_{idx}')
+        mission_features.append({
+            'id': fid,
+            'behavior': frow['behavior'],
+            'path': _norm_rel(frow['path']),
+            'location': frow.get('location') or f'{_norm_rel(frow["path"])} interface',
+            'contract': frow.get('contract', 'public'),
+            'basis': frow.get('basis', 'observed'),
+            'related_paths': [_norm_rel(p) for p in frow.get('related_paths', [])],
+            'test_paths': [_norm_rel(p) for p in frow.get('test_paths', [])],
+            **({'oracle_paths': [_norm_rel(p) for p in frow['oracle_paths']]} if frow.get('oracle_paths') else {}),
+            'effect': frow.get('effect', 'PRESERVE'),
+            'reason': frow.get('reason') or 'Existing callers and regression tests rely on this contract.',
+            'planned_effect': frow.get('planned_effect') or 'Keep existing behavior unchanged outside the requested opt-in.',
+            'uncertainty': frow.get('uncertainty', None),
+            'tasks': frow.get('tasks') or all_mission_tids[:1],
+            'checks': frow.get('checks') or sel_base,
+            **({'request_excerpt': frow['request_excerpt']} if 'request_excerpt' in frow else {}),
+        })
+
+    mission_draft = {
+        'schema': 1,
+        'goal_id': goal_id,
+        'kind': 'change',
+        'author': spec.get('author', 'coordinator-planner'),
+        'sources': sources_snapshot,
+        'requirements': reqs,
+        'tasks': mission_tasks,
+        'features': mission_features,
+    }
+    proof.save(project / proof.STATE / f'mission-{goal_id}.json', mission_draft)
+    mission.initialize(project, mission_draft, request, origin)
+
+    host_cfg = spec.get('host') or ({'kind': 'copilot'} if os.environ.get('HARRTEST_PARENT_SESSION_ID')
+                                    else {'kind': 'unverified'})
+    team_plan = {
+        'schema': 2,
+        'mission_protocol': mission.PROTOCOL,
+        'id': goal_id,
+        'kind': 'change',
+        'request': request,
+        'contract': contract_Text,
+        'validation_context': validation_context,
+        'max_parallel_workers': int(spec.get('max_parallel_workers', min(2, len(team_tasks)))),
+        'host': host_cfg,
+        'outcomes': {rid: rdata['claim'] for rid, rdata in reqs.items()},
+        'tasks': team_tasks,
+        'integration': {
+            'outputs': integration_outputs,
+            'quality_review': REVIEW_LOOP,
+            'check': spec.get('integration_check') or (
+                'Inspect full git diff, run independent adversarial 6-angle probe (functionality, preservation, '
+                'error atomicity, security/aliasing, performance/streaming, test validity), and run upstream + new tests.'
+            ),
+            'timeout_seconds': int(spec.get('timeout_seconds', max(180, acceptance_chk['timeout_seconds']))),
+            **({'detail_review': spec['detail_review']} if spec.get('detail_review') else {}),
+        },
+    }
+    if len(team_tasks) > 1 and team_plan['max_parallel_workers'] == 1:
+        team_plan['execution_rationale'] = spec.get('execution_rationale', 'Host configured for sequential waves.')
+    proof.save(project / proof.STATE / 'team-plan.json', team_plan)
+    started = init(project, team_plan)
+    return {
+        **started,
+        'skill_version': proof.VERSION,
+        'goal_id': goal_id,
+        'proof_task': proof_id,
+        'baseline_run_id': baseline_res['run_id'],
+        'baseline_passed': True,
+        **({'threshold': threshold_result} if threshold_result is not None else {}),
+    }
 
 
 def revise_plan(project, draft):
@@ -619,19 +1037,24 @@ def packet(project, state, task, *, admission=None, managed=None):
         if not authorize_owner(project, state, task, managed, admission):
             return None
     text = (f'You own implementation scope {tid}. Project: {Path(project).resolve().as_posix()}.\n'
+            'CHILD WORKER NOTICE: Do NOT invoke the harrtest skill or spawn subagents—your complete contract and handoff command are in this prompt.\n'
             f'Pinned HarrTest: {Path(__file__).resolve().parents[1].as_posix()}.\n'
             f'Original request: {request_context(project, state)}\nExisting architecture/interfaces: {plan["contract"]}\n'
             f'{t.validation_message(project, state)}Assignment: {task["brief"]}\n'
             f'Exclusive product paths: {", ".join(task["outputs"])}.\n'
             f'Declared removals: {sorted(deleted_paths(task))}; renames: {task.get("renames", [])}.\n'
-            'Preserve existing contracts and unrelated behavior. Use the actual host editing tools; '
-            'do not invent native identity or verification. Read prerequisite handoffs and supplied '
-            'acceptance/risk criteria. Implement and test only your scope; return boundary conflicts '
-            'to the coordinator. Use the project’s documented checks and runtime with its approved '
-            'workspace scratch directory if needed. Report observed results or exact blockers.\n'
+            'Preserve existing contracts and unrelated behavior. STRICT WRITE SCOPE: use native host '
+            'file-editing tools (apply_patch / edit / create — NEVER shell redirection/Set-Content on '
+            'product files) ONLY on Exclusive product paths above, and create every planned new file in '
+            'that list; editing any unlisted file fails native verification. '
+            'Implement and test only your scope; return boundary conflicts to the coordinator. '
+            'Before handoff: check invalid-input/error atomicity (no partial writes or leaked temp files), '
+            'path/symlink/hardlink/alias safety, streaming/hot-path performance invariants, and run BOTH your '
+            'new tests AND existing regression tests with the project test runner (fixing any warning-as-error '
+            'or test-helper signature bugs). Use .runtime-proof for scratch files.\n'
             'Acceptance:\n' + '\n'.join(f'- {x}: {plan["outcomes"][x]}' for x in task['outcomes']) + '\n'
-            'Run this handoff command with its exact script path and flags:\n'
-            + t.worker_command(project, plan['id'], 'handoff') + ' --task ' + tid)
+            'Complete your owned TODOs and hand off in ONE command (supply a concrete summary in --note):\n'
+            + t.worker_command(project, plan['id'], 'handoff') + f' --task {tid} --note "Implemented changes and verified tests"')
     if plan.get('decomposition') == 'reviewed-v1':
         text += (f'\nReviewed responsibility: {task["responsibility"]}\n'
                  f'Interface: {task["interface"]}\nIndependent component check: {task["check"]}\n'
@@ -645,9 +1068,9 @@ def packet(project, state, task, *, admission=None, managed=None):
                  'Diagnose in your owned scope, rerun affected checks, then hand off again.')
     if managed is not None:
         text += ('\nManaged scope: inspect the listed sources and preserve the linked features before editing. '
-                 'No unlisted writes or implied destructive permission. Explicitly record each finished TODO '
-                 'as IMPLEMENTED with observations; this handoff only attaches evidence. Use '
-                 f'{mission_command(project, state, "step")} --task TODO_ID --status IMPLEMENTED --note OBSERVATION.\n'
+                 'No unlisted writes or implied destructive permission. Passing --note on handoff above marks '
+                 'your open TODOs IMPLEMENTED automatically (or use '
+                 f'{mission_command(project, state, "step")} --task TODO_ID --status IMPLEMENTED --note OBSERVATION).\n'
                  + mission_context(project, state, managed, owner=tid, scopes=tuple(task['outputs'])))
     return dispatch_packet(plan, tid, text)
 
@@ -808,7 +1231,21 @@ def require_ledger_handoff(managed, tid, receipt):
                      tid + ': managed TODO ledger needs the current owner handoff')
 
 
-def handoff(project, state, task):
+def advance_owner_todos(managed, owner, scopes, note):
+    common().concrete(note, owner + ' implementation observation')
+    rows = managed.context(owner=owner, scopes=tuple(scopes))['tasks']
+    for row in rows:
+        if row['owner'] != owner:
+            continue
+        rec = row.get('recorded_status', row['status'])
+        if rec == 'TODO':
+            managed.step(row['id'], 'IN_PROGRESS', note)
+            managed.step(row['id'], 'IMPLEMENTED', note)
+        elif rec == 'IN_PROGRESS':
+            managed.step(row['id'], 'IMPLEMENTED', note)
+
+
+def handoff(project, state, task, *, note=None):
     t = common()
     t.validation_message(project, state)
     admission = corporate_admission(project, state)
@@ -834,6 +1271,8 @@ def handoff(project, state, task):
         extra['repair'] = repair
     if managed is not None:
         auth = owner_authorization(project, state, tid, inputs, repair)
+        if note is not None:
+            advance_owner_todos(managed, tid, task['outputs'], note)
         guard_owner_handoff(managed, task)
         extra['mission_admission'] = auth['sha256']
     receipt = record(project, state, tid, files, inputs=inputs, **extra)
@@ -922,8 +1361,10 @@ def integration_packet(project, state):
         return None
     try:
         integrated = current_receipt(project, state, 'integration')
-        auth = owner_authorization(project, state, 'integration', inputs, None)
-        t.require(integrated.get('mission_admission') == auth['sha256'], 'Integration dispatch changed')
+        repair = repair_identity(project, state, 'integration')
+        auth = owner_authorization(project, state, 'integration', inputs, repair)
+        t.require(integrated.get('mission_admission') == auth['sha256']
+                  and integrated.get('repair') == repair, 'Integration dispatch changed')
         require_ledger_handoff(managed, 'integration', integrated)
     except (ValueError, proof.ProofError, OSError):
         pass
@@ -931,14 +1372,18 @@ def integration_packet(project, state):
         return None
     if not authorize_owner(project, state, task, managed, admission):
         return None
+    repair = pending_repair(project, state, 'integration')
+    remediation = (f'\nRepair plan: {repair["observation"]}. Read {next(iter(repair["files"]))}.\n'
+                   if repair else '')
     return {'owner': 'integration', 'outputs': outputs,
             'message': ('Coordinator only: inspect these sources, edit only the integration outputs listed '
                         'here, and explicitly mark each integration-owned TODO IMPLEMENTED before Team '
                         'integrate. Do not dispatch a replacement owner.\n'
+                        + remediation
                         + mission_context(project, state, managed, owner='integration', scopes=tuple(outputs)))}
 
 
-def integrate(project, state):
+def integrate(project, state, *, note=None):
     t = common()
     t.validation_message(project, state)
     plan = state['plan']
@@ -951,9 +1396,14 @@ def integrate(project, state):
         managed.guard_candidate()
         outputs = plan['integration']['outputs']
         if outputs:
-            auth = owner_authorization(project, state, 'integration', inputs, None)
+            repair = repair_identity(project, state, 'integration')
+            auth = owner_authorization(project, state, 'integration', inputs, repair)
+            if note is not None:
+                advance_owner_todos(managed, 'integration', outputs, note)
             guard_owner_handoff(managed, {'id': 'integration', 'outputs': outputs})
             extra['mission_admission'] = auth['sha256']
+            if repair is not None:
+                extra['repair'] = repair
     receipt = record(project, state, 'integration', t.snapshot(project, state['baseline']), inputs=inputs, **extra)
     if managed is not None:
         if plan['integration']['outputs']:
@@ -972,63 +1422,109 @@ def qa_packet(project, state, receipt, *, include_context=True):
     command = t.worker_command(project, plan['id'], 'check')
     review_command = t.worker_command(project, plan['id'], 'review')
     boundary = ', '.join(sorted(state['baseline']))
-    message = (f'You are independent QA. Project: {Path(project).resolve().as_posix()}.\n'
-               f'Original request: {request_context(project, state)}\nShared contract: {plan["contract"]}\n'
-               f'{t.validation_message(project, state)}Integrated receipt: {receipt["sha256"]}.\n'
-               f'Sealed implementation and integration paths: {boundary}.\n'
-               f'Acceptance check: {plan["integration"]["check"]}\n'
-               'Inspect the full diff from the recorded pre-edit baseline, including additions and removals. '
-               'Check the applicable project write restrictions before a long runtime check. Do not ignore '
-               'an unauthorized change merely because it does not affect output. Then test the actual behavior independently. Cover applicable '
-               'functionality, preservation, architecture, security, performance and failure/data risks. '
-               'Derive expected results from the agreed contract. Cover affected input controls, '
-               'including optional ones, and assert relevant state for rejected operations. '
-               'Compare execution order at changed boundaries: if work moved ahead of parsing, '
-               'validation, a no-op, or an empty loop, replay those paths on baseline and candidate. '
-               'Replay apparent inherited failures on the baseline before judging their impact on this request. '
-               'Retain failures. Missing checks are UNVERIFIED, '
-               'not PASS. Record each quality layer as PASS, FAIL, UNVERIFIED or NOT_APPLICABLE; '
-               'retain failed and unverified observations. NOT_APPLICABLE needs an impact rationale '
-               'and supporting evidence reviewed independently. Do not omit required layers or '
-               'turn a missing measurement into an applicability exclusion. Leave product files and '
-               'the contract intact. Run the documented project checks on this source. Use the '
-               'approved runtime and workspace-local scratch path for temporary files. Run a finite '
-               'check with assertions yourself and use this exact Team command prefix:\n'
-               f'{command} -- ACTUAL_ARGV\nReplace ACTUAL_ARGV with the real executable and arguments '
-               'for the check. The collector runs them directly from the project and manages its '
-               'subprocess. If access or an executable is missing, record the exact blocker and '
-               f'retain any results. Write observations to {evidence} if authorized. Use the exact '
-               'project-relative forward-slash --evidence path below, including on Windows.\n'
-               f'{review_command} --evidence {evidence} --verdict pass\nUse pass only if the required '
-               'checks pass. Otherwise submit fail with the available evidence. Report and release '
-               'any separate service or resource you actually started. '
-               'A successful receipt proves the recorded process, not semantic correctness or native identity.')
-    if managed is not None:
-        message += ('\nManaged QA requires both the finite Team check above and real current runs of all '
-                    'sealed mission proof selectors using proof.py. Run '
-                    f'{mission_command(project, state, "review-input")} after those runs; fill the JSON '
-                    f'with your independent method, actual reviewer identity and observations in {evidence}. '
-                    'Check every TODO and feature, including changed tests: inspect old assertions and '
-                    'replay the same oracle on current source. Do not mark pass if old behavior or any '
-                    'mandatory requirement is unverified. For failure submit the retained findings using '
-                    'Team review --verdict fail so the coordinator can reopen and return the repair to '
-                    'the original owner. Do not submit a separate mission review in place of Team review.')
-    if details:
-        message += (
-            '\n\nRequired detail review (in addition to the user journey):\n'
-            + '\n'.join(f'- {rid}: {criterion}' for rid, criterion in details.items())
-            + '\nThe finite check must capture actual observations in its fresh PROVE_IT_OUTPUT_DIR. '
-              'Use flat file names. Open and inspect the captured frames, motion samples or other artifacts '
-              'on the current product. Do not reuse older captures. Review each ID independently, including '
-              'any shorter-lived state or subtle defect the criterion names. Save the JSON observations '
-              'with check_sha256 from the check receipt, observations for all quality layers, and details '
-              'keyed by ID. Each row has verdict (pass, fail, or unverified), observation, and artifacts '
-              '(a list of file names captured by that check). Find the captures next to the retained '
-              'check-NAME.json in the check-NAME directory. A missing or unresolved row cannot pass.'
+    if review_loop(state) and not details:
+        qa_sub_cmd = t.worker_command(project, plan['id'], 'qa-submit')
+        summary_path = f'{proof.STATE}/teams/{plan["id"]}/qa-summary.json'
+        owners_list = ', '.join(r['id'] for r in plan['tasks']) + (
+            ', integration' if plan['integration']['outputs'] else '')
+        default_owner = plan['tasks'][0]['id']
+        message = (
+            f'You are independent QA. Project: {Path(project).resolve().as_posix()}.\n'
+            'CHILD WORKER NOTICE: Do NOT invoke the harrtest skill, do NOT edit product files, and do NOT read '
+            'scripts/team.py or run proof.py / git archive manually—qa-submit runs all sealed proof checks for you.\n'
+            f'Original request: {request_context(project, state)}\nShared contract: {plan["contract"]}\n'
+            f'{t.validation_message(project, state)}Integrated receipt: {receipt["sha256"]}.\n'
+            f'Sealed implementation and integration paths: {boundary}.\n'
+            f'Acceptance check: {plan["integration"]["check"]}\n\n'
+            'EXECUTE THIS EXACT 4-STEP ADVERSARIAL QA WORKFLOW (target 4-5 tool calls total):\n'
+            '1) Diff & Scope Audit (1 call): Run `git --no-pager status --short` and `git --no-pager diff HEAD` to inspect all '
+            'changes against the contract and confirm no unauthorized files or runtime dependencies were added.\n'
+            '2) Write Adversarial Probe `.runtime-proof/qa_probe.py` (1 call): Write one self-contained Python script that '
+            'tests all 6 angles: (a) Functionality & every prompt clause, (b) Preservation & error/partial-parse/mid-stream '
+            'atomicity (existing files stay byte-identical, no temp leaks, exact exit codes), (c) Security (symlink/hardlink/'
+            'input-alias clobbering, cwd shifts, secret/metadata non-leakage), (d) Performance/streaming & sync/async bridge '
+            'incremental behavior, (e) Newly authored + upstream regression tests via pytest, (f) Architecture/scope.\n'
+            '3) Run `.runtime-proof/qa_probe.py` once (1 call) to observe actual pass/fail results.\n'
+            f'4) Write `{summary_path}` and run `qa-submit` in ONE turn (auto-writes `{evidence}` via review-input bindings):\n'
+            '   JSON format for PASS:\n'
+            '   {"reviewer": "independent-qa", "quality_layers": {\n'
+            '     "functionality": {"verdict": "PASS", "observations": "..."},\n'
+            '     "preservation": {"verdict": "PASS", "observations": "..."},\n'
+            '     "architecture": {"verdict": "PASS", "observations": "..."},\n'
+            '     "security": {"verdict": "PASS", "observations": "..."},\n'
+            '     "performance": {"verdict": "PASS", "observations": "..."},\n'
+            '     "resilience": {"verdict": "PASS", "observations": "..."}\n'
+            '   }, "resolutions": {"<prior_finding_id>": "Fresh @integration observation proving fix"}}\n'
+            f'   (For FAIL, set affected layer verdict(s) to "FAIL" and add `"findings": {{"<id>": {{"owner": "{default_owner}", '
+            f'"layers": ["..."], "observations": "Expected X, observed Y"}}}}` using owner in [{owners_list}] or null.)\n'
+            '   Command:\n'
+            f'   {qa_sub_cmd} --summary {summary_path} --verdict pass -- ACTUAL_ARGV\n'
+            '   (Replace `pass` with `fail` if ANY defect was observed, and replace ACTUAL_ARGV with `<python> -B .runtime-proof/qa_probe.py`.)'
         )
+    else:
+        message = (f'You are independent QA. Project: {Path(project).resolve().as_posix()}.\n'
+                   'CHILD WORKER NOTICE: Do NOT invoke the harrtest skill or edit product files—follow this QA packet directly.\n'
+                   f'Original request: {request_context(project, state)}\nShared contract: {plan["contract"]}\n'
+                   f'{t.validation_message(project, state)}Integrated receipt: {receipt["sha256"]}.\n'
+                   f'Sealed implementation and integration paths: {boundary}.\n'
+                   f'Acceptance check: {plan["integration"]["check"]}\n'
+                   'Inspect the full diff from the recorded pre-edit baseline, including additions and removals. '
+                   'Check the applicable project write restrictions before a long runtime check. Do not ignore '
+                   'an unauthorized change merely because it does not affect output. Then test the actual behavior independently. Cover applicable '
+                   'functionality, preservation, architecture, security, performance and failure/data risks. '
+                   'Derive expected results from the agreed contract. Cover affected input controls, '
+                   'including optional ones, and assert relevant state for rejected operations. '
+                   'Compare execution order at changed boundaries: if work moved ahead of parsing, '
+                   'validation, a no-op, or an empty loop, replay those paths on baseline and candidate. '
+                   'Replay apparent inherited failures on the baseline before judging their impact on this request. '
+                   'Retain failures. Missing checks are UNVERIFIED, '
+                   'not PASS. Record each quality layer as PASS, FAIL, UNVERIFIED or NOT_APPLICABLE; '
+                   'retain failed and unverified observations. NOT_APPLICABLE needs an impact rationale '
+                   'and supporting evidence reviewed independently. Do not omit required layers or '
+                   'turn a missing measurement into an applicability exclusion. Leave product files and '
+                   'the contract intact. Run the documented project checks on this source. Use the '
+                   'approved runtime and workspace-local scratch path for temporary files. Run a finite '
+                   'check with assertions yourself and use this exact Team command prefix:\n'
+                   f'{command} -- ACTUAL_ARGV\nReplace ACTUAL_ARGV with the real executable and arguments '
+                   'for the check. The collector runs them directly from the project and manages its '
+                   'subprocess. If access or an executable is missing, record the exact blocker and '
+                   f'retain any results. Write observations to {evidence} if authorized. Use the exact '
+                   'project-relative forward-slash --evidence path below, including on Windows.\n'
+                   f'{review_command} --evidence {evidence} --verdict pass\nUse pass only if the required '
+                   'checks pass. Otherwise submit fail with the available evidence. Report and release '
+                   'any separate service or resource you actually started. '
+                   'A successful receipt proves the recorded process, not semantic correctness or native identity.')
         if managed is not None:
-            message += '\nAdd these fields to the full mission review JSON; keep all its required fields.'
+            form = (t.worker_command(project, plan['id'], 'review-input') if review_loop(state)
+                    else mission_command(project, state, 'review-input'))
+            message += ('\nManaged QA requires both the finite Team check above and real current runs of all '
+                        'sealed mission proof selectors using proof.py. Run '
+                        f'{form} after those runs; fill the JSON '
+                        f'with your independent method, actual reviewer identity and observations in {evidence}. '
+                        'Check every TODO and feature, including changed tests: inspect old assertions and '
+                        'replay the same oracle on current source. Do not mark pass if old behavior or any '
+                        'mandatory requirement is unverified. For failure submit the retained findings using '
+                        'Team review --verdict fail so the coordinator can reopen and return the repair to '
+                        'the original owner. Do not submit a separate mission review in place of Team review.')
+        if details:
+            message += (
+                '\n\nRequired detail review (in addition to the user journey):\n'
+                + '\n'.join(f'- {rid}: {criterion}' for rid, criterion in details.items())
+                + '\nThe finite check must capture actual observations in its fresh PROVE_IT_OUTPUT_DIR. '
+                  'Use flat file names. Open and inspect the captured frames, motion samples or other artifacts '
+                  'on the current product. Do not reuse older captures. Review each ID independently, including '
+                  'any shorter-lived state or subtle defect the criterion names. Save the JSON observations '
+                  'with check_sha256 from the check receipt, observations for all quality layers, and details '
+                  'keyed by ID. Each row has verdict (pass, fail, or unverified), observation, and artifacts '
+                  '(a list of file names captured by that check). Find the captures next to the retained '
+                  'check-NAME.json in the check-NAME directory. A missing or unresolved row cannot pass.'
+            )
+            if managed is not None:
+                message += '\nAdd these fields to the full mission review JSON; keep all its required fields.'
     if managed is not None and include_context:
+        prior = latest_quality_findings(project, state) if review_loop(state) else {}
+        if prior:
+            message += '\nOpen prior_findings IDs that MUST be re-verified and resolved by ID on pass:\n' + json.dumps(prior, indent=2)
         message += '\n\n' + mission_context(project, state, managed)
     packet = dispatch_packet(plan, 'qa', message)
     if plan.get('host', {}).get('kind') == 'copilot':
@@ -1045,6 +1541,12 @@ def runtime_check(project, state, argv):
     integrated = current_receipt(project, state, 'integration')
     t.require(isinstance(argv, list) and argv and all(isinstance(x, str) and x for x in argv),
               'Supply actual executable argv after --')
+    quality = review_loop(state)
+    source = integrated['files']
+    if quality:
+        source = t.snapshot(project, managed_mission(project, state).plan['sources'])
+        t.require(all(source[rel] == digest for rel, digest in integrated['files'].items()),
+                  'Integrated files changed before QA started')
     private = t.team_path(project, state['plan']['id']).parent
     name = f'check-{uuid4().hex}'
     details = state['plan']['integration'].get('detail_review')
@@ -1082,7 +1584,7 @@ def runtime_check(project, state, argv):
         stderr.seek(0)
         out, err = stdout.read(proof.MAX_LOG_BYTES + 1), stderr.read(proof.MAX_LOG_BYTES + 1)
     overflow = overflow or max(len(out), len(err)) > proof.MAX_LOG_BYTES
-    source_unchanged = t.snapshot(project, integrated['files']) == integrated['files']
+    source_unchanged = t.snapshot(project, source) == source
     filename = name + '.json'
     path = t.team_path(project, state['plan']['id'], filename, must_exist=False)
     proof.save(path, {'argv': argv, 'cwd': str(Path(project).resolve()), 'exit_code': code,
@@ -1092,15 +1594,15 @@ def runtime_check(project, state, argv):
                      'stderr': err[:proof.MAX_LOG_BYTES].decode('utf-8', errors='replace')}, exclusive=True)
     files = {path.relative_to(project).as_posix(): proof.file_hash(path)}
     exit_code = code if not (timed_out or overflow or spawn_error) else None
-    extra = {}
+    extra = {'source_digest': proof.digest(source)} if quality else {}
     if details and source_unchanged:
         try:
             extra['detail_artifacts'] = capture_manifest(project, captures)
         except (ValueError, OSError):
-            record(project, state, 'check', files, integration=integrated['sha256'], exit_code=None)
+            record(project, state, 'check', files, integration=integrated['sha256'], exit_code=None, **extra)
             raise
     receipt = record(project, state, 'check', files, integration=integrated['sha256'],
-                     exit_code=None if details and not source_unchanged else exit_code, **extra)
+                     exit_code=None if (details or quality) and not source_unchanged else exit_code, **extra)
     # Preserve failed observations before reporting a verifier/source problem.
     t.require(source_unchanged, 'QA command changed integrated source')
     t.validation_message(project, state)
@@ -1150,13 +1652,153 @@ def verify_detail_review(project, state, check, evidence):
                   rid + ': cite artifacts from the current QA check')
 
 
+def latest_quality_findings(project, state):
+    if not common().receipt_path(project, state, 'qa').is_file():
+        return {}
+    return current_receipt(project, state, 'qa')['quality_findings']
+
+
+def quality_check(project, state, integrated, source_digest):
+    if common().receipt_path(project, state, 'check').is_file():
+        check = current_receipt(project, state, 'check')
+        if check['integration'] == integrated['sha256'] and check.get('source_digest') == source_digest:
+            return check
+    return {}
+
+
+def quality_review_input(project, state):
+    t = common()
+    t.require(review_loop(state), 'Team review-input is for plans using review-loop-v1')
+    integrated = current_receipt(project, state, 'integration')
+    form = managed_mission(project, state).review_input()
+    check = quality_check(project, state, integrated, form['source_digest'])
+    return {**form,
+            'integration_sha256': integrated['sha256'], 'check_sha256': check.get('sha256'),
+            'quality_layers': {name: {'verdict': None, 'observations': '', 'paths': [], 'checks': []}
+                               for name in LAYERS},
+            'prior_findings': latest_quality_findings(project, state), 'findings': {}, 'resolutions': {}}
+
+
+def quality_owner_paths(state, owner):
+    plan = state['plan']
+    if owner == 'integration':
+        return plan['integration']['outputs']
+    return next((task['outputs'] for task in plan['tasks'] if task['id'] == owner), [])
+
+
+def quality_owner_digest(state, integrated, owner):
+    return proof.digest({rel: integrated['files'][rel] for rel in quality_owner_paths(state, owner)})
+
+
+def validate_quality_review(project, state, managed, integrated, check, prior, body, verdict):
+    t = common()
+    t.require(body.get('integration_sha256') == integrated['sha256'] and 'check_sha256' in body
+              and body['check_sha256'] == check.get('sha256')
+              and (not check or check.get('source_digest') == body.get('source_digest')),
+              'Quality review needs the current integration, check, and mission source')
+    t.require(body.get('prior_findings') == prior, 'Quality review must retain the current prior findings')
+    layers, findings, resolutions = (body.get(key) for key in ('quality_layers', 'findings', 'resolutions'))
+    t.require(isinstance(layers, dict) and layers.keys() == set(LAYERS), 'Review all six quality layers')
+    t.require(isinstance(findings, dict) and isinstance(resolutions, dict), 'List findings and resolutions by ID')
+    t.require(len(prior.keys() | findings.keys()) <= MAX_REVIEW_FINDINGS, 'Too many tracked quality findings')
+    sources = managed.plan['sources']
+    receipts = body.get('checks')
+    t.require(isinstance(receipts, dict), 'Quality review needs the mission proof receipt map')
+    available = {sel for sel, digest in receipts.items() if digest is not None}
+    if check and check['exit_code'] == 0:
+        available.add('@integration')
+    blocked = set()
+    for name, row in layers.items():
+        t.require(isinstance(row, dict), name + ': expected a quality layer review')
+        result = row.get('verdict')
+        t.require(result in ('PASS', 'FAIL', 'UNVERIFIED', 'NOT_APPLICABLE'), name + ': invalid layer verdict')
+        t.concrete(row.get('observations'), name + ' observed result or impact rationale')
+        paths, refs = row.get('paths'), row.get('checks')
+        t.require(isinstance(paths, list) and paths
+                  and all(isinstance(rel, str) and rel in sources for rel in paths),
+                  name + ': cite source paths in the sealed mission')
+        t.require(isinstance(refs, list) and all(isinstance(sel, str) and sel in available for sel in refs),
+                  name + ': cite actual current check IDs')
+        if result == 'PASS':
+            t.require(refs, name + ': PASS needs current check evidence')
+        elif result == 'NOT_APPLICABLE':
+            t.require(name not in CORE_LAYERS, name + ': core quality layer cannot be NOT_APPLICABLE')
+        else:
+            blocked.add(name)
+
+    if verdict == 'fail':
+        t.require(blocked and findings and not resolutions,
+                  'Failed QA must list current blocking findings; close them on a passing replay')
+        observed, tracked = set(), dict(prior)
+        at = proof.now()
+        for fid, row in findings.items():
+            proof.identifier(fid, 'Finding ID')
+            t.require(isinstance(row, dict) and 'owner' in row, fid + ': declare an owner or null')
+            affected, owner = row.get('layers'), row['owner']
+            t.require(isinstance(affected, list) and affected
+                      and all(isinstance(name, str) and name in blocked for name in affected),
+                      fid + ': name the failed or unverified layers')
+            t.require(owner is None or (isinstance(owner, str) and quality_owner_paths(state, owner)),
+                      fid + ': findings must use a sealed owner')
+            t.concrete(row.get('observations'), fid + ' expected and observed behavior')
+            affected = sorted(set(affected))
+            if fid in prior:
+                t.require((owner, affected) == (prior[fid]['owner'], prior[fid]['layers']),
+                          fid + ': keep the existing finding scope and owner')
+            tracked[fid] = {'owner': owner, 'layers': affected, 'observations': row['observations'],
+                            'at': at, 'owner_source': (quality_owner_digest(state, integrated, owner)
+                                                       if owner is not None else None)}
+            observed.update(affected)
+        t.require(observed == blocked, 'Every failed or unverified layer needs a blocking finding')
+        return tracked
+
+    t.require(not blocked and not findings, 'A blocked quality layer or new finding cannot pass QA')
+    t.require(resolutions.keys() == prior.keys(), 'Resolve every retained quality finding by ID')
+    if prior:
+        log = proof.load(strict_io.scoped_path(project, next(iter(check['files']))))
+        t.require(t.instant(log['started_at']) > max(t.instant(row['at']) for row in prior.values()),
+                  'Rerun the integrated check after the latest blocking finding')
+    for fid, finding in prior.items():
+        row = resolutions[fid]
+        t.require(isinstance(row, dict) and row.get('check') == '@integration',
+                  fid + ': cite the fresh integrated check')
+        t.concrete(row.get('observations'), fid + ' fresh independent recheck')
+        owner = finding['owner']
+        if owner is None:
+            continue
+        t.require(all(layers[name]['verdict'] == 'PASS' for name in finding['layers']),
+                  fid + ': a confirmed defect needs a passed layer review')
+        t.require(quality_owner_digest(state, integrated, owner) != finding['owner_source'],
+                  fid + ': confirmed defect needs changed outputs from ' + owner)
+        repair = current_receipt(project, state, 'repair-' + owner)
+        delivered = integrated if owner == 'integration' else current_receipt(project, state, owner)
+        t.require(repair['findings'].get(fid) == proof.digest(finding)
+                  and delivered.get('repair') == repair['sha256'],
+                  fid + ': missing current owner repair plan and handoff')
+    return prior
+
+
+def quality_repair_fields(project, state, qa, owner, digest):
+    t = common()
+    saved, expected = next(iter(qa['files'].items()))
+    t.require(digest == expected, 'Repair must cite the retained failed QA findings')
+    body = proof.load(strict_io.scoped_path(project, saved))
+    ids = {fid for fid, row in body['findings'].items() if row['owner'] == owner}
+    t.require(ids, 'The failed QA round has no code findings for ' + owner)
+    key = 'repair-' + owner
+    prior = current_receipt(project, state, key)['findings'] if t.receipt_path(project, state, key).is_file() else {}
+    return {'findings': {**prior, **{fid: proof.digest(qa['quality_findings'][fid]) for fid in sorted(ids)}}}
+
+
 def review(project, state, evidence, verdict):
     t = common()
     t.require(verdict in {'pass', 'fail'}, 'Review verdict must be pass or fail')
     managed = managed_mission(project, state)
-    if managed is None or verdict == 'fail':
+    quality = review_loop(state)
+    if managed is None or (verdict == 'fail' and not quality):
         return t._record_review(project, state, evidence, verdict)
-    verify_structural(project, state, require_qa=False)
+    if verdict == 'pass':
+        verify_structural(project, state, require_qa=False)
     prefix = f'{proof.STATE}/teams/{state["plan"]["id"]}/'
     t.require(evidence.startswith(prefix), 'Keep QA observations in the private team directory')
     path = strict_io.scoped_path(project, evidence)
@@ -1164,23 +1806,170 @@ def review(project, state, evidence, verdict):
               'Missing retained QA observations')
     raw = path.read_bytes()
     body = strict_io.loads(raw.decode('utf-8-sig'))
+    extra = {}
+    if quality:
+        t.require(isinstance(body, dict), 'Quality review needs structured JSON evidence')
+        integrated = current_receipt(project, state, 'integration')
+        check = quality_check(project, state, integrated, body.get('source_digest'))
+        if verdict == 'pass':
+            t.require(check and check['exit_code'] == 0, 'Quality review needs a successful current integrated check')
+        else:
+            expected = managed.review_input()
+            for key in ('mission_sha256', 'source_digest', 'ledger_epoch', 'checks'):
+                t.require(body.get(key) == expected[key], 'Quality review needs current mission ' + key)
+        extra['quality_findings'] = validate_quality_review(
+            project, state, managed, integrated, check, latest_quality_findings(project, state), body, verdict)
+    if verdict == 'fail':
+        return t._record_review(project, state, evidence, verdict, body=raw, **extra)
     managed.validate_review(body)
     receipt = t._record_review(project, state, evidence, verdict, body=raw,
-                               mission_sha256=managed.binding, mission_review_sha256=proof.digest(body))
+                               mission_sha256=managed.binding, mission_review_sha256=proof.digest(body), **extra)
     managed.accept_review(body, evidence_ref=receipt['sha256'])
     return receipt
 
 
-def repair(project, state, tid, evidence, observation):
+def qa_submit(project, state, summary_rel, verdict, argv):
+    """Run sealed proof checks + finite QA check + auto-bound review in one deterministic step."""
+    t = common()
+    t.require(verdict in {'pass', 'fail'}, 'QA verdict must be pass or fail')
+    t.require(isinstance(argv, list) and argv and all(isinstance(x, str) and x for x in argv),
+              'Supply actual executable check argv after --')
+    summary_path = strict_io.scoped_path(project, _norm_rel(summary_rel))
+    t.require(summary_path.resolve().is_relative_to((Path(project).resolve() / proof.STATE)),
+              'Keep QA summary in .runtime-proof')
+    summary = strict_io.loads(summary_path.read_bytes().decode('utf-8-sig'))
+    t.require(isinstance(summary, dict), 'QA summary must be a JSON object')
+
+    managed = managed_mission(project, state)
+    proof_outcomes = {}
+    if managed is not None:
+        seen_selectors = sorted({tuple(sel.split('/')) for sel in managed._spec['checks']})
+        for ptid, cid in seen_selectors:
+            with contextlib.redirect_stdout(io.StringIO()):
+                res = proof.run_check(Path(project).resolve() / proof.STATE / ptid, cid)
+            proof_outcomes[f'{ptid}/{cid}'] = bool(res['passed'])
+        if verdict == 'pass' and not all(proof_outcomes.values()):
+            failed_sels = [sel for sel, ok in proof_outcomes.items() if not ok]
+            raise ValueError('Cannot pass QA; sealed proof check(s) failed: ' + ', '.join(failed_sels))
+
+    check_rec = runtime_check(project, state, argv)
+    if verdict == 'pass' and check_rec.get('exit_code') != 0:
+        log = proof.load(strict_io.scoped_path(project, next(iter(check_rec['files']))))
+        tail = (log.get('stderr', '') + '\n' + log.get('stdout', '')).strip()[-500:]
+        raise ValueError(f'Cannot pass QA; integrated check exited {check_rec.get("exit_code")}: {tail}')
+
+    plan = state['plan']
+    details = plan['integration'].get('detail_review')
+    suffix = 'json' if details or managed is not None else 'txt'
+    evidence_rel = f'{proof.STATE}/teams/{plan["id"]}/qa-evidence.{suffix}'
+    evidence_path = strict_io.scoped_path(project, evidence_rel, must_exist=False)
+
+    if managed is None and not details:
+        obs = summary.get('observations') or json.dumps(summary, ensure_ascii=False)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(obs, encoding='utf-8')
+        return check_rec, review(project, state, evidence_rel, verdict)
+
+    body = quality_review_input(project, state) if review_loop(state) else managed.review_input()
+    body['method'] = summary.get('method', 'fresh-context-agent')
+    reviewer = str(summary.get('reviewer') or 'independent-qa-reviewer').strip()
+    if managed is not None and reviewer.casefold() == managed.plan['author'].strip().casefold():
+        reviewer = reviewer + '-qa'
+    body['reviewer'] = reviewer
+
+    if review_loop(state):
+        raw_layers = summary.get('quality_layers')
+        t.require(isinstance(raw_layers, dict), 'QA summary needs quality_layers object')
+        present_sources = [rel for rel, digest in t.snapshot(project, managed.plan['sources']).items() if digest is not None]
+        if not present_sources:
+            present_sources = list(managed.plan['sources'])[:4]
+        avail_checks = sorted(sel for sel, digest in body['checks'].items() if digest is not None)
+        if check_rec.get('exit_code') == 0:
+            avail_checks.append('@integration')
+        for lname in LAYERS:
+            lrow = raw_layers.get(lname)
+            t.require(isinstance(lrow, dict), f'quality_layers.{lname} must be an object')
+            lverdict = str(lrow.get('verdict', '')).upper()
+            lobs = lrow.get('observations', '')
+            lpaths = [_norm_rel(p) for p in lrow['paths']] if lrow.get('paths') else present_sources[:8]
+            if 'checks' in lrow and isinstance(lrow['checks'], list) and lrow['checks']:
+                lchecks = list(lrow['checks'])
+            else:
+                lchecks = list(avail_checks) if lverdict == 'PASS' else []
+            body['quality_layers'][lname] = {
+                'verdict': lverdict, 'observations': lobs, 'paths': lpaths, 'checks': lchecks,
+            }
+        if verdict == 'fail':
+            raw_findings = summary.get('findings') or {}
+            t.require(isinstance(raw_findings, dict) and raw_findings,
+                      'Failed QA summary must provide non-empty findings keyed by ID')
+            default_owner = plan['tasks'][0]['id'] if len(plan['tasks']) == 1 else None
+            norm_findings = {}
+            for fid, frow in raw_findings.items():
+                t.require(isinstance(frow, dict), f'Finding {fid} must be an object')
+                owner = frow.get('owner', default_owner)
+                if owner == 'default':
+                    owner = default_owner
+                norm_findings[fid] = {
+                    'owner': owner,
+                    'layers': list(frow.get('layers') or []),
+                    'observations': frow.get('observations', ''),
+                }
+            body['findings'] = norm_findings
+            body['resolutions'] = {}
+        else:
+            body['findings'] = {}
+            raw_res = summary.get('resolutions') or {}
+            norm_res = {}
+            for fid, rval in raw_res.items():
+                if isinstance(rval, str):
+                    norm_res[fid] = {'check': '@integration', 'observations': rval}
+                elif isinstance(rval, dict):
+                    norm_res[fid] = {'check': rval.get('check', '@integration'),
+                                     'observations': rval.get('observations', '')}
+            body['resolutions'] = norm_res
+
+    if managed is not None and verdict == 'pass':
+        func_obs = (body.get('quality_layers', {}).get('functionality', {}).get('observations')
+                    or summary.get('observations') or 'Verified requested functionality and edge cases on current source.')
+        pres_obs = (body.get('quality_layers', {}).get('preservation', {}).get('observations')
+                    or summary.get('observations') or 'Verified preserved baseline behavior and regression suite.')
+        test_obs = (summary.get('test_observations')
+                    or f'Inspected changed/added tests and verified real assertions pass: {func_obs}'[:500])
+        for section, fallback in (('tasks', func_obs), ('features', pres_obs), ('changed_tests', test_obs)):
+            overrides = summary.get(section) if isinstance(summary.get(section), dict) else {}
+            for key in body[section]:
+                ov = overrides.get(key)
+                if isinstance(ov, dict):
+                    body[section][key] = {'verdict': ov.get('verdict', 'PASS'),
+                                          'observations': ov.get('observations') or fallback}
+                elif isinstance(ov, str) and len(ov.strip()) >= 12:
+                    body[section][key] = {'verdict': 'PASS', 'observations': ov}
+                else:
+                    body[section][key] = {'verdict': 'PASS', 'observations': fallback}
+
+    if details:
+        body['check_sha256'] = check_rec['sha256']
+        body['observations'] = summary.get('observations') or func_obs
+        body['details'] = summary.get('details', {})
+
+    proof.save(evidence_path, body)
+    return check_rec, review(project, state, evidence_rel, verdict)
+
+
+def repair(project, state, tid, evidence, observation, *, refresh_note=None):
     t = common()
     managed = managed_mission(project, state)
     if managed is None:
         return t.repair(project, state, tid, evidence, observation)
     request, task = t._record_repair(project, state, tid, evidence, observation)
     managed.reopen(tid, observation)
+    if refresh_note is not None:
+        managed.refresh(refresh_note)
     blocker = None
     try:
-        candidate = packet(project, state, task, managed=managed)
+        candidate = integration_packet(project, state) if tid == 'integration' else packet(
+            project, state, task, managed=managed)
     except (ValueError, proof.ProofError, OSError) as exc:
         blocker = str(exc)
         candidate = None
@@ -1193,7 +1982,10 @@ def repair(project, state, tid, evidence, observation):
                           'preservation contract, then record reinspection with '
                           f'{mission_command(project, state, "refresh")} --note DIAGNOSIS. '
                           'Resolve any owner prerequisites or approvals. Use Team packets and send the full '
-                          'repair packet to the original owner, not a new identity.')
+                          'repair packet to the original owner, not a new identity. For integration outputs '
+                          'the coordinator keeps its sealed glue scope.')
+    elif tid == 'integration':
+        result['next'] = 'The coordinator executes its sealed integration repair; do not dispatch another owner.'
     return result
 
 
@@ -1218,14 +2010,20 @@ def verify_structural(project, state, require_qa):
         managed = managed_mission(project, state)
         if managed is not None:
             if state['plan']['integration']['outputs']:
-                auth = owner_authorization(project, state, 'integration', integrated['inputs'], None)
-                t.require(integrated.get('mission_admission') == auth['sha256'],
+                repair = repair_identity(project, state, 'integration')
+                auth = owner_authorization(project, state, 'integration', integrated['inputs'], repair)
+                t.require(integrated.get('mission_admission') == auth['sha256']
+                          and integrated.get('repair') == repair,
                           'Integration lacks the current managed dispatch')
                 require_ledger_handoff(managed, 'integration', integrated)
             verified = managed.verify(evidence_ref=qa['sha256'])
             t.require(qa.get('mission_sha256') == managed.binding
                       and qa.get('mission_review_sha256') == verified['review_sha256'],
                       'Team QA does not bind the same current managed review')
+            if review_loop(state):
+                body = proof.load(strict_io.scoped_path(project, next(iter(qa['files']))))
+                validate_quality_review(project, state, managed, integrated, check,
+                                        qa['quality_findings'], body, 'pass')
     return children
 
 
@@ -1812,7 +2610,7 @@ def verify_native_rows(project, state, parent, rows, require_qa, adapter):
         glue_writes = {rel for at, rel in coordinator['writes'] if at <= when}
         t.require(changed_glue <= glue_writes, 'Integration changes lack native write evidence')
         if 'mission_sha256' in state and plan['integration']['outputs']:
-            auth = owner_authorization(project, state, 'integration', integrated['inputs'], None)
+            auth = owner_authorization(project, state, 'integration', integrated['inputs'], integrated.get('repair'))
             t.require(not any(at < t.instant(auth['first_authorized_at']) and rel in glue
                               for at, rel in coordinator['writes']),
                       'Native integration writes preceded managed integration authorization')

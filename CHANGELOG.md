@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- Add the `execution-threshold-v1` contract (`scripts/execution_gate.py`,
+  `team.py threshold`, `assets/templates/execution-threshold.json`, and
+  `references/execution-threshold.md`) and make `SKILL.md` evaluate user intent
+  and task signals first: ordinary daily tasks (data fetching, scripts,
+  single-page UI, localized 1–3 file fixes) execute directly with zero subagents,
+  zero unrequested git branches/worktrees, and zero `.runtime-proof` ceremony,
+  while `team.py quickstart` rejects below-threshold specs and invalid
+  multi-owner splits.
+- Add `team.py quickstart`, `handoff --note`, `qa-submit`, and `repair --refresh-note`
+  to eliminate multi-file pre-edit JSON ceremony while keeping all `proof.py`,
+  `preservation-v1`, `review-loop-v1`, and native session-provenance gates active.
+- Offload verbose mission source projections to hashed artifacts in `.runtime-proof`,
+  normalize Windows CLI path separators, and recognize PowerShell `& $py` and
+  `Join-Path` invocations in native Copilot receipt verification.
+- Keep explicitly staged planning checkpoints read-only and revise only the
+  affected step, without repeating unchanged baseline work or skipping the
+  implementation admission gates.
+- Add `review-loop-v1` to new managed existing-code Team plans: record all six
+  independent QA layer verdicts, keep blocking findings across rounds, and
+  require owner-bound repairs and a fresh per-finding recheck. Keep low-risk
+  work on one Team owner and route high-impact changes to Corporate regardless
+  of file count. Previously sealed plans do not change.
+
 ## 5.1.0 — preview (`v5.1.0-rc.1`)
 
 - New implementation plans bind a scoped Feature Preservation Contract and a

@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "user_intent": {
+    "explicit_mode": "auto",
+    "requested_subagents": false,
+    "forbid_subagents": false,
+    "requested_branch": false,
+    "requested_worktree": false
+  },
+  "task_signals": {
+    "kind": "localized_change",
+    "estimated_write_files": 2,
+    "independent_deliverables": 1,
+    "disjoint_write_scopes": false,
+    "stable_interface": false,
+    "independent_checks": false,
+    "shared_public_contract": false,
+    "high_risk_domains": [],
+    "conflicting_checkouts": false
+  }
+}

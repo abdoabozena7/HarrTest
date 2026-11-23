@@ -54,37 +54,34 @@ def instruction_block(skill_path):
 ## Evidence before accepting a software change
 For implementation, debugging, refactoring or coding-agent workflow tasks,
 load the `harrtest` skill at `{skill_path.as_posix()}/SKILL.md` before changing code.
-Read the existing architecture, contracts, callers, dependencies and tests. Retain
-the exact request and a source-qualified baseline before editing. Preserve the
-project's conventions, existing behavior and user changes. Cite consequential
-decisions and resolve material unknowns that project evidence cannot answer.
-Create/resume a dependency-aware plan with explicit file owners and acceptance
-checks. Use actual native workers for independent implementation scopes, parallel
-when ready and supported; a narrow change can have one owner. Never invent
-delegation or add token glue edits. Require integration and independent testing:
-IMPLEMENTED is not VERIFIED. Create/activate the task in `.runtime-proof/` and use
-actual tools appropriate to the behavior, with current-source results. Load visual,
-browser or simulation instructions only when those criteria apply.
+Evaluate the `execution-threshold-v1` contract first (`scripts/execution_gate.py` /
+`team.py threshold`): keep ordinary work (`read-only` queries, data fetching,
+scripts, single-page UI, small localized 1-3 file fixes) in `direct` mode—execute
+and verify directly in the current agent with zero subagents, zero unrequested
+git branches/worktrees, and no `.runtime-proof/` ceremony.
+When explicit user intent or task risk crosses the threshold (`managed-single`,
+`team-parallel`, or `corporate`), read the existing architecture, contracts,
+callers, dependencies and tests, retain the exact request and a source-qualified
+baseline before editing, and preserve existing behavior and user changes.
+Use `team.py quickstart` (`1` owner + `1` independent QA worker) for cohesive
+managed changes; split across multiple native implementation owners only when
+deliverables have disjoint write scopes, a stable interface, and independent
+checks. Never invent delegation, create unrequested branches/worktrees, or add
+token glue edits. Require integration and independent testing on managed tiers:
+IMPLEMENTED is not VERIFIED. Load visual, browser or simulation instructions
+only when those criteria apply.
 Assess functionality, preservation, architecture, security, performance and
 resilience according to the change's actual impact and project policy. Required
 checks must pass; unavailable evidence remains UNVERIFIED. NOT_APPLICABLE needs
 cited impact reasoning and independent review. Do not let an aggregate score waive
 a failed layer. Replay preserved behavior and retain measured before/after results.
-For multi-step/shared-resource work, use `scripts/workflow.py` to register the
-sealed original root and child plan, claim scoped tasks, hand off artifacts,
-and verify fresh child evidence. It coordinates actual host workers; it never
-creates another model client. Use `proof.py init --detached` for child setup
-without taking another session's active ownership.
-For substantive existing-code work, follow `references/corporate-workflow.md`:
+For substantive or enrolled existing-code work, follow `references/corporate-workflow.md`:
 schema-4 `corporate-v1` roots bind baseline, context, decisions and quality evidence;
 schema-2 Team plans support narrow changes, dependencies and validation-only
 integration. Preserve the original meaning of active schema-2/3 roots and schema-1
 teams. Legacy Gold work continues under `references/v4-gold.md`.
-Run `scripts/proof.py verify --task <task-directory>` for child acceptance and
-`scripts/root_gate.py verify --goal <original-goal-directory>` for root acceptance
-before claiming completion. Corporate roots retain full-text request coverage
-and separate review. Inspect the captured evidence. Report VERIFIED only
-within the checked scope; otherwise report PARTIAL, BLOCKED_UNVERIFIED, or FAILED.
+Run `scripts/team.py --project . verify --team <id>` (and `scripts/root_gate.py verify --goal <goal-dir>`
+when Corporate-enrolled) before claiming verified completion on managed tiers.
 Do not alter the harness, receipts, acceptance thresholds or scope merely to pass.
 Do not deactivate the task/hook to avoid a failed gate. Preserve all user safety,
 privacy, spending, simulator and research restrictions. A skill grants no tool

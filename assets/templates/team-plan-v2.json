@@ -27,6 +27,7 @@
   ],
   "integration": {
     "outputs": [],
+    "quality_review": "review-loop-v1",
     "check": "REPLACE_ME real finite old/new behavior checks with independent expected results",
     "timeout_seconds": 120
   }

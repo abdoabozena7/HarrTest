@@ -231,10 +231,56 @@ class MissionTests(unittest.TestCase):
                             observations='Inspected actual normal output, alternate mode and missing-input process evidence.')
         return body
 
-    def qa(self, body):
+    def qa(self, body, verdict='pass'):
         path = self.private / 'teams/mission/independent-qa.json'
         proof.save(path, body)
-        return team.review(self.project, self.state, path.relative_to(self.project).as_posix(), 'pass')
+        return team.review(self.project, self.state, path.relative_to(self.project).as_posix(), verdict)
+
+    def quality_body(self):
+        result = self.cli('team.py', 'review-input', '--team', 'mission')
+        body = self.review()
+        form = json.loads(result.stdout)
+        body.update({key: form[key] for key in ('integration_sha256', 'check_sha256', 'prior_findings',
+                                               'quality_layers', 'findings', 'resolutions')})
+        observations = {
+            'functionality': 'The CLI returned Ada for a label with ASCII surrounding spaces.',
+            'preservation': 'The CLI uppercases the alternate mode and rejects a missing label.',
+            'architecture': 'Normalization stays in the existing parser before selecting a renderer.',
+            'security': 'No trust boundary, new parser, permission, or I/O was added.',
+            'performance': 'A bounded string transformation is not on a latency-sensitive path in this fixture.',
+            'resilience': 'This CLI is stateless and does not change the lifecycle of any resource.',
+        }
+        for name, row in body['quality_layers'].items():
+            checks = {'functionality': ['runtime/trim'], 'preservation': ['runtime/option', 'runtime/invalid'],
+                      'architecture': ['runtime/trim']}.get(name, [])
+            row.update(verdict='PASS' if checks else 'NOT_APPLICABLE', observations=observations[name],
+                       paths=['app.py'], checks=checks)
+        return body
+
+    def report_finding(self, name, layer, verdict, observation, *, owner=None):
+        body = self.quality_body()
+        body['quality_layers'][layer].update(verdict=verdict, observations=observation, checks=[])
+        body['findings'][name] = {'layers': [layer], 'owner': owner, 'observations': observation}
+        return self.qa(body, 'fail')
+
+    def quality_candidate(self, *, adjacent_regression=False, directory_scope=False):
+        self.prepare(directory_scope=directory_scope)
+        self.plan['integration']['quality_review'] = 'review-loop-v1'
+        self.register_team()
+        self.candidate(adjacent_regression=adjacent_regression)
+        self.implementation_done()
+        self.integrate_team()
+
+    def check_cli_journey(self):
+        command = (
+            'import json, subprocess, sys\n'
+            'def run(*args):\n'
+            '    return subprocess.run([sys.executable, "-B", "app.py", *args], capture_output=True)\n'
+            'assert json.loads(run("  Ada  ").stdout) == {"label": "Ada"}\n'
+            'assert json.loads(run("Ada", "--upper").stdout) == {"label": "ADA"}\n'
+            'assert run().returncode == 2\n'
+        )
+        return team.runtime_check(self.project, self.state, [sys.executable, '-B', '-c', command])
 
     def root(self, *, managed=True):
         request = self.project / 'request.txt'
@@ -330,6 +376,348 @@ class MissionTests(unittest.TestCase):
         qa = self.qa(body)
         team_v2.verify_structural(self.project, self.state, True)
         self.assertTrue(self.active.verify(evidence_ref=qa['sha256'])['passed'])
+
+    def test_review_loop_requires_each_layer_and_real_current_evidence(self):
+        self.quality_candidate()
+        self.assertTrue(all(self.run_checks('option', 'trim', 'invalid').values()))
+        body = self.quality_body()
+        performance = body['quality_layers'].pop('performance')
+        with self.assertRaisesRegex(GATE_ERROR, 'six quality layers'):
+            self.qa(body)
+        body['quality_layers']['performance'] = {**performance, 'verdict': 'PASS'}
+        with self.assertRaisesRegex(GATE_ERROR, 'performance: PASS needs'):
+            self.qa(body)
+        body['quality_layers']['performance']['checks'] = ['guessed/timing']
+        with self.assertRaisesRegex(GATE_ERROR, 'performance: cite actual'):
+            self.qa(body)
+        body['quality_layers']['performance'] = {**performance, 'paths': ['unsealed/notes.md']}
+        with self.assertRaisesRegex(GATE_ERROR, 'performance: cite source'):
+            self.qa(body)
+        body['quality_layers']['performance'] = performance
+        architecture = body['quality_layers']['architecture']
+        architecture['verdict'] = 'NOT_APPLICABLE'
+        with self.assertRaisesRegex(GATE_ERROR, 'architecture: core quality layer'):
+            self.qa(body)
+        architecture['verdict'] = 'PASS'
+        self.qa(body)
+        team_v2.verify_structural(self.project, self.state, True)
+
+    def test_review_loop_rejects_stale_and_source_mutating_checks(self):
+        self.quality_candidate(directory_scope=True)
+        config = self.project / 'inputs/config.txt'
+        config.write_text('updated routing\n', encoding='utf-8')
+        current = config.read_bytes()
+        self.assertTrue(all(self.run_checks('trim', 'option', 'invalid').values()))
+        body = self.quality_body()
+        self.assertIsNone(body['check_sha256'], 'A changed unowned mission input invalidates the old QA check')
+        with self.assertRaisesRegex(GATE_ERROR, 'successful current integrated check'):
+            self.qa(body)
+        mutator = ('from pathlib import Path; '
+                   'Path("inputs", "config.txt").write_text("unexpected QA side effect")')
+        with self.assertRaisesRegex(GATE_ERROR, 'QA command changed integrated source'):
+            team.runtime_check(self.project, self.state, [sys.executable, '-B', '-c', mutator])
+        config.write_bytes(current)
+        self.assertIsNone(team.current_receipt(self.project, self.state, 'check')['exit_code'])
+        with self.assertRaisesRegex(GATE_ERROR, 'successful current integrated check'):
+            self.qa(self.quality_body())
+        self.assertEqual(self.check_cli_journey()['exit_code'], 0)
+        self.qa(self.quality_body())
+        team_v2.verify_structural(self.project, self.state, True)
+
+    def test_review_loop_retains_findings_from_multiple_rounds_and_requires_new_recheck(self):
+        self.quality_candidate()
+        self.assertTrue(all(self.run_checks('option', 'trim', 'invalid').values()))
+        first_observation = 'The finite QA command printed output but did not assert its exact JSON.'
+        first = self.report_finding('output_oracle', 'functionality', 'UNVERIFIED', first_observation)
+        second = self.report_finding('missing_boundary', 'preservation', 'UNVERIFIED',
+                                     'The finite check did not observe the missing-input exit status.')
+        body = self.quality_body()
+        self.assertEqual(set(body['prior_findings']), {'output_oracle', 'missing_boundary'})
+        body['resolutions'] = {'missing_boundary': {'check': '@integration', 'observations': 'Checked exit two.'}}
+        with self.assertRaisesRegex(GATE_ERROR, 'Resolve every retained'):
+            self.qa(body)
+        body['resolutions']['output_oracle'] = {'check': '@integration', 'observations': 'Compared exact JSON.'}
+        with self.assertRaisesRegex(GATE_ERROR, 'Rerun the integrated check'):
+            self.qa(body)
+        fresh = self.check_cli_journey()
+        self.assertEqual(fresh['exit_code'], 0)
+        body['check_sha256'] = fresh['sha256']
+        qa = self.qa(body)
+        team_v2.verify_structural(self.project, self.state, True)
+        self.assertEqual(qa['integration'], second['integration'], 'Evidence-only findings need no product edit')
+        archived = self.private / 'teams/mission/history'
+        saved = archived / f'qa-{proof.digest(first)}.json'
+        original = proof.load(saved)
+        self.assertEqual(original['quality_findings']['output_oracle']['observations'], first_observation)
+
+    def test_review_loop_routes_reported_code_defect_and_demands_changed_handoff(self):
+        self.quality_candidate(adjacent_regression=True)
+        self.assertEqual(self.run_checks('trim', 'option', 'invalid'), {'trim': True, 'option': False, 'invalid': True})
+        observed = 'Ada --upper returns ada instead of the preserved uppercase ADA result.'
+        failed = self.report_finding('upper_case', 'preservation', 'FAIL', observed, owner='component')
+        raw = '.runtime-proof/teams/mission/independent-qa.json'
+        alternate = self.private / 'teams/mission/unrelated.json'
+        proof.save(alternate, {'observation': 'Unrelated observations do not route this issue.'})
+        plan = 'Restore the original uppercase branch without changing normalization; replay trimmed and alternate labels.'
+        with self.assertRaisesRegex(GATE_ERROR, 'retained failed QA'):
+            team.repair(self.project, self.state, 'component', alternate.relative_to(self.project).as_posix(), plan)
+        wrong = self.check_cli_journey()
+        self.assertNotEqual(wrong['exit_code'], 0, 'The independent replay must actually detect the regression')
+        started = team.repair(self.project, self.state, 'component', raw, plan)
+        self.assertFalse(started['mission_complete'])
+        self.active.refresh('Inspected the unchanged parser and confirmed the candidate changed the uppercase branch.')
+        packet = team.ready_packets(self.project, self.state)[0]
+        self.assertIn(plan, packet['message'])
+        repair = team.current_receipt(self.project, self.state, 'repair-component')
+        self.assertEqual(repair['qa'], failed['sha256'])
+        self.assertEqual(repair['findings']['upper_case'], proof.digest(failed['quality_findings']['upper_case']))
+        self.implementation_done()
+        self.integrate_team()
+        self.assertFalse(self.run_checks('option')['option'])
+        noop = self.quality_body()
+        noop['resolutions']['upper_case'] = {'check': '@integration', 'observations': 'Claimed, but not repaired.'}
+        with self.assertRaisesRegex(GATE_ERROR, 'confirmed defect needs changed outputs'):
+            self.qa(noop)
+        self.report_finding('upper_case', 'preservation', 'FAIL', observed, owner='component')
+        team.repair(self.project, self.state, 'component', raw, plan)
+        self.active.refresh('Rechecked the uppercase branch and retained the same CLI regression assertion.')
+        self.assertEqual(team.ready_packets(self.project, self.state)[0]['task_name'], 'component')
+        self.candidate()
+        self.implementation_done()
+        self.integrate_team()
+        self.assertTrue(all(self.run_checks('option', 'trim', 'invalid').values()))
+        self.assertEqual(self.check_cli_journey()['exit_code'], 0)
+        ready = self.quality_body()
+        ready['resolutions']['upper_case'] = {
+            'check': '@integration', 'observations': 'The fresh CLI replay observed ADA and kept the trimmed Ada result.',
+        }
+        qa = self.qa(ready)
+        team_v2.verify_structural(self.project, self.state, True)
+        self.assertTrue(self.active.verify(evidence_ref=qa['sha256'])['passed'])
+
+    def test_review_loop_routes_glue_to_coordinator_not_an_implementation_worker(self):
+        glue = self.project / 'glue.py'
+        wrapper = (
+            'import json, subprocess, sys\n'
+            'data = json.loads(subprocess.check_output([sys.executable, "-B", "app.py", *sys.argv[1:]]))\n'
+            'print(json.dumps(data))\n'
+        )
+        glue.write_text(wrapper, encoding='utf-8')
+        self.sources.append('glue.py')
+        self.prepare(register=False)
+        self.draft['tasks'].append({
+            'id': 'wire_label', 'owner': 'integration', 'requirement_id': 'R1', 'depends_on': ['trim'],
+            'description': 'Keep the caller adapter wired to the normalized label result.',
+            'done': 'The CLI adapter returns the label JSON without changing alternate casing.',
+            'checks': ['runtime/trim', 'runtime/option'],
+        })
+        self.draft['features'][0]['related_paths'].append('glue.py')
+        self.draft['features'][0]['tasks'].append('wire_label')
+        self.plan['integration'].update(quality_review='review-loop-v1', outputs=['glue.py'])
+        self.enroll()
+        self.register_team()
+        self.candidate()
+        self.implementation_done()
+        team.handoff(self.project, self.state, self.plan['tasks'][0])
+        self.active.refresh('Read the current producer handoff and checked its label shape against the glue.')
+        self.assertEqual(team_v2.integration_packet(self.project, self.state)['outputs'], ['glue.py'])
+        glue.write_text(wrapper.replace('print(json.dumps(data))',
+                                        'print(json.dumps({"label": data["label"].lower()}))'), encoding='utf-8')
+        self.active.step('wire_label', 'IMPLEMENTED')
+        team.integrate(self.project, self.state)
+        self.assertTrue(all(self.run_checks('trim', 'option', 'invalid').values()))
+
+        def check():
+            command = ('import json, subprocess, sys; '
+                       'output = subprocess.check_output([sys.executable, "-B", "glue.py", "Ada", "--upper"]); '
+                       'assert json.loads(output) == {"label": "ADA"}')
+            return team.runtime_check(self.project, self.state, [sys.executable, '-B', '-c', command])
+
+        self.assertNotEqual(check()['exit_code'], 0)
+        observation = 'The candidate adapter lowercases the preserved uppercase response even though the producer is correct.'
+        self.report_finding('glue_case', 'preservation', 'FAIL', observation, owner='integration')
+        raw = '.runtime-proof/teams/mission/independent-qa.json'
+        plan = 'Preserve producer casing at the adapter; replay the established uppercase CLI journey.'
+        with self.assertRaisesRegex(GATE_ERROR, 'no code findings for component'):
+            team.repair(self.project, self.state, 'component', raw, plan)
+        self.active.refresh('Traced the incorrect conversion to the integration-owned glue, not the producer.')
+        repair = team.repair(self.project, self.state, 'integration', raw, plan)
+        self.assertEqual(repair['packet']['owner'], 'integration')
+        self.assertIn(plan, repair['packet']['message'])
+        glue.write_text(wrapper, encoding='utf-8')
+        self.active.step('wire_label', 'IMPLEMENTED')
+        integrated, _ = team.integrate(self.project, self.state)
+        self.assertEqual(integrated['repair'], repair['repair'])
+        self.assertTrue(all(self.run_checks('trim', 'option', 'invalid').values()))
+        self.assertEqual(check()['exit_code'], 0)
+        body = self.quality_body()
+        body['resolutions']['glue_case'] = {
+            'check': '@integration', 'observations': 'The adapter now returns the producer casing ADA unchanged.',
+        }
+        self.qa(body)
+        team_v2.verify_structural(self.project, self.state, True)
+
+    def test_quickstart_handoff_note_qa_submit_and_repair_refresh_e2e(self):
+        below_threshold = self.private / 'direct-quickstart.json'
+        proof.save(below_threshold, {
+            'id': 'mission',
+            'request': self.request,
+            'threshold': {
+                'task_signals': {'kind': 'data_or_script', 'estimated_write_files': 1},
+            },
+            'outputs': ['app.py'],
+            'read_sources': ['legacy_test.py'],
+            'baseline_check': {'command': ['{python}', '-B', 'legacy_test.py'], 'stdout_contains': 'ADA'},
+            'acceptance_check': {'command': ['{python}', '-B', 'legacy_test.py'], 'stdout_contains': 'ADA'},
+        })
+        rejected_direct = self.cli('team.py', '--project', '.', 'quickstart', '--spec',
+                                   '.runtime-proof/direct-quickstart.json', ok=False)
+        self.assertIn('needs_subagents=false', rejected_direct.stdout)
+        self.assertFalse((self.private / 'verify').exists())
+        self.assertFalse((self.private / 'request-mission.txt').exists())
+
+        invalid_split = self.private / 'invalid-split-quickstart.json'
+        proof.save(invalid_split, {
+            'id': 'mission',
+            'request': self.request,
+            'threshold': {
+                'user_intent': {'requested_subagents': True},
+                'task_signals': {
+                    'kind': 'cross_cutting_change',
+                    'estimated_write_files': 2,
+                    'independent_deliverables': 2,
+                    'disjoint_write_scopes': True,
+                    'stable_interface': False,
+                    'independent_checks': True,
+                },
+            },
+            'tasks': [
+                {'id': 'part_a', 'outputs': ['app.py']},
+                {'id': 'part_b', 'outputs': ['new_test.py']},
+            ],
+            'read_sources': ['legacy_test.py'],
+            'baseline_check': {'command': ['{python}', '-B', 'legacy_test.py'], 'stdout_contains': 'ADA'},
+            'acceptance_check': {'command': ['{python}', '-B', 'legacy_test.py'], 'stdout_contains': 'ADA'},
+        })
+        rejected_split = self.cli('team.py', '--project', '.', 'quickstart', '--spec',
+                                  '.runtime-proof/invalid-split-quickstart.json', ok=False)
+        self.assertIn('stable_interface', rejected_split.stdout)
+        self.assertFalse((self.private / 'verify').exists())
+
+        bad_spec = self.private / 'bad-quickstart.json'
+        proof.save(bad_spec, {
+            'id': 'mission',
+            'request': self.request,
+            'outputs': ['app.py', 'new_test.py'],
+            'read_sources': ['legacy_test.py', 'oracle.py'],
+            'baseline_check': {'command': ['{python}', '-B', 'legacy_test.py'], 'stdout_contains': 'DOES_NOT_APPEAR'},
+            'acceptance_check': {'command': ['{python}', '-B', 'new_test.py'], 'stdout_contains': 'ALL_OK'},
+        })
+        failed_boot = self.cli('team.py', '--project', '.', 'quickstart', '--spec', '.runtime-proof/bad-quickstart.json', ok=False)
+        self.assertIn('Baseline check failed', failed_boot.stdout)
+        self.assertFalse((self.private / 'verify').exists(), 'Failed quickstart must roll back proof dir cleanly')
+
+        good_spec = self.private / 'quickstart.json'
+        proof.save(good_spec, {
+            'id': 'mission',
+            'request': self.request,
+            'contract': 'Preserve --upper and missing-arg exit 2 while trimming surrounding spaces.',
+            'outputs': ['app.py', 'new_test.py'],
+            'read_sources': ['legacy_test.py', 'oracle.py'],
+            'baseline_check': {'command': ['{python}', '-B', 'oracle.py', 'option'], 'stdout_contains': 'ADA'},
+            'acceptance_check': {'command': ['{python}', '-B', 'new_test.py'], 'stdout_contains': 'ALL_OK'},
+            'preserved_behavior': {
+                'path': 'app.py',
+                'location': '--upper option',
+                'behavior': 'Ada --upper outputs ADA and missing label exits 2.',
+            },
+        })
+        boot = json.loads(self.cli('team.py', '--project', '.', 'quickstart', '--spec', '.runtime-proof/quickstart.json').stdout)
+        self.assertTrue(boot['baseline_passed'])
+        self.assertEqual(boot['ready'][0]['task_name'], 'impl')
+
+        # Implement with an intentional regression (--upper broken) to test QA fail -> 1-command repair -> pass.
+        self.candidate(adjacent_regression=True)
+        (self.project / 'new_test.py').write_text(
+            'import json, subprocess, sys\n'
+            'r = subprocess.check_output([sys.executable, "-B", "app.py", "  Ada  "])\n'
+            'assert json.loads(r)["label"] == "Ada"\n'
+            'print("ALL_OK")\n',
+            encoding='utf-8',
+        )
+        self.cli('team.py', '--project', '.', 'handoff', '--team', 'mission', '--task', 'impl',
+                 '--note', 'Implemented whitespace trimming and added new_test.py.')
+        self.cli('team.py', '--project', '.', 'integrate', '--team', 'mission')
+
+        fail_summary = self.private / 'teams/mission/qa-summary.json'
+        proof.save(fail_summary, {
+            'reviewer': 'independent-qa',
+            'quality_layers': {
+                'functionality': {'verdict': 'PASS', 'observations': 'Trimming spaces around Ada returns Ada.'},
+                'preservation': {'verdict': 'FAIL', 'observations': 'Ada --upper returned ada instead of ADA.'},
+                'architecture': {'verdict': 'PASS', 'observations': 'Changes stayed within app.py and new_test.py.'},
+                'security': {'verdict': 'NOT_APPLICABLE', 'observations': 'Pure in-memory string trimming CLI.'},
+                'performance': {'verdict': 'NOT_APPLICABLE', 'observations': 'Single string strip has O(1) overhead.'},
+                'resilience': {'verdict': 'NOT_APPLICABLE', 'observations': 'Stateless process with no file writes.'},
+            },
+            'findings': {
+                'upper_broken': {
+                    'owner': 'impl',
+                    'layers': ['preservation'],
+                    'observations': 'Expected ADA for --upper, observed lowercase ada.',
+                }
+            },
+        })
+        qa_fail = self.cli('team.py', '--project', '.', 'qa-submit', '--team', 'mission',
+                           '--summary', '.runtime-proof/teams/mission/qa-summary.json',
+                           '--verdict', 'fail', '--', sys.executable, '-B', 'legacy_test.py', ok=False)
+        self.assertEqual(qa_fail.returncode, 1)
+        self.assertIn('--refresh-note', qa_fail.stdout)
+
+        repaired = json.loads(self.cli(
+            'team.py', '--project', '.', 'repair', '--team', 'mission', '--task', 'impl',
+            '--evidence', '.runtime-proof/teams/mission/qa-evidence.json',
+            '--observation', 'Restore label.upper() on --upper and assert it in new_test.py.',
+            '--refresh-note', 'Confirmed app.py replaced label.upper() with label.lower().',
+        ).stdout)
+        self.assertEqual(repaired['packet']['task_name'], 'impl')
+
+        self.candidate(adjacent_regression=False)
+        (self.project / 'new_test.py').write_text(
+            'import json, subprocess, sys\n'
+            'for args, exp in [(["  Ada  "], "Ada"), (["  Ada  ", "--upper"], "ADA")]:\n'
+            '    r = subprocess.check_output([sys.executable, "-B", "app.py", *args])\n'
+            '    assert json.loads(r)["label"] == exp\n'
+            'print("ALL_OK")\n',
+            encoding='utf-8',
+        )
+        self.cli('team.py', '--project', '.', 'handoff', '--team', 'mission', '--task', 'impl',
+                 '--note', 'Restored uppercase branch and verified both trimmed and --upper modes.')
+        self.cli('team.py', '--project', '.', 'integrate', '--team', 'mission')
+
+        proof.save(fail_summary, {
+            'reviewer': 'independent-qa',
+            'quality_layers': {
+                'functionality': {'verdict': 'PASS', 'observations': 'Trimming and --upper both return exact JSON.'},
+                'preservation': {'verdict': 'PASS', 'observations': 'Existing --upper and missing-arg exit 2 preserved.'},
+                'architecture': {'verdict': 'PASS', 'observations': 'Parser and output contract remain clean.'},
+                'security': {'verdict': 'NOT_APPLICABLE', 'observations': 'Pure in-memory CLI argument formatting.'},
+                'performance': {'verdict': 'NOT_APPLICABLE', 'observations': 'No measurable overhead on single argument.'},
+                'resilience': {'verdict': 'NOT_APPLICABLE', 'observations': 'Stateless CLI with no I/O side effects.'},
+            },
+            'resolutions': {
+                'upper_broken': 'Fresh integrated check verified Ada --upper outputs ADA alongside trimmed Ada.',
+            },
+        })
+        qa_pass = self.cli('team.py', '--project', '.', 'qa-submit', '--team', 'mission',
+                           '--summary', '.runtime-proof/teams/mission/qa-summary.json',
+                           '--verdict', 'pass', '--', sys.executable, '-B', 'new_test.py')
+        receipts = [line for line in qa_pass.stdout.splitlines() if line.startswith(team.RECEIPT)]
+        self.assertEqual(len(receipts), 2, 'qa-submit must emit both check and qa receipt markers for native trace parsing')
+        state = team.load_state(self.project, 'mission')
+        team_v2.verify_structural(self.project, state, True)
+        self.assertTrue(mission.open_mission(self.project, 'mission').verify(
+            evidence_ref=team.current_receipt(self.project, state, 'qa')['sha256'])['passed'])
 
     def test_rejects_deleted_inventoried_source_even_in_declared_file_deletion(self):
         self.prepare()

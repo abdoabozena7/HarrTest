@@ -1,6 +1,6 @@
 # Corporate: change existing software with current evidence
 
-Use this for substantive changes to an existing system. One bounded implementation
+Use this for substantive or high-risk changes to an existing system. One bounded implementation
 owner is valid; independent testing and review remain necessary. Follow the
 project's architecture, public contracts and conventions, without imposing a
 particular language, application type or deployment pipeline.
@@ -256,6 +256,11 @@ Run changed-behavior and preservation checks through the proof collector.
 The mission review records inventoried behavior, TODOs and changed tests with
 current check evidence; it does not replace the six-layer Corporate report or
 native QA. The root must pass both the managed ledger and the existing gates.
+For new Teams use the [daily review loop](production-teams.md#review-daily-existing-code-changes)
+to retain QA findings and verify their repairs. Reuse the same sealed proof
+selectors in Team QA and the Corporate report where they establish the same
+claim. If the Corporate review discovers a new blocker, keep the root open
+and hand that observation back to QA for reproduction and finding intake.
 If QA finds an apparent inherited fault, replay the same condition on baseline
 and candidate without changing the oracle. Record the affected requirements and
 evidence. Record unrelated existing findings with their limitations and keep

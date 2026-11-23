@@ -29,6 +29,68 @@ local toolchains. The log is `output/v5-corporate/followup-delivery-rotated-full
 in the candidate worktree. This validates controller behavior and fixture
 controls, not live release qualification.
 
+### Existing-code review loop (unreleased)
+
+On the 5.1.0 checkout at `70c343e`, a disposable CLI change passed the managed
+Team structural gate without any explicit quality-layer verdicts. A failed
+QA review could also be replaced by a pass referring to the same integrated
+check, without rerunning it. Native provenance was not evaluated in this
+baseline reproduction.
+
+The candidate adds `integration.quality_review: review-loop-v1` for new
+managed existing-code Team plans. The regression cases run actual CLI
+processes: no verdict or supporting evidence cannot pass; config changes
+invalidate the old check; a source-mutating check stays unusable after
+restoration; multiple failed rounds cannot lose findings; and a no-op or
+misrouted code repair cannot close a confirmed defect. They also prove that
+an evidence-only finding can close on a fresh run without changing code,
+and exercise both an original component owner and coordinator-owned glue.
+
+On Windows, 227 tests passed across Mission, Team, Team v2, Corporate, root
+gate and Copilot guard. This validates the controller and compatibility with
+unmarked plans; it does not qualify this package, measure generated-code
+security or performance on a production system, or establish live quality
+uplift. A matched comparison needs fresh held-out cases, the same model,
+effort and budgets, and independent assessment of both arms.
+
+### Streamlined daily admission and GPT-6.2 Sol upstream trials (unreleased)
+
+In initial `gpt-6.2-sol` (`medium`) trials on `pytest` 9.0.1 and `sqlfluff`
+3.5.0 (`output/delivery-sol62`), manual authoring across `proof.py`,
+`mission.py` and `team.py` consumed the pre-edit budget before product edits.
+Iterative harness tuning introduced `team.py quickstart`, `handoff --note`,
+`qa-submit`, `repair --refresh-note`, hashed mission-context offloading, a
+compact operational `SKILL.md`, a 4-step 6-angle adversarial `qa_packet`, and
+native receipt recognition for PowerShell `& $py` / `Join-Path` invocations,
+without relaxing any preservation, review-loop or native provenance gate.
+
+Across R1–R4 on five real upstream Python repositories (`pytest` 37k LoC,
+`sqlfluff` 125k LoC, `pallets/jinja` 14k LoC, `pallets/click` 11k LoC, and
+`pygments/pygments` 200k+ LoC), the tuned candidate completed implementation,
+executed independent adversarial QA, caught and repaired real defects missed
+by the matched `gpt-6.2-sol` (`medium`) plain control, and passed full
+structural + native `copilot-session-events-v1` `team.py verify` (`passed:
+true`) on `pluggy`, `click` (R3), and `pygments` (R4, verified directly inside
+the live session). In the cold held-out `pluggy` and `pygments` pairs:
+
+- **`pytest-dev/pluggy` 1.5.0:** Plain failed duplicate-namespace empty
+  `sensitive_args` merging and crashed with `ValueError` on >4,300-digit integer
+  arguments under `include_args=True`. HarrTest QA caught both defects in Round 1,
+  routed repair to `impl`, re-verified 42 authored + 85 upstream tests, and
+  passed native `team.py verify` (`0.9899x` baseline 25k-call median).
+- **`pygments/pygments` 2.19.1:** Plain broke `-O redact_token_types=...,full`
+  and `-O redact_token_types=...,flush` (`ValueError: Unknown token type:
+  'flush'` and swallowed boolean flags). HarrTest QA caught that exact CLI `-O`
+  preservation defect in Round 1, routed repair to `impl`, passed 5,221 upstream
+  + 23 authored tests (`0.9994x` baseline median, 2,055 B peak memory across
+  50k streamed tokens), and passed `team.py verify` inside the live session.
+
+Raw traces, patches and evaluator outputs are retained under
+`output/tuning-sol62-r1/`, `output/heldout-sol62/`, `output/heldout-r3/` and
+`output/heldout-r4/`. These upstream trials establish end-to-end daily
+execution and multi-angle QA repair uplift on the tested tasks; formal 96-slot
+multi-language release qualification remains separate.
+
 ## Live comparison
 
 Eight development cases and eight separate acceptance cases cover existing
